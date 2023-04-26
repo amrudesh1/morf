@@ -74,11 +74,6 @@ func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) strin
 		return ""
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"status":  http.StatusOK,
-		"message": "File downloaded",
-	})
-
 	return file_name
 
 }
