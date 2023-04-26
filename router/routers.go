@@ -43,8 +43,13 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			return
 		}
 
+		// Send a response back to prevent API timeout
+		ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
+
+		// sleep for 5 seconds to allow slack to upload the file
+
 		apk.StartExtractProcess(download_url, db.DB, ctx, true, requestBody)
-		// apk.StartScan("temp/output/apk/")
+
 	})
 
 	return router

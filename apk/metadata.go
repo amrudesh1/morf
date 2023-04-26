@@ -37,6 +37,7 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	fmt.Println("Starting metadata collection for " + apkPath)
 
 	metadata_success, metadata_error := exec.Command("java", "-cp", "tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", "temp/input/", "--out", "temp/output").Output()
+	fmt.Println(metadata_success)
 
 	if metadata_error != nil {
 		fmt.Println("Error while decompiling the APK file")

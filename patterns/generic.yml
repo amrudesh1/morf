@@ -12,10 +12,6 @@ patterns:
       regex: "https://s3-ap-south-1.amazonaws.com"
       confidence: low
   - pattern:
-      name: Generic token
-      regex: "token.+"
-      confidence: low
-  - pattern:
       name: Generic webhook secret
       regex: "(webhook).+(secret|token|key).+"
       confidence: low

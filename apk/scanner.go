@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -36,6 +37,7 @@ type PatternList struct {
 
 var secretPatterns SecretPatterns
 var secretModel []models.SecretModel
+var dummyCoutner int = 0
 
 func CheckAPK(apkPath string) {
 	PacakgeData := ExtractPackageData("scan.apk")
@@ -81,8 +83,16 @@ func StartSecScan(apkPath string) []models.SecretModel {
 	return nil
 }
 
-func handleError(err error, msg string) {
+func handleError(err error, msg string, exitCode1 bool) {
 	if err != nil {
+		if exitCode1 {
+			if exitError, ok := err.(*exec.ExitError); ok {
+				if status, ok := exitError.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 1 {
+					fmt.Println(msg, "Pattern not found.")
+					return
+				}
+			}
+		}
 		fmt.Println(msg, err)
 	}
 }
@@ -90,10 +100,10 @@ func handleError(err error, msg string) {
 func readPatternFile(patternFilePath string) ([]byte, error) {
 	patternFile, err := os.OpenFile(patternFilePath, os.O_RDONLY, 0666)
 	defer patternFile.Close()
-	handleError(err, "Error opening pattern file:")
+	handleError(err, "Error opening pattern file:", true)
 
 	yamlFile, err := ioutil.ReadAll(patternFile)
-	handleError(err, "Error reading pattern file:")
+	handleError(err, "Error reading pattern file:", true)
 
 	return yamlFile, err
 }
@@ -101,7 +111,7 @@ func readPatternFile(patternFilePath string) ([]byte, error) {
 func StartScan(apkPath string) []models.SecretModel {
 
 	files, err := ioutil.ReadDir("patterns")
-	handleError(err, "Error reading directory:")
+	handleError(err, "Error reading directory:", true)
 
 	for _, file := range files {
 		fmt.Println("File:", file.Name())
@@ -123,38 +133,49 @@ func StartScan(apkPath string) []models.SecretModel {
 			pat := pattern.Pattern.Regex
 			cmd := exec.Command("rg", "-n", "-e", fmt.Sprintf("\"%s\"", pat), "--multiline", apkPath)
 
+			// Sleep for 1 second to avoid rate limiting
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
 
 			err := cmd.Run()
-			fmt.Println("Error", err)
+			handleError(err, "Error running ripgrep:", true)
 
 			if stdout.Len() > 0 {
-				fmt.Println("Command:", cmd)
-				fmt.Println("Stderr:", stderr.String())
-				parts := strings.SplitN(stdout.String(), ":", 3)
-				if len(parts) != 3 {
-					fmt.Printf("Invalid RipGrep output: %s\n", stdout.String())
-					continue
-				}
 
-				fileName := parts[0]
-				lineNumber, err := strconv.Atoi(parts[1])
-				content := parts[2]
+				// Split Stdout into lines and iterate over them
+				lines := strings.Split(stdout.String(), "\n")
+				for _, line := range lines {
 
-				contentParts := strings.SplitN(strings.TrimSpace(content), " ", 2)
-				typeName := contentParts[0]
-				patternFound := contentParts[1]
+					parts := strings.SplitN(line, ":", 3)
+					if len(parts) != 3 {
+						fmt.Printf("Invalid RipGrep output: %s\n", stdout.String())
+						continue
+					}
 
-				if err == nil {
-					secretModel = append(secretModel, models.SecretModel{
-						Type:         pattern.Pattern.Name,
-						LineNo:       lineNumber,
-						FileLocation: fileName,
-						SecretType:   typeName,
-						SecretString: patternFound,
-					})
+					fileName := parts[0]
+					lineNumber, err := strconv.Atoi(parts[1])
+					content := parts[2]
+
+					contentParts := strings.SplitN(strings.TrimSpace(content), " ", 2)
+					typeName := contentParts[0]
+					patternFound := ""
+					if len(contentParts) > 1 {
+						patternFound = contentParts[1]
+					}
+
+					if err == nil {
+						secretModel = append(secretModel, models.SecretModel{
+							Type:         pattern.Pattern.Name,
+							LineNo:       lineNumber,
+							FileLocation: fileName,
+							SecretType:   typeName,
+							SecretString: patternFound,
+						})
+
+						log.Info(secretModel)
+						log.Info(len(secretModel))
+					}
 				}
 			}
 		}

@@ -1,16 +1,16 @@
-14:41:12,287  INFO ApkProcessingTask:51 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of file CRED-4.0.2-RC0-qa-protected.apk
-   14:41:12,289 TRACE FileInfoProcessor:56 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of file info
-   14:41:12,290 TRACE FileInfoProcessor:64 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of file info
-   14:41:12,294 TRACE HashProcessor:75 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of hashes
-   14:41:12,295 TRACE HashProcessor:106 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of hashes
-   14:41:12,295 TRACE AndroidManifestProcessor:66 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing AndroidManifest
-   14:41:12,296 TRACE AndroidManifestProcessor:93 -  [CRED-4.0.2-RC0-qa-protected.apk] Using XML decompress method
-   14:41:12,325 TRACE AndroidManifestProcessor:84 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of AndroidManifest
-   14:41:12,326 TRACE ResourceProcessor:67 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of resources
-   14:41:12,326  WARN ResourceProcessor:71 -  [CRED-4.0.2-RC0-qa-protected.apk] res directory doesn`t exists, aborting getting of resources
-   14:41:12,330  INFO FileUtils:52 - Directory decompiled deleted
-   14:41:12,877  INFO FileUtils:52 - Directory unziped deleted
-   14:41:12,877  INFO FileUtils:52 - Directory CRED-4.0.2-RC0-qa-protected.apk deleted
-   14:41:12,878  INFO ApkProcessingTask:78 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of file CRED-4.0.2-RC0-qa-protected.apk
-   14:41:12,907  INFO JsonUtils:52 - CRED-4.0.2-RC0-qa-protected.apk written to CRED-4.0.2-RC0-qa-protected.json in output
+20:36:10,765  INFO ApkProcessingTask:51 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of file CRED-4.0.2-RC0-qa-protected.apk
+   20:36:10,767 TRACE FileInfoProcessor:56 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of file info
+   20:36:10,768 TRACE FileInfoProcessor:64 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of file info
+   20:36:10,772 TRACE HashProcessor:75 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of hashes
+   20:36:10,773 TRACE HashProcessor:106 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of hashes
+   20:36:10,773 TRACE AndroidManifestProcessor:66 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing AndroidManifest
+   20:36:10,774 TRACE AndroidManifestProcessor:93 -  [CRED-4.0.2-RC0-qa-protected.apk] Using XML decompress method
+   20:36:10,798 TRACE AndroidManifestProcessor:84 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of AndroidManifest
+   20:36:10,798 TRACE ResourceProcessor:67 -  [CRED-4.0.2-RC0-qa-protected.apk] Started processing of resources
+   20:36:10,798  WARN ResourceProcessor:71 -  [CRED-4.0.2-RC0-qa-protected.apk] res directory doesn`t exists, aborting getting of resources
+   20:36:10,803  INFO FileUtils:52 - Directory decompiled deleted
+   20:36:11,390  INFO FileUtils:52 - Directory unziped deleted
+   20:36:11,391  INFO FileUtils:52 - Directory CRED-4.0.2-RC0-qa-protected.apk deleted
+   20:36:11,391  INFO ApkProcessingTask:78 -  [CRED-4.0.2-RC0-qa-protected.apk] Finished processing of file CRED-4.0.2-RC0-qa-protected.apk
+   20:36:11,422  INFO JsonUtils:52 - CRED-4.0.2-RC0-qa-protected.apk written to CRED-4.0.2-RC0-qa-protected.json in output
    
