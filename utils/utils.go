@@ -1,15 +1,19 @@
 package utils
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"morf/db"
 	"morf/models"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
@@ -83,7 +87,7 @@ func CheckDuplicateInDB(startDB *gorm.DB, apkPath string) (bool, []byte) {
 	for _, value := range secret {
 		if value.APKHash == ExtractHash(apkPath) {
 			log.Info("Duplicate found in DB")
-			json_data, json_error := json.Marshal(value)
+			json_data, json_error := json.MarshalIndent(value, "", " ")
 			if json_error != nil {
 				log.Error(json_error)
 			}
@@ -96,14 +100,16 @@ func CheckDuplicateInDB(startDB *gorm.DB, apkPath string) (bool, []byte) {
 func RespondToSlack(slackData models.SlackData, ctx *gin.Context, data string) {
 	data_string := parseSlackData(data)
 	slack_app := slack.New(slackData.SlackToken)
-	_, _, err := slack_app.PostMessage(slackData.SlackChannel, slack.MsgOptionText("```"+data_string+"```", false), slack.MsgOptionTS(slackData.TimeStamp))
-	if err != nil {
-		log.Error("Error sending message to Slack:", err)
-		return
+	for _, message := range data_string {
+		_, _, err := slack_app.PostMessage(slackData.SlackChannel, slack.MsgOptionText("```"+message+"```", false), slack.MsgOptionTS(slackData.TimeStamp))
+		if err != nil {
+			log.Error("Error sending message to Slack:", err)
+			return
+		}
 	}
 }
 
-func parseSlackData(data string) string {
+func parseSlackData(data string) []string {
 	var secrets models.Secrets
 
 	apk_data := json.Unmarshal([]byte(data), &secrets)
@@ -114,10 +120,10 @@ func parseSlackData(data string) string {
 	if secrets.SecretModel != "" {
 		return parseSecretModel(secrets)
 	}
-	return "** No secrets found **"
+	return []string{"** No secrets found **"}
 }
 
-func parseSecretModel(secrets models.Secrets) string {
+func parseSecretModel(secrets models.Secrets) []string {
 	var secretModel []models.SecretModel
 
 	err := json.Unmarshal([]byte(secrets.SecretModel), &secretModel)
@@ -126,39 +132,52 @@ func parseSecretModel(secrets models.Secrets) string {
 		log.Error(err)
 	}
 
-	slack_message :=
-		"APK Name: " + secrets.FileName + "\n" +
-			"App Version:" + secrets.APKVersion + "\n" +
-			"Package Name: " + secrets.PackageDataModel.PackageName + "\n" +
-			"SHA1: " + secrets.APKHash + "\n" +
-			"\n" +
-			"Secrets in APK: \n" +
-			"----------------\n" +
-			"" + strconv.Itoa(len(secretModel)) + " secrets found\n" +
-			"----------------\n"
+	var messages []string
+	var currentMessage string
+
+	currentMessage = "APK Name: " + secrets.FileName + "\n" +
+		"App Version: " + secrets.APKVersion + "\n" +
+		"Package Name: " + secrets.PackageDataModel.PackageName + "\n" +
+		"SHA1: " + secrets.APKHash + "\n" +
+		"\n" +
+		"Secrets in APK: \n" +
+		"----------------\n" +
+		"" + strconv.Itoa(len(secretModel)) + " secrets found\n" +
+		"----------------\n"
 
 	for _, value := range secretModel {
-		slack_message += "Secret Type: " + value.SecretType + "\n" +
+		secretEntry := "Secret Type: " + value.SecretType + "\n" +
 			"Secret Value: " + value.SecretString + "\n" +
 			"Secret Type: " + value.SecretType + "\n" +
 			"Line No: " + strconv.Itoa(value.LineNo) + "\n" +
 			"File Location: " + value.FileLocation + "\n" +
 			"----------------\n"
+
+		if len(currentMessage)+len(secretEntry) > 4000 { // Slack has a 4000-character limit per message
+			messages = append(messages, currentMessage)
+			currentMessage = ""
+		}
+
+		currentMessage += secretEntry
 	}
 
-	return slack_message
+	if currentMessage != "" {
+		messages = append(messages, currentMessage)
+	}
+
+	return messages
 }
 
 func ExtractHash(apkPath string) string {
 	file, err := os.Open(apkPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 	defer file.Close()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
 	hashInBytes := hash.Sum(nil)[:16]
 	return hex.EncodeToString(hashInBytes)
@@ -167,4 +186,39 @@ func ExtractHash(apkPath string) string {
 func CreateSecretModel(apkPath string, packageModel models.PackageDataModel, metadata models.MetaDataModel, scanner_data []models.SecretModel, secretData []byte) models.Secrets {
 	secretModel := models.Secrets{FileName: apkPath, APKHash: packageModel.APKHash, APKVersion: packageModel.VersionName, SecretModel: string(secretData), Metadata: metadata, PackageDataModel: packageModel}
 	return secretModel
+}
+
+func ExecuteCommand(command string, args []string, captureOutput bool, useOutputMode bool) (*bytes.Buffer, error) {
+	cmd := exec.Command(command, args...)
+
+	var stdout, stderr bytes.Buffer
+	if captureOutput {
+		cmd.Stdout = &stdout
+	}
+	cmd.Stderr = &stderr
+
+	var err error
+	if useOutputMode {
+		_, err = cmd.Output()
+	} else {
+		err = cmd.Run()
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("Error executing command: %s\nstderr: %s", err, stderr.String())
+	}
+
+	return &stdout, nil
+}
+
+func HandleError(err error, msg string, exitCode1 bool) {
+	if err != nil {
+		if exitCode1 {
+			if exitError, ok := err.(*exec.ExitError); ok {
+				if status, ok := exitError.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 1 {
+					return
+				}
+			}
+		}
+	}
 }
