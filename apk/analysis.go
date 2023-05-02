@@ -35,10 +35,10 @@ func StartCliExtraction(apkPath string, db *gorm.DB) {
 	secret := util.CreateSecretModel(apkPath, packageModel, metadata, scanner_data, secret_data)
 	database.InsertSecrets(secret, db)
 
-	json_data, json_error := json.Marshal(secret)
+	json_data, json_error := json.MarshalIndent(secret, "", " ")
 
 	if json_error != nil {
-		log.Fatal(json_error)
+		log.Error(json_error)
 	}
 
 	//Check if backup folder exists
@@ -88,11 +88,11 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 
 	database.InsertSecrets(secret, db)
 
-	json_data, json_error := json.Marshal(secret)
+	json_data, json_error := json.MarshalIndent(secret, "", " ")
 
 	if json_error != nil {
-		log.Fatal("JSON ERROR: ", json_error)
-		log.Fatal(json_error)
+		log.Error("JSON ERROR: ", json_error)
+		log.Error(json_error)
 	}
 
 	//Check if backup folder exists

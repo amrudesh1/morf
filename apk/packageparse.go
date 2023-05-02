@@ -18,7 +18,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 
 	if aapt_error != nil {
 		log.Error("Error while getting APK version etc")
-		log.Fatal(aapt_error)
+		log.Error(aapt_error)
 	}
 
 	aapt_byte_to_string := aapt_success[:]
