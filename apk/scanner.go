@@ -3,15 +3,15 @@ package apk
 // Import Ripgrep library for searching for secrets in the code
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"morf/models"
+	"morf/utils"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -37,7 +37,6 @@ type PatternList struct {
 
 var secretPatterns SecretPatterns
 var secretModel []models.SecretModel
-var dummyCoutner int = 0
 
 func CheckAPK(apkPath string) {
 	PacakgeData := ExtractPackageData("scan.apk")
@@ -63,12 +62,11 @@ func StartSecScan(apkPath string) []models.SecretModel {
 
 	//Decompile the resources of the APK file
 
-	log.Println("Decompiling the APK file for resources")
-	res_decompile, res_error := exec.Command("java", "-jar", "tools/apktool.jar", "d", "-s", apkPath, "-o", "temp/output/apk/appreso").Output()
+	res_decompile, res_error := utils.ExecuteCommand("java", []string{"-jar", "tools/apktool.jar", "d", "-s", apkPath, "-o", "temp/output/apk/appreso"}, false, true)
 
 	if res_error != nil {
 		log.Println("Error while decompiling the resources of the APK file")
-		log.Fatal(res_error)
+		log.Error(res_error)
 	}
 
 	if res_decompile != nil {
@@ -83,102 +81,112 @@ func StartSecScan(apkPath string) []models.SecretModel {
 	return nil
 }
 
-func handleError(err error, msg string, exitCode1 bool) {
-	if err != nil {
-		if exitCode1 {
-			if exitError, ok := err.(*exec.ExitError); ok {
-				if status, ok := exitError.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 1 {
-					fmt.Println(msg, "Pattern not found.")
-					return
-				}
-			}
-		}
-		fmt.Println(msg, err)
-	}
-}
-
 func readPatternFile(patternFilePath string) ([]byte, error) {
 	patternFile, err := os.OpenFile(patternFilePath, os.O_RDONLY, 0666)
 	defer patternFile.Close()
-	handleError(err, "Error opening pattern file:", true)
+	utils.HandleError(err, "Error opening pattern file:", true)
 
 	yamlFile, err := ioutil.ReadAll(patternFile)
-	handleError(err, "Error reading pattern file:", true)
+	utils.HandleError(err, "Error reading pattern file:", true)
 
 	return yamlFile, err
 }
 
 func StartScan(apkPath string) []models.SecretModel {
-
 	files, err := ioutil.ReadDir("patterns")
-	handleError(err, "Error reading directory:", true)
+	utils.HandleError(err, "Error reading directory:", true)
+
+	var wg sync.WaitGroup
+	resultsChan := make(chan models.SecretModel)
+
+	// Create a mutex instance
+	var mu sync.Mutex
 
 	for _, file := range files {
-		fmt.Println("File:", file.Name())
+		if strings.HasSuffix(file.Name(), ".yaml") || strings.HasSuffix(file.Name(), ".yml") {
+			wg.Add(1)
+			go func(file os.FileInfo) {
+				defer wg.Done()
+				yamlFile, err := readPatternFile("patterns/" + file.Name())
+				// Make sure file name is ending with .yml or .yaml
 
-		yamlFile, err := readPatternFile("patterns/" + file.Name())
-		if err != nil {
-			continue
-		}
+				if err != nil {
+					return
+				}
 
-		err = yaml.Unmarshal(yamlFile, &secretPatterns)
-		if err != nil {
-			fmt.Println(file.Name())
-			fmt.Println(err)
-			continue
-		}
+				err = yaml.Unmarshal(yamlFile, &secretPatterns)
 
-		for _, pattern := range secretPatterns.Patterns {
+				if err != nil {
+					fmt.Printf("Error unmarshaling YAML file %s:\n%s\n", file.Name(), err)
+					fmt.Printf("YAML content:\n%s\n", string(yamlFile))
+					return
+				}
 
-			pat := pattern.Pattern.Regex
-			cmd := exec.Command("rg", "-n", "-e", fmt.Sprintf("\"%s\"", pat), "--multiline", apkPath)
+				if err != nil {
+					fmt.Println(file.Name())
+					fmt.Println(err)
+					return
+				}
 
-			// Sleep for 1 second to avoid rate limiting
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
+				for _, pattern := range secretPatterns.Patterns {
+					pat := pattern.Pattern.Regex
+					stdout, err := utils.ExecuteCommand("rg", []string{"-n", "-e", fmt.Sprintf("\"%s\"", pat), "--multiline", apkPath}, true, false)
 
-			err := cmd.Run()
-			handleError(err, "Error running ripgrep:", true)
+					utils.HandleError(err, "Error running ripgrep:", true)
+					if stdout != nil {
+						if stdout.Len() > 0 {
+							// Split Stdout into lines and iterate over them
+							lines := strings.Split(stdout.String(), "\n")
+							for _, line := range lines {
+								parts := strings.SplitN(line, ":", 3)
+								if len(parts) != 3 {
+									continue
+								}
 
-			if stdout.Len() > 0 {
+								fileName := parts[0]
+								lineNumber, err := strconv.Atoi(parts[1])
+								content := parts[2]
 
-				// Split Stdout into lines and iterate over them
-				lines := strings.Split(stdout.String(), "\n")
-				for _, line := range lines {
+								contentParts := strings.SplitN(strings.TrimSpace(content), " ", 2)
+								typeName := contentParts[0]
+								patternFound := ""
+								if len(contentParts) > 1 {
+									patternFound = contentParts[1]
+								}
 
-					parts := strings.SplitN(line, ":", 3)
-					if len(parts) != 3 {
-						fmt.Printf("Invalid RipGrep output: %s\n", stdout.String())
-						continue
-					}
+								if err == nil {
+									secret := models.SecretModel{
+										Type:         pattern.Pattern.Name,
+										LineNo:       lineNumber,
+										FileLocation: fileName,
+										SecretType:   typeName,
+										SecretString: patternFound,
+									}
 
-					fileName := parts[0]
-					lineNumber, err := strconv.Atoi(parts[1])
-					content := parts[2]
-
-					contentParts := strings.SplitN(strings.TrimSpace(content), " ", 2)
-					typeName := contentParts[0]
-					patternFound := ""
-					if len(contentParts) > 1 {
-						patternFound = contentParts[1]
-					}
-
-					if err == nil {
-						secretModel = append(secretModel, models.SecretModel{
-							Type:         pattern.Pattern.Name,
-							LineNo:       lineNumber,
-							FileLocation: fileName,
-							SecretType:   typeName,
-							SecretString: patternFound,
-						})
-
-						log.Info(secretModel)
-						log.Info(len(secretModel))
+									resultsChan <- secret
+								}
+							}
+						}
 					}
 				}
-			}
+			}(file)
 		}
 	}
+
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	var secretModel []models.SecretModel
+
+	for secret := range resultsChan {
+		// Lock the critical section
+		mu.Lock()
+		secretModel = append(secretModel, secret)
+		// Unlock the critical section
+		mu.Unlock()
+	}
+
 	return secretModel
 }
