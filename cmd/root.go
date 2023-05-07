@@ -17,14 +17,15 @@ var MorfCmd = &cob.Command{
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	PreRunE:       preFlight,
-	Args:          cob.MinimumNArgs(1),
+	Args:          cob.MinimumNArgs(2),
 	RunE:          runMORF,
 }
 
 func Execute() {
+
 	err := MorfCmd.Execute()
 	if err != nil {
-		os.Exit(1)
+		MorfCmd.HelpFunc()(MorfCmd, os.Args)
 	}
 }
 
@@ -35,7 +36,6 @@ func preFlight(cmd *cob.Command, args []string) error {
 		cmd.HelpFunc()(cmd, args)
 		return nil
 	}
-
 	return nil
 }
 
@@ -49,7 +49,7 @@ func runMORF(cmd *cob.Command, args []string) error {
 	if vip.GetBool("server") {
 		log.Info("Running MORF as a Server")
 	} else if vip.GetBool("cli") {
-
+		log.Info("Running MORF as a CLI")
 	}
 
 	return nil
