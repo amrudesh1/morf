@@ -12,6 +12,8 @@ Overall, MORF is a swiss army knife for offensive mobile application security, a
 
 ## Architecture
 
+![MORF Architecture drawio (2)](https://github.com/amrudesh1/MORF/assets/20198748/f5bcdbbf-68ea-41bc-9c12-3f6d07e9049d)
+
 
 ## Presentations / Conferences
 
