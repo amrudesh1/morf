@@ -18,7 +18,7 @@ Overall, MORF is a swiss army knife for offensive mobile application security, a
 - [BlackHat Asia 2023 - Aresenal](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292) 
 ## Demo
 
-### Insert a GIF after the inilisation of the ReadMe method.
+![Uploading ezgif.com-video-to-gif.gif…]()
 
 
 ## Environment Variables
@@ -26,6 +26,7 @@ Overall, MORF is a swiss army knife for offensive mobile application security, a
 To run this project, you will need to add the following environment variables to your environment variables/
 
 `DATABASE_URL`
+
 
 
 ## Installation
