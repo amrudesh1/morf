@@ -1,5 +1,5 @@
 
-# MORF - Mobile
+# MORF - Mobile Reconnaissance Framework 
 
 Mobile Reconnaissance Framework is a powerful, lightweight and platform-independent offensive mobile security tool designed to help hackers and developers identify and address sensitive information within mobile applications. It is like a swiss army knife for mobile application security, as it uses heuristics-based techniques to search through the codebase, creating a comprehensive repository of sensitive information it finds. This makes it easy to identify and address any potential sensitive data leak.
 
