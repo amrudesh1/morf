@@ -32,6 +32,11 @@ RUN apt-get update && \
     rm -rf /usr/lib/jvm/java-${JDK_VERSION}-openjdk-amd64/jre/lib/amd64/libjavafx*.so && \
     rm -rf /usr/lib/jvm/java-${JDK_VERSION}-openjdk-amd64/jre/lib/amd64/libjfx*.so
 
+## Install Ripgrep 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ripgrep && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY . .
