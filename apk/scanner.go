@@ -112,7 +112,7 @@ func StartScan(apkPath string) []models.SecretModel {
 	utils.HandleError(err, "Error reading directory:", true)
 
 	var wg sync.WaitGroup
-	resultsChan := make(chan models.SecretModel)
+	resultsChan := make(chan models.SecretModel, 100)
 
 	// Create a mutex instance
 	var mu sync.Mutex
@@ -126,12 +126,18 @@ func StartScan(apkPath string) []models.SecretModel {
 				// Make sure file name is ending with .yml or .yaml
 
 				if err != nil {
-					return
+					fmt.Println(err)
 				}
+<<<<<<< Updated upstream
 				fmt.Print("Scanning for secrets in file:", file.Name())
 				fmt.Print("\n")
 				fmt.Println(yamlFile)
+=======
+
+				mu.Lock()
+>>>>>>> Stashed changes
 				err = yaml.Unmarshal(yamlFile, &secretPatterns)
+				mu.Unlock()
 
 				if err != nil {
 					fmt.Printf("Error unmarshaling YAML file %s:\n%s\n", file.Name(), err)
@@ -147,6 +153,7 @@ func StartScan(apkPath string) []models.SecretModel {
 
 				for _, pattern := range secretPatterns.Patterns {
 					pat := pattern.Pattern.Regex
+					fmt.Println(pat)
 					stdout, err := utils.ExecuteCommand("rg", []string{"-n", "-e", fmt.Sprintf("\"%s\"", pat), "--multiline", apkPath}, true, false)
 
 					utils.HandleError(err, "Error running ripgrep:", true)
@@ -190,10 +197,8 @@ func StartScan(apkPath string) []models.SecretModel {
 		}
 	}
 
-	go func() {
-		wg.Wait()
-		close(resultsChan)
-	}()
+	wg.Wait()
+	close(resultsChan)
 
 	var secretModel []models.SecretModel
 
@@ -201,7 +206,6 @@ func StartScan(apkPath string) []models.SecretModel {
 		// Lock the critical section
 		mu.Lock()
 		secretModel = append(secretModel, secret)
-		// Unlock the critical section
 		mu.Unlock()
 	}
 
