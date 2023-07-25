@@ -16,6 +16,7 @@ limitations under the License.
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	database "morf/db"
 	"morf/models"
@@ -91,6 +92,8 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 
 	packageModel := ExtractPackageData(apkPath)
 	metadata := StartMetaDataCollection(apkPath)
+	fmt.Println("Metadata: ", metadata)
+	fmt.Println("Package Model: ", packageModel)
 	scanner_data := StartSecScan("temp/input/" + apkPath)
 	secret_data, secret_error := json.Marshal(scanner_data)
 

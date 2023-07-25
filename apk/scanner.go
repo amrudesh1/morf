@@ -128,7 +128,9 @@ func StartScan(apkPath string) []models.SecretModel {
 				if err != nil {
 					return
 				}
-
+				fmt.Print("Scanning for secrets in file:", file.Name())
+				fmt.Print("\n")
+				fmt.Println(yamlFile)
 				err = yaml.Unmarshal(yamlFile, &secretPatterns)
 
 				if err != nil {
