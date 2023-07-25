@@ -46,5 +46,9 @@ RUN go mod download && \
 
 EXPOSE 8888
 
+<<<<<<< Updated upstream
 # ENTRYPOINT [ "./morf" "server" ]
+=======
+ENTRYPOINT ["./morf" , "server" , "-p" , "8888"]
+>>>>>>> Stashed changes
 
