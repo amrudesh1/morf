@@ -40,8 +40,10 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			c.String(http.StatusBadRequest, fmt.Sprintf("get form err: %s", error.Error()))
 			return
 		}
+
 		c.SaveUploadedFile(file, file.Filename)
 		apk.StartExtractProcess(file.Filename, db.DB, c, false, models.SlackData{})
+
 	})
 
 	router.POST("/slackscan", func(ctx *gin.Context) {
@@ -51,17 +53,23 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		go func() {
+			download_url := utils.GetDownloadUrlFromSlack(requestBody, ctx)
+			if download_url == "" {
+				return
+			}
 
-		download_url := utils.GetDownloadUrlFromSlack(requestBody, ctx)
-		if download_url == "" {
-			return
-		}
+			// Send a response back to prevent API timeout
+			ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
 
+<<<<<<< Updated upstream
 		// Send a response back to prevent API timeout
+=======
+			// sleep for 5 seconds to allow slack to upload the file
+>>>>>>> Stashed changes
 
-		// sleep for 5 seconds to allow slack to upload the file
-
-		apk.StartExtractProcess(download_url, db.DB, ctx, true, requestBody)
+			apk.StartExtractProcess(download_url, db.DB, ctx, true, requestBody)
+		}()
 
 	})
 

@@ -17,6 +17,8 @@ limitations under the License.
 import (
 	"morf/db"
 	route "morf/router"
+	"net/http"
+	"time"
 
 	gin "github.com/gin-gonic/gin"
 	cob "github.com/spf13/cobra"
@@ -47,8 +49,14 @@ func runServer(cmd *cob.Command, args []string) {
 	r.MaxMultipartMemory = 8 << 20 // 8 Mi
 
 	router := r.Group("/api")
+
+	srv := &http.Server{
+		Addr:         ":" + vip.GetString("port"),
+		Handler:      r,
+		ReadTimeout:  5 * 60 * time.Second,
+		WriteTimeout: 10 * 60 * time.Second,
+	}
 	route.InitRouters(router)
 
-	// r.SetTrustedProxies(nil)
-	r.Run(":" + vip.GetString("port"))
+	srv.ListenAndServe()
 }

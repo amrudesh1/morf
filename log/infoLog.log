@@ -1,5 +1,5 @@
-22:21:02,891  INFO ApkProcessingTask:51 -  [CRED-3.2.4-RC0-qa.apk] Started processing of file CRED-3.2.4-RC0-qa.apk
-   22:21:02,894 TRACE FileInfoProcessor:56 -  [CRED-3.2.4-RC0-qa.apk] Started processing of file info
-   22:21:02,895 TRACE FileInfoProcessor:64 -  [CRED-3.2.4-RC0-qa.apk] Finished processing of file info
-   22:21:02,900 TRACE CertificateProcessor:94 -  [CRED-3.2.4-RC0-qa.apk] Started processing of certificate
+16:40:13,951  INFO ApkProcessingTask:51 -  [CRED-4.0.9-RC0-qa.apk] Started processing of file CRED-4.0.9-RC0-qa.apk
+   16:40:13,955 TRACE FileInfoProcessor:56 -  [CRED-4.0.9-RC0-qa.apk] Started processing of file info
+   16:40:13,957 TRACE FileInfoProcessor:64 -  [CRED-4.0.9-RC0-qa.apk] Finished processing of file info
+   16:40:13,963 TRACE CertificateProcessor:94 -  [CRED-4.0.9-RC0-qa.apk] Started processing of certificate
    
