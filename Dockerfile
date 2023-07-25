@@ -46,5 +46,5 @@ RUN go mod download && \
 
 EXPOSE 8888
 
-ENTRYPOINT [ "./morf" "server" ]
+# ENTRYPOINT [ "./morf" "server" ]
 
