@@ -58,7 +58,6 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		}
 
 		// Send a response back to prevent API timeout
-		ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
 
 		// sleep for 5 seconds to allow slack to upload the file
 
