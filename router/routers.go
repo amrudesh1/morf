@@ -53,6 +53,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+
 		go func() {
 			download_url := utils.GetDownloadUrlFromSlack(requestBody, ctx)
 			if download_url == "" {
@@ -61,12 +62,6 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 
 			// Send a response back to prevent API timeout
 			ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
-
-<<<<<<< Updated upstream
-		// Send a response back to prevent API timeout
-=======
-			// sleep for 5 seconds to allow slack to upload the file
->>>>>>> Stashed changes
 
 			apk.StartExtractProcess(download_url, db.DB, ctx, true, requestBody)
 		}()

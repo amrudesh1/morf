@@ -128,14 +128,8 @@ func StartScan(apkPath string) []models.SecretModel {
 				if err != nil {
 					fmt.Println(err)
 				}
-<<<<<<< Updated upstream
-				fmt.Print("Scanning for secrets in file:", file.Name())
-				fmt.Print("\n")
-				fmt.Println(yamlFile)
-=======
 
 				mu.Lock()
->>>>>>> Stashed changes
 				err = yaml.Unmarshal(yamlFile, &secretPatterns)
 				mu.Unlock()
 
