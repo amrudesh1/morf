@@ -172,13 +172,14 @@ func StartScan(apkPath string) []models.SecretModel {
 									patternFound = contentParts[1]
 								}
 
+								// Split Secret String between double quotes
 								if err == nil {
 									secret := models.SecretModel{
 										Type:         pattern.Pattern.Name,
 										LineNo:       lineNumber,
 										FileLocation: fileName,
 										SecretType:   typeName,
-										SecretString: patternFound,
+										SecretString: strings.Split(patternFound, "\"")[1],
 									}
 
 									resultsChan <- secret

@@ -12,7 +12,9 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-*/package router
+*/
+
+package router
 
 import (
 	"fmt"
@@ -29,9 +31,11 @@ import (
 func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 
 	router.GET("/health", func(c *gin.Context) {
+
 		c.JSON(200, gin.H{
 			"message": "ok",
 		})
+
 	})
 
 	router.POST("/upload", func(c *gin.Context) {
@@ -43,6 +47,23 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 
 		c.SaveUploadedFile(file, file.Filename)
 		apk.StartExtractProcess(file.Filename, db.DB, c, false, models.SlackData{})
+
+	})
+
+	router.POST("/jira", func(ctx *gin.Context) {
+		requestBody := models.JiraModel{}
+		if err := ctx.ShouldBindBodyWith(&requestBody, binding.JSON); err != nil {
+			fmt.Println("Error binding request body:", err)
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
+		go func() {
+			apk.StartJiraProcess(requestBody, db.DB, ctx)
+		}()
+	})
+
+	router.POST("/release", func(ctx *gin.Context) {
 
 	})
 
