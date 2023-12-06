@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
@@ -35,6 +36,112 @@ import (
 	"github.com/slack-go/slack"
 	"gorm.io/gorm"
 )
+
+func CookJiraComment(jiraModel models.JiraModel, secret models.Secrets, ctx *gin.Context) string {
+	if len(parseJiraMessage(secret)) == 0 {
+		return ""
+	} else {
+		for _, message := range parseJiraMessage(secret) {
+			commentToJira(jiraModel, message)
+		}
+	}
+
+	return "Commented on Jira ticket"
+}
+
+func SlackRespond(jiraModel models.JiraModel, slackData models.SlackData) {
+	slack_app := slack.New(slackData.SlackToken)
+	_, err := slack_app.AuthTest()
+	if err != nil {
+		log.Error(err)
+	}
+	_, _, err = slack_app.PostMessage("C01S8U6HLHM", slack.MsgOptionText("```"+"MORF Scan has been completed successfully"+"```", false))
+}
+
+func commentToJira(jiraModel models.JiraModel, message string) string {
+	jira_url := "***REMOVED***" + "/rest/api/2/issue/" + jiraModel.Ticket_id + "/comment"
+	final_body := map[string]string{"body": message}
+	final_body_json, _ := json.Marshal(final_body)
+	log.Info(final_body)
+	req, err := http.NewRequest("POST", jira_url, bytes.NewBuffer([]byte(final_body_json)))
+
+	log.Print(jiraModel.JiraToken)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Basic "+jiraModel.JiraToken)
+
+	if err != nil {
+		log.Error(err)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+
+	if err != nil {
+		log.Error(err)
+	}
+
+	defer resp.Body.Close()
+
+	log.Info("response Status:", resp.Status)
+	log.Info("response Headers:", resp.Header)
+
+	if resp.StatusCode == 201 {
+		log.Info("Commented on Jira ticket")
+		SlackRespond(jiraModel, models.SlackData{SlackToken: jiraModel.SlackToken, SlackChannel: ""})
+	}
+
+	return resp.Status
+
+}
+
+func DownloadFileUsingSlack(jiraModel models.JiraModel, ctx *gin.Context) string {
+
+	slack_app := slack.New(jiraModel.SlackToken)
+	_, err := slack_app.AuthTest()
+
+	if err != nil {
+		log.Error(err)
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return ""
+	}
+
+	// Split URL and get the last part of the URL
+	url := jiraModel.FileUrl
+	url_split := strings.Split(url, "/")
+	file_name := url_split[len(url_split)-1]
+
+	file, err := os.Create(file_name)
+	if err != nil {
+		log.Error(err)
+		return ""
+	}
+
+	defer file.Close()
+
+	suc := slack_app.GetFile(jiraModel.FileUrl, file)
+	if suc != nil {
+		return ""
+	}
+
+	if file_name[len(file_name)-4:] != ".apk" {
+		log.Error("File is not an APK")
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "File is not an APK",
+		})
+		return ""
+	} else {
+		log.Info("File is an APK")
+		ctx.JSON(http.StatusOK, gin.H{
+			"status":  http.StatusOK,
+			"message": "Downloading of APK successful",
+		})
+	}
+
+	return file_name
+
+}
 
 func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) string {
 	slack_app := slack.New(slackData.SlackToken)
@@ -68,6 +175,7 @@ func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) strin
 		}
 	}
 
+	fmt.Println(file_url)
 	file, err := os.Create(file_name)
 	if err != nil {
 		log.Error(err)
@@ -76,6 +184,7 @@ func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) strin
 
 	defer file.Close()
 
+	log.Print(file_url)
 	suc := slack_app.GetFile(file_url, file)
 	if suc != nil {
 		log.Error(suc)
@@ -111,7 +220,7 @@ func CheckDuplicateInDB(startDB *gorm.DB, apkPath string) (bool, []byte) {
 	return false, nil
 }
 
-func RespondToSlack(slackData models.SlackData, ctx *gin.Context, data string) {
+func RespondSecretsToSlack(slackData models.SlackData, ctx *gin.Context, data string) {
 	data_string := parseSlackData(data)
 	slack_app := slack.New(slackData.SlackToken)
 	for _, message := range data_string {
@@ -160,7 +269,7 @@ func parseSecretModel(secrets models.Secrets) []string {
 		"----------------\n"
 
 	for _, value := range secretModel {
-		secretEntry := "Secret Type: " + value.SecretType + "\n" +
+		secretEntry := "Secret Type: " + value.Type + "\n" +
 			"Secret Value: " + value.SecretString + "\n" +
 			"Secret Type: " + value.SecretType + "\n" +
 			"Line No: " + strconv.Itoa(value.LineNo) + "\n" +
@@ -176,6 +285,52 @@ func parseSecretModel(secrets models.Secrets) []string {
 	}
 
 	if currentMessage != "" {
+		messages = append(messages, currentMessage)
+	}
+
+	return messages
+}
+
+func parseJiraMessage(secrets models.Secrets) []string {
+	var secretModel []models.SecretModel
+
+	err := json.Unmarshal([]byte(secrets.SecretModel), &secretModel)
+
+	if err != nil {
+		log.Error(err)
+	}
+
+	var messages []string
+	var currentMessage string
+
+	currentMessage = "h2. MORF - Mobile Reconnisance Framework\n" +
+		"h4. APK Name: " + secrets.FileName + "\n" +
+		"h4. App Version: " + secrets.APKVersion + "\n" +
+		"h4. Package Name: " + secrets.PackageDataModel.PackageName + "\n" +
+		"h4. SHA1: " + secrets.APKHash + "\n" +
+		"h4. Secrets in APK:\n" +
+		"----------------\n" +
+		strconv.Itoa(len(secretModel)) + " secrets found\n" +
+		"----------------\n"
+
+	for _, value := range secretModel {
+		heading := value.Type
+		headingMarkup := fmt.Sprintf("\n=== %s ===\n", heading)
+		secretEntry := headingMarkup +
+			"{noformat}" + "Secret Value: " + value.SecretString + "\n" +
+			"Line No: " + strconv.Itoa(value.LineNo) + "\n" +
+			"File Location: " + value.FileLocation + "\n" +
+			"{noformat}"
+
+		if len(currentMessage)+len(secretEntry) > 32767 { // Jira has a 32,767 character limit per comment
+			messages = append(messages, currentMessage)
+			currentMessage = secretEntry
+		} else {
+			currentMessage += secretEntry
+		}
+	}
+
+	if currentMessage != "{noformat}" {
 		messages = append(messages, currentMessage)
 	}
 
