@@ -15,6 +15,7 @@ limitations under the License.
 */package db
 
 import (
+	"fmt"
 	"morf/models"
 	"os"
 
@@ -27,6 +28,7 @@ var DB *gorm.DB
 func InitDB() {
 	// Connect to PHPMyAdmin database
 	db, err := gorm.Open(mysql.Open(os.Getenv("DATABASE_URL")), &gorm.Config{})
+	fmt.Println("Database URL:", os.Getenv("DATABASE_URL"))
 
 	if err != nil {
 		panic("failed to connect database")

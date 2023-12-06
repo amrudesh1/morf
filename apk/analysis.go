@@ -16,7 +16,6 @@ limitations under the License.
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	database "morf/db"
 	"morf/models"
@@ -56,21 +55,52 @@ func StartCliExtraction(apkPath string, db *gorm.DB) {
 		log.Error(json_error)
 	}
 
-	//Check if backup folder exists
 	_, err_ := os.Stat(vip.GetString("backup_path"))
 
 	if os.IsNotExist(err_) {
 		os.Mkdir(vip.GetString("backup_path"), 0755)
 	}
 
-	//Move the APK Data to backup folder
 	err := ioutil.WriteFile(vip.GetString("backup_path")+"/"+apkPath+"_"+secret.APKVersion+".json", json_data, 0644)
 	if err != nil {
 		log.Error(err)
 	}
 
-	// Print File Path to the apk file.json
 	log.Info("APK Data saved to: " + vip.GetString("backup_path") + "/" + apkPath + "_" + secret.APKVersion + ".json")
+}
+
+func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
+	apk_path := util.DownloadFileUsingSlack(jiramodel, c)
+	if apk_path == "" {
+		return
+	}
+
+	apkFound, json_data := util.CheckDuplicateInDB(db, apk_path)
+
+	if apkFound {
+		log.Info("APK already exists in the database")
+		var secrets models.Secrets
+		apk_data := json.Unmarshal([]byte(json_data), &secrets)
+		if apk_data != nil {
+			log.Error(apk_data)
+		}
+		util.CookJiraComment(jiramodel, secrets, c)
+		return
+	}
+
+	packageModel := ExtractPackageData(apk_path)
+	metadata := StartMetaDataCollection(apk_path)
+	scanner_data := StartSecScan("temp/input/" + apk_path)
+	secret_data, secret_error := json.Marshal(scanner_data)
+
+	if secret_error != nil {
+		log.Error(secret_error)
+	}
+	secret := util.CreateSecretModel(apk_path, packageModel, metadata, scanner_data, secret_data)
+	database.InsertSecrets(secret, db)
+
+	// Comment the data to JIRA ticket
+	util.CookJiraComment(jiramodel, secret, c)
 }
 
 func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bool, slackData models.SlackData) {
@@ -78,7 +108,7 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 	apkFound, json_data := util.CheckDuplicateInDB(db, apkPath)
 	if apkFound {
 		if isSlack {
-			util.RespondToSlack(slackData, c, string(json_data))
+			util.RespondSecretsToSlack(slackData, c, string(json_data))
 		} else {
 
 			c.JSON(http.StatusOK, gin.H{
@@ -92,8 +122,6 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 
 	packageModel := ExtractPackageData(apkPath)
 	metadata := StartMetaDataCollection(apkPath)
-	fmt.Println("Metadata: ", metadata)
-	fmt.Println("Package Model: ", packageModel)
 	scanner_data := StartSecScan("temp/input/" + apkPath)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
@@ -138,7 +166,7 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 	}
 
 	if isSlack {
-		util.RespondToSlack(slackData, c, string(json_data))
+		util.RespondSecretsToSlack(slackData, c, string(json_data))
 	}
 
 }
