@@ -17,8 +17,8 @@ Overall, MORF is a Swiss army knife for offensive mobile application security, a
 
 ## Presentations / Conferences
 
-- [BlackHat Asia 2023 - Aresenal](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292)
-- [BlackHat USA 2023 - Aresenal](https://www.blackhat.com/us-23/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-32370)  
+- [BlackHat Asia 2023 - Arsenal](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292)
+- [BlackHat US 2023 - Arsenal](https://www.blackhat.com/us-23/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-32370)  
 ## Demo
 
 ![ezgif com-video-to-gif](https://github.com/amrudesh1/MORF/assets/20198748/1fec6d18-e279-4a8a-b63c-01a1d66c20a2)
