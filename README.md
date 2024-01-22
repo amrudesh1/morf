@@ -7,7 +7,7 @@ One of the prominent features of MORF is its ability to automatically detect and
 
 The tool boasts a user-friendly interface and an easy-to-use reporting system that makes it simple for hackers and security professionals to review and address any identified issues. With MORF, you can know that your mobile application's security is in good hands.
 
-Overall, MORF is a swiss army knife for offensive mobile application security, as it saves a lot of time, increases efficiency, enables a data-driven approach, allows for transparency in the security posture of the application by looking into all previous versions, and minimizes the risk of data breaches related to sensitive information, all this by using heuristics-based techniques.
+Overall, MORF is a Swiss army knife for offensive mobile application security, as it saves a lot of time, increases efficiency, enables a data-driven approach, allows for transparency in the security posture of the application by looking into all previous versions, and minimizes the risk of data breaches related to sensitive information, all this by using heuristics-based techniques.
 
 
 ## Architecture
@@ -17,7 +17,8 @@ Overall, MORF is a swiss army knife for offensive mobile application security, a
 
 ## Presentations / Conferences
 
-- [BlackHat Asia 2023 - Aresenal](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292) 
+- [BlackHat Asia 2023 - Aresenal](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292)
+- [BlackHat USA 2023 - Aresenal](https://www.blackhat.com/us-23/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-32370)  
 ## Demo
 
 ![ezgif com-video-to-gif](https://github.com/amrudesh1/MORF/assets/20198748/1fec6d18-e279-4a8a-b63c-01a1d66c20a2)
