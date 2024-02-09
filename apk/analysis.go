@@ -30,8 +30,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func StartCliExtraction(apkPath string, db *gorm.DB) {
-	apkFound, json_data := util.CheckDuplicateInDB(db, apkPath)
+func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
+	if is_db_req {
+		apkFound, json_data := util.CheckDuplicateInDB(db, apkPath)
+		if apkFound {
+			log.Info("APK already exists in the database")
+			log.Info(json_data)
+		}
+	}
 	packageModel := ExtractPackageData(apkPath)
 	metadata := StartMetaDataCollection(apkPath)
 	scanner_data := StartSecScan("temp/input/" + apkPath)
@@ -41,14 +47,10 @@ func StartCliExtraction(apkPath string, db *gorm.DB) {
 		log.Error(secret_error)
 	}
 
-	if apkFound {
-		log.Info("APK already exists in the database")
-		log.Info(json_data)
-	}
-
 	secret := util.CreateSecretModel(apkPath, packageModel, metadata, scanner_data, secret_data)
-	database.InsertSecrets(secret, db)
-
+	if is_db_req {
+		database.InsertSecrets(secret, db)
+	}
 	json_data, json_error := json.MarshalIndent(secret, "", " ")
 
 	if json_error != nil {
