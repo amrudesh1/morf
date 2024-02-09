@@ -24,6 +24,7 @@ import (
 
 var apkPath string
 var jsonPath string
+var is_db_req bool
 
 var (
 	cliCmd = &cob.Command{
@@ -48,8 +49,11 @@ func includeCliFlags(cmd *cob.Command) {
 
 func add(cmd *cob.Command, args []string) {
 	apkPath, _ = cmd.Flags().GetString("apk")
+	is_db_req, _ = cmd.Flags().GetBool("db")
 
-	db.InitDB()
+	if is_db_req {
+		db.InitDB()
+	}
 
 	switch {
 	case apkPath == "":
@@ -62,5 +66,5 @@ func add(cmd *cob.Command, args []string) {
 		}
 	}
 
-	apk.StartCliExtraction(apkPath, db.DB)
+	apk.StartCliExtraction(apkPath, db.DB, is_db_req)
 }
