@@ -6,6 +6,7 @@ FROM golang:buster AS builder
 ARG JDK_VERSION=11
 
 RUN apt-get update && \ 
+    apt-get install ca-certificates-java openjdk-${JDK_VERSION}-jre-headless -y && \
     apt-get install -y --no-install-recommends openjdk-${JDK_VERSION}-jdk && \
     apt-get install aapt -y && \
     apt-get clean && \

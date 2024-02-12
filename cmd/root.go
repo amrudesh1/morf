@@ -12,7 +12,7 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-*//*
+*/ /*
 Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 */
 package cmd
@@ -72,7 +72,6 @@ func runMORF(cmd *cob.Command, args []string) error {
 func init() {
 
 	vip.SetDefault("port", 8080)
-	vip.SetDefault("tempPath", "/temp")
 	vip.SetDefault("backup_path", "backup/")
 
 	MorfCmd.AddCommand(cliCmd)
