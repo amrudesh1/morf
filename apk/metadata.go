@@ -20,38 +20,41 @@ import (
 	"io"
 	"log"
 	"morf/models"
+	"morf/utils"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	alf "github.com/spf13/afero"
 )
 
 func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	// Check if temp directory exist and If yes delete it and create a new one
 
-	if _, err := os.Stat("temp"); err == nil {
+	fs := alf.NewOsFs()
+
+	if utils.CheckifmorftmpDirExists(fs) {
 		fmt.Println("Deleting the temp directory")
-		os.RemoveAll("temp")
+		utils.DeleteTmpDir(fs)
 		fmt.Println("Creating a new temp directory")
-		os.Mkdir("temp", 0777)
+		utils.CreateMorfDirintmp(fs)
 	} else {
 		fmt.Println("Creating a new temp directory")
-		os.Mkdir("temp", 0777)
+		utils.CreateMorfDirintmp(fs)
 	}
 
-	if _, err := os.Stat("temp/input"); os.IsNotExist(err) {
-		os.Mkdir("temp/input", 0755)
-	}
-	if _, err := os.Stat("temp/output"); os.IsNotExist(err) {
-		os.Mkdir("temp/output", 0755)
+	// Create input and output directory
+	if _, err := os.Stat(utils.GetInputDir()); os.IsNotExist(err) {
+		utils.CreateInputOutputDir(fs)
 	}
 
-	os.Rename(apkPath, "temp/input/"+apkPath)
-	apkPath = "temp/input/" + apkPath
+	// Move APK to input directory
+
+	apkPath = utils.CopyApktoInputDir(fs, apkPath)
 	fmt.Println("Starting metadata collection for " + apkPath)
 
-	metadata_success, metadata_error := exec.Command("java", "-cp", "tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", "temp/input/", "--out", "temp/output").Output()
-	fmt.Println(metadata_success)
+	metadata_success, metadata_error := exec.Command("java", "-cp", "tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", utils.GetInputDir(), "--out", utils.GetOutputDir()).Output()
 
 	if metadata_error != nil {
 		fmt.Println("Error while decompiling the APK file")
@@ -65,8 +68,8 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 		fmt.Println(file_path)
 
 		// Make file readable
-		os.Chmod("temp/output/"+strings.Replace(file_name, ".apk", ".json", -1), 0777)
-		return startFileParser("temp/output/" + strings.Replace(file_name, ".apk", ".json", -1))
+		os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
+		return startFileParser(utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1))
 	}
 
 	return models.MetaDataModel{}
