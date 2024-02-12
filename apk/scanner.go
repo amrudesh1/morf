@@ -19,7 +19,6 @@ package apk
 
 import (
 	"fmt"
-	"io/ioutil"
 	"morf/models"
 	"morf/utils"
 	"os"
@@ -60,15 +59,12 @@ func CheckAPK(apkPath string) {
 
 func StartSecScan(apkPath string) []models.SecretModel {
 	//Decompile the sources of the APK file
+
 	counter := 0
-
 	log.Println("Decompiling the APK file for sources")
-	source_decompile, source_error := exec.Command("java", "-jar", "tools/apktool.jar", "d", "-r", apkPath, "-o", "temp/output/apk/source").Output()
-
-	if source_error != nil {
-		log.Println("Error while decompiling the APK file")
-		log.Fatal(source_error)
-	}
+	fmt.Println(apkPath)
+	source_decompile, source_error := exec.Command("java", "-jar", "tools/apktool.jar", "d", "-r", apkPath, "-o", utils.GetSourceDir()).Output()
+	utils.HandleError(source_error, "Error while decompiling the APK file", true)
 
 	if source_decompile != nil {
 		log.Println("Decompiling the APK file for sources successful")
@@ -76,40 +72,30 @@ func StartSecScan(apkPath string) []models.SecretModel {
 	}
 
 	//Decompile the resources of the APK file
-
-	res_decompile, res_error := utils.ExecuteCommand("java", []string{"-jar", "tools/apktool.jar", "d", "-s", apkPath, "-o", "temp/output/apk/appreso"}, false, true)
-
-	if res_error != nil {
-		log.Println("Error while decompiling the resources of the APK file")
-		log.Error(res_error)
-	}
+	res_decompile, res_error := utils.ExecuteCommand("java", []string{"-jar", "tools/apktool.jar", "d", "-s", apkPath, "-o", utils.GetResDir()}, false, true)
+	utils.HandleError(res_error, "Error while decompiling the APK file", true)
 
 	if res_decompile != nil {
 		log.Println("Decompiling the APK file for resources successful")
 		counter++
 	}
-	files_path := "temp/output/apk/"
+
 	if counter == 2 {
 		log.Println("Decompiling the APK file successful")
-		return StartScan(files_path)
+		return StartScan(utils.GetFilesDir())
 	}
+
 	return nil
 }
 
-func readPatternFile(patternFilePath string) ([]byte, error) {
-	patternFile, err := os.OpenFile(patternFilePath, os.O_RDONLY, 0666)
-	defer patternFile.Close()
-	utils.HandleError(err, "Error opening pattern file:", true)
+func readPatternFile(patternFilePath string) []byte {
 
-	yamlFile, err := ioutil.ReadAll(patternFile)
-	utils.HandleError(err, "Error reading pattern file:", true)
-
-	return yamlFile, err
+	yamlFile := utils.ReadFile(utils.GetAppFS(), patternFilePath)
+	return yamlFile
 }
 
 func StartScan(apkPath string) []models.SecretModel {
-	files, err := ioutil.ReadDir("patterns")
-	utils.HandleError(err, "Error reading directory:", true)
+	files := utils.ReadDir(utils.GetAppFS(), "patterns")
 
 	var wg sync.WaitGroup
 	resultsChan := make(chan models.SecretModel, 100)
@@ -122,9 +108,9 @@ func StartScan(apkPath string) []models.SecretModel {
 			wg.Add(1)
 			go func(file os.FileInfo) {
 				defer wg.Done()
-				yamlFile, err := readPatternFile("patterns/" + file.Name())
+				yamlFile := readPatternFile("patterns/" + file.Name())
 				// Make sure file name is ending with .yml or .yaml
-
+				err := error(nil)
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -147,7 +133,6 @@ func StartScan(apkPath string) []models.SecretModel {
 
 				for _, pattern := range secretPatterns.Patterns {
 					pat := pattern.Pattern.Regex
-					fmt.Println(pat)
 					stdout, err := utils.ExecuteCommand("rg", []string{"-n", "-e", fmt.Sprintf("\"%s\"", pat), "--multiline", apkPath}, true, false)
 
 					utils.HandleError(err, "Error running ripgrep:", true)
