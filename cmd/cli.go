@@ -15,6 +15,7 @@ limitations under the License.
 */package cmd
 
 import (
+	"fmt"
 	"morf/apk"
 	"morf/db"
 
@@ -65,6 +66,8 @@ func add(cmd *cob.Command, args []string) {
 			return
 		}
 	}
+	fmt.Println("IS DB REQ", is_db_req)
+	// Check if APK path is absolute or relative
 
 	apk.StartCliExtraction(apkPath, db.DB, is_db_req)
 }
