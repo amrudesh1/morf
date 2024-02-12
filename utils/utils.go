@@ -391,3 +391,23 @@ func HandleError(err error, msg string, exitCode1 bool) {
 		}
 	}
 }
+
+func SanitizeSecrets(scanner_data []models.SecretModel) []models.SecretModel {
+	var sanitizedSecrets []models.SecretModel
+	// Use a map to track unique SecretStrings
+	uniqueSecrets := make(map[string]models.SecretModel)
+
+	for _, secret := range scanner_data {
+		// If the secret is not already in uniqueSecrets, add it
+		if _, exists := uniqueSecrets[secret.SecretString]; !exists {
+			uniqueSecrets[secret.SecretString] = secret
+			sanitizedSecrets = append(sanitizedSecrets, secret) // Append the unique secret to the sanitized list
+		}
+	}
+	for _, secret := range sanitizedSecrets {
+		fmt.Printf("Type: %s\n", secret.Type)
+		fmt.Printf("Secret: %s\n", secret.SecretString)
+		fmt.Println("-----------------------------------")
+	}
+	return sanitizedSecrets
+}
