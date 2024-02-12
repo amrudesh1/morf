@@ -16,12 +16,13 @@ limitations under the License.
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"fmt"
 	database "morf/db"
 	"morf/models"
+	"morf/utils"
 	util "morf/utils"
 	"net/http"
-	"os"
+	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 
@@ -31,6 +32,9 @@ import (
 )
 
 func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
+	var fileName string
+
+	fs := utils.GetAppFS()
 	if is_db_req {
 		apkFound, json_data := util.CheckDuplicateInDB(db, apkPath)
 		if apkFound {
@@ -40,35 +44,47 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 	}
 	packageModel := ExtractPackageData(apkPath)
 	metadata := StartMetaDataCollection(apkPath)
-	scanner_data := StartSecScan("temp/input/" + apkPath)
+
+	fmt.Println("Metadata: Completed")
+
+	if apkPath[0] == '/' {
+		fileName = filepath.Base(apkPath)
+	} else {
+		fileName = apkPath
+	}
+
+	scanner_data := StartSecScan(utils.GetInputDir() + fileName)
+	scanner_data = utils.SanitizeSecrets(scanner_data)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
 	if secret_error != nil {
 		log.Error(secret_error)
 	}
 
-	secret := util.CreateSecretModel(apkPath, packageModel, metadata, scanner_data, secret_data)
+	secret := util.CreateSecretModel(fileName, packageModel, metadata, scanner_data, secret_data)
+
 	if is_db_req {
 		database.InsertSecrets(secret, db)
 	}
+
 	json_data, json_error := json.MarshalIndent(secret, "", " ")
 
 	if json_error != nil {
 		log.Error(json_error)
 	}
 
-	_, err_ := os.Stat(vip.GetString("backup_path"))
-
-	if os.IsNotExist(err_) {
-		os.Mkdir(vip.GetString("backup_path"), 0755)
+	//Check if backup folder exists
+	if !util.CheckBackUpDirExists(fs) {
+		util.CreateBackUpDir(fs)
 	}
 
-	err := ioutil.WriteFile(vip.GetString("backup_path")+"/"+apkPath+"_"+secret.APKVersion+".json", json_data, 0644)
-	if err != nil {
-		log.Error(err)
-	}
+	util.WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+secret.APKVersion+".json", string(json_data))
+	util.WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
 
-	log.Info("APK Data saved to: " + vip.GetString("backup_path") + "/" + apkPath + "_" + secret.APKVersion + ".json")
+	util.WriteToFile(fs, "results"+"/"+fileName+"_"+secret.APKVersion+".json", string(json_data))
+	util.WriteToFile(fs, "results"+"/"+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
+
+	log.Info("APK Data saved to: " + vip.GetString("backup_path") + "/" + fileName + "_" + secret.APKVersion + ".json")
 }
 
 func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
@@ -92,7 +108,7 @@ func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
 
 	packageModel := ExtractPackageData(apk_path)
 	metadata := StartMetaDataCollection(apk_path)
-	scanner_data := StartSecScan("temp/input/" + apk_path)
+	scanner_data := StartSecScan(utils.GetInputDir() + apk_path)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
 	if secret_error != nil {
@@ -106,6 +122,7 @@ func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
 }
 
 func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bool, slackData models.SlackData) {
+	fs := utils.GetAppFS()
 
 	apkFound, json_data := util.CheckDuplicateInDB(db, apkPath)
 	if apkFound {
@@ -124,7 +141,7 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 
 	packageModel := ExtractPackageData(apkPath)
 	metadata := StartMetaDataCollection(apkPath)
-	scanner_data := StartSecScan("temp/input/" + apkPath)
+	scanner_data := StartSecScan(utils.GetInputDir() + apkPath)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
 	if secret_error != nil {
@@ -132,7 +149,6 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 	}
 
 	secret := util.CreateSecretModel(apkPath, packageModel, metadata, scanner_data, secret_data)
-
 	database.InsertSecrets(secret, db)
 
 	json_data, json_error := json.MarshalIndent(secret, "", " ")
@@ -143,22 +159,16 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 	}
 
 	//Check if backup folder exists
-	_, err_ := os.Stat(vip.GetString("backup_path"))
-
-	if os.IsNotExist(err_) {
-		os.Mkdir(vip.GetString("backup_path"), 0755)
+	//Check if backup folder exists
+	if !util.CheckBackUpDirExists(fs) {
+		util.CreateBackUpDir(fs)
 	}
 
-	// Check if file exists
+	util.WriteToFile(fs, vip.GetString("backup_path")+apkPath+"_"+secret.APKVersion+".json", string(json_data))
+	util.WriteToFile(fs, vip.GetString("backup_path")+apkPath+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
 
-	//Move the APK Data to backup folder
-	backupPath := vip.GetString("backup_path") + apkPath + "_" + secret.APKVersion + ".json"
-	log.Println("Backup Path: ", backupPath)
-	err := ioutil.WriteFile(backupPath, json_data, 0644)
-
-	if err != nil {
-		log.Error(err)
-	}
+	util.WriteToFile(fs, "results"+"/"+apkPath+"_"+secret.APKVersion+".json", string(json_data))
+	util.WriteToFile(fs, "results"+"/"+apkPath+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
 
 	if !isSlack {
 		c.JSON(http.StatusOK, gin.H{
