@@ -50,14 +50,8 @@ type PatternList struct {
 }
 
 var secretPatterns SecretPatterns
-var secretModel []models.SecretModel
 
-func CheckAPK(apkPath string) {
-	PacakgeData := ExtractPackageData("scan.apk")
-	log.Info(PacakgeData)
-}
-
-func StartSecScan(apkPath string) []models.SecretModel {
+func StartSecScan(apkPath string, packageModel models.PackageDataModel) []models.SecretModel {
 	//Decompile the sources of the APK file
 
 	counter := 0
@@ -82,14 +76,14 @@ func StartSecScan(apkPath string) []models.SecretModel {
 
 	if counter == 2 {
 		log.Println("Decompiling the APK file successful")
-		return StartScan(utils.GetFilesDir())
+		santised_secrets := utils.SanitizeSecrets(StartScan(utils.GetFilesDir()))
+		return santised_secrets
 	}
 
 	return nil
 }
 
 func readPatternFile(patternFilePath string) []byte {
-
 	yamlFile := utils.ReadFile(utils.GetAppFS(), patternFilePath)
 	return yamlFile
 }
