@@ -28,41 +28,31 @@ func CheckifmorftmpDirExists(fs alf.Fs) bool {
 	return exists
 }
 
-func createInputOutputDir(fs alf.Fs) {
-	fs.Mkdir(tmpDir+"/input", 0755)
-	fs.Mkdir(tmpDir+"/output", 0755)
-}
-
 func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
 	// Check if APK path is absolute or relative if its absolute then Lets only get the file name from the path and use it as the destination file name
 	var fileName string
 	if apkPath[0] == '/' {
 		fileName = filepath.Base(apkPath)
+	} else {
+		fileName = apkPath
 	}
 
 	fmt.Println("APK Path:", apkPath)
 	destinationFilePath := tmpDir + "/input/" + fileName
 
 	srcFile, err := appFS.Open(apkPath)
-	if err != nil {
-		// handle error
-	}
+	HandleError(err, "Error while opening the APK file", true)
 
 	defer srcFile.Close()
 	destFile, err := appFS.Create(destinationFilePath)
-
-	if err != nil {
-		// handle error
-	}
+	HandleError(err, "Error while creating the destination file", true)
 
 	defer destFile.Close()
 
 	fmt.Println("Moving APK to input directory:", tmpDir+"/input/"+apkPath)
 
 	_, err = io.Copy(destFile, srcFile)
-	if err != nil {
-		// handle error
-	}
+	HandleError(err, "Error while copying the APK file", true)
 
 	return destinationFilePath
 }

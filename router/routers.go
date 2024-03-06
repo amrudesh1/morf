@@ -44,7 +44,6 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			c.String(http.StatusBadRequest, fmt.Sprintf("get form err: %s", error.Error()))
 			return
 		}
-
 		c.SaveUploadedFile(file, file.Filename)
 		apk.StartExtractProcess(file.Filename, db.DB, c, false, models.SlackData{})
 
@@ -57,14 +56,11 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+
 		ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
 		go func() {
 			apk.StartJiraProcess(requestBody, db.DB, ctx)
 		}()
-	})
-
-	router.POST("/release", func(ctx *gin.Context) {
-
 	})
 
 	router.POST("/slackscan", func(ctx *gin.Context) {
@@ -83,7 +79,6 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 
 			// Send a response back to prevent API timeout
 			ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
-
 			apk.StartExtractProcess(download_url, db.DB, ctx, true, requestBody)
 		}()
 

@@ -73,6 +73,7 @@ func init() {
 
 	vip.SetDefault("port", 8080)
 	vip.SetDefault("backup_path", "backup/")
+	vip.SetDefault("db_name", "Secrets")
 
 	MorfCmd.AddCommand(cliCmd)
 	MorfCmd.AddCommand(serverCmd)
