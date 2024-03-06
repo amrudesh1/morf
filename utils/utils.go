@@ -411,3 +411,18 @@ func SanitizeSecrets(scanner_data []models.SecretModel) []models.SecretModel {
 	}
 	return sanitizedSecrets
 }
+
+type SecretWithVersion struct {
+	VersionCode  string // To store the version code
+	SecretDetail string // To store the secret details
+}
+
+func FindUniqueSecrets(packageModel models.PackageDataModel, scannerData []models.SecretModel) []SecretWithVersion {
+
+	var secretsWithVersion []SecretWithVersion
+	err := db.DB.Model(models.Secrets{}).Select("version_code, secret_model").Scan(secretsWithVersion).Error
+
+	HandleError(err, "Error while scanning the secrets with version", false)
+
+	return secretsWithVersion
+}
