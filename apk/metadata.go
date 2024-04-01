@@ -50,7 +50,6 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	}
 
 	// Move APK to input directory
-
 	apkPath = utils.CopyApktoInputDir(fs, apkPath)
 	fmt.Println("Starting metadata collection for " + apkPath)
 

@@ -31,6 +31,8 @@ import (
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
+	alf "github.com/spf13/afero"
+	vip "github.com/spf13/viper"
 
 	"github.com/gin-gonic/gin"
 	"github.com/slack-go/slack"
@@ -52,14 +54,15 @@ func CookJiraComment(jiraModel models.JiraModel, secret models.Secrets, ctx *gin
 func SlackRespond(jiraModel models.JiraModel, slackData models.SlackData) {
 	slack_app := slack.New(slackData.SlackToken)
 	_, err := slack_app.AuthTest()
-	if err != nil {
-		log.Error(err)
-	}
-	_, _, err = slack_app.PostMessage("C01S8U6HLHM", slack.MsgOptionText("```"+"MORF Scan has been completed successfully"+"```", false))
+	HandleError(err, "Error while authenticating to Slack", false)
+
+	_, _, err = slack_app.PostMessage("***REMOVED***", slack.MsgOptionText("```"+"MORF Scan has been completed successfully"+"```", false))
+	HandleError(err, "Error while sending message to Slack", false)
 }
 
 func commentToJira(jiraModel models.JiraModel, message string) string {
-	jira_url := "https://dreamplug.atlassian.net" + "/rest/api/2/issue/" + jiraModel.Ticket_id + "/comment"
+	jira_link := os.Getenv("JIRA_LINK")
+	jira_url := jira_link + "/rest/api/2/issue/" + jiraModel.Ticket_id + "/comment"
 	final_body := map[string]string{"body": message}
 	final_body_json, _ := json.Marshal(final_body)
 	log.Info(final_body)
@@ -205,6 +208,14 @@ func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) strin
 
 }
 
+func CreateReport(fs alf.Fs, secret models.Secrets, json_data []byte, secret_data []byte, fileName string) {
+	WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+secret.APKVersion+".json", string(json_data))
+	WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
+	WriteToFile(fs, "results"+"/"+fileName+"_"+secret.APKVersion+".json", string(json_data))
+	WriteToFile(fs, "results"+"/"+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
+	log.Info("APK Data saved to: " + vip.GetString("backup_path") + "/" + fileName + "_" + secret.APKVersion + ".json")
+}
+
 func CheckDuplicateInDB(startDB *gorm.DB, apkPath string) (bool, []byte) {
 	secret := db.GetSecrets(startDB)
 	for _, value := range secret {
@@ -315,9 +326,10 @@ func parseJiraMessage(secrets models.Secrets) []string {
 
 	for _, value := range secretModel {
 		heading := value.Type
-		headingMarkup := fmt.Sprintf("\n=== %s ===\n", heading)
-		secretEntry := headingMarkup +
-			"{noformat}" + "Secret Value: " + value.SecretString + "\n" +
+		headingMarkup := fmt.Sprintf("\n === %s ===\n", heading)
+		secretEntry := "{noformat}" +
+			headingMarkup +
+			"Secret Value: " + value.SecretString + "\n" +
 			"Line No: " + strconv.Itoa(value.LineNo) + "\n" +
 			"File Location: " + value.FileLocation + "\n" +
 			"{noformat}"
@@ -373,9 +385,7 @@ func ExecuteCommand(command string, args []string, captureOutput bool, useOutput
 		err = cmd.Run()
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("Error executing command: %s\nstderr: %s", err, stderr.String())
-	}
+	HandleError(err, stderr.String(), true)
 
 	return &stdout, nil
 }

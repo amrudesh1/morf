@@ -38,31 +38,27 @@ func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
 	var fileName string
 	if apkPath[0] == '/' {
 		fileName = filepath.Base(apkPath)
+	} else {
+		fileName = apkPath
 	}
 
 	fmt.Println("APK Path:", apkPath)
 	destinationFilePath := tmpDir + "/input/" + fileName
-
+	fmt.Println("Destination File Path:", destinationFilePath)
 	srcFile, err := appFS.Open(apkPath)
-	if err != nil {
-		// handle error
-	}
+	HandleError(err, "Error opening source file", true)
 
 	defer srcFile.Close()
 	destFile, err := appFS.Create(destinationFilePath)
 
-	if err != nil {
-		// handle error
-	}
+	HandleError(err, "Error creating destination file", true)
 
 	defer destFile.Close()
 
 	fmt.Println("Moving APK to input directory:", tmpDir+"/input/"+apkPath)
 
 	_, err = io.Copy(destFile, srcFile)
-	if err != nil {
-		// handle error
-	}
+	HandleError(err, "Error copying APK to input directory", true)
 
 	return destinationFilePath
 }
