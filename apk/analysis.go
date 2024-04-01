@@ -27,7 +27,6 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/gin-gonic/gin"
-	vip "github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
@@ -42,6 +41,7 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 			log.Info(json_data)
 		}
 	}
+
 	packageModel := ExtractPackageData(apkPath)
 	metadata := StartMetaDataCollection(apkPath)
 
@@ -54,7 +54,6 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 	}
 
 	scanner_data := StartSecScan(utils.GetInputDir() + fileName)
-	scanner_data = utils.SanitizeSecrets(scanner_data)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
 	if secret_error != nil {
@@ -78,16 +77,11 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 		util.CreateBackUpDir(fs)
 	}
 
-	util.WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+secret.APKVersion+".json", string(json_data))
-	util.WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
-
-	util.WriteToFile(fs, "results"+"/"+fileName+"_"+secret.APKVersion+".json", string(json_data))
-	util.WriteToFile(fs, "results"+"/"+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
-
-	log.Info("APK Data saved to: " + vip.GetString("backup_path") + "/" + fileName + "_" + secret.APKVersion + ".json")
+	utils.CreateReport(fs, secret, json_data, secret_data, fileName)
 }
 
 func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
+
 	apk_path := util.DownloadFileUsingSlack(jiramodel, c)
 	if apk_path == "" {
 		return
@@ -114,6 +108,7 @@ func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
 	if secret_error != nil {
 		log.Error(secret_error)
 	}
+
 	secret := util.CreateSecretModel(apk_path, packageModel, metadata, scanner_data, secret_data)
 	database.InsertSecrets(secret, db)
 
@@ -159,16 +154,11 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 	}
 
 	//Check if backup folder exists
-	//Check if backup folder exists
 	if !util.CheckBackUpDirExists(fs) {
 		util.CreateBackUpDir(fs)
 	}
 
-	util.WriteToFile(fs, vip.GetString("backup_path")+apkPath+"_"+secret.APKVersion+".json", string(json_data))
-	util.WriteToFile(fs, vip.GetString("backup_path")+apkPath+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
-
-	util.WriteToFile(fs, "results"+"/"+apkPath+"_"+secret.APKVersion+".json", string(json_data))
-	util.WriteToFile(fs, "results"+"/"+apkPath+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
+	utils.CreateReport(fs, secret, json_data, secret_data, apkPath)
 
 	if !isSlack {
 		c.JSON(http.StatusOK, gin.H{
