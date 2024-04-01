@@ -37,9 +37,10 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 		log.Error("AAPT not found in the system")
 		log.Error("Please install AAPT or add it to the system path")
 		aapt_success, aapt_error = exec.Command("tools/aapt", "dump", "badging", apkPath).Output()
+	} else {
+		aapt_success, aapt_error = exec.Command("aapt", "dump", "badging", apkPath).Output()
 	}
 
-	aapt_success, aapt_error = exec.Command("aapt", "dump", "badging", apkPath).Output()
 	aapt_byte_to_string := aapt_success[:]
 
 	if aapt_error != nil {
