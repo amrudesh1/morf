@@ -1,5 +1,5 @@
 
-# MORF - Mobile
+# MORF - Mobile Reconnaissance Framework 
 
 Mobile Reconnaissance Framework is a powerful, lightweight and platform-independent offensive mobile security tool designed to help hackers and developers identify and address sensitive information within mobile applications. It is like a swiss army knife for mobile application security, as it uses heuristics-based techniques to search through the codebase, creating a comprehensive repository of sensitive information it finds. This makes it easy to identify and address any potential sensitive data leak.
 
@@ -7,18 +7,21 @@ One of the prominent features of MORF is its ability to automatically detect and
 
 The tool boasts a user-friendly interface and an easy-to-use reporting system that makes it simple for hackers and security professionals to review and address any identified issues. With MORF, you can know that your mobile application's security is in good hands.
 
-Overall, MORF is a swiss army knife for offensive mobile application security, as it saves a lot of time, increases efficiency, enables a data-driven approach, allows for transparency in the security posture of the application by looking into all previous versions, and minimizes the risk of data breaches related to sensitive information, all this by using heuristics-based techniques.
+Overall, MORF is a Swiss army knife for offensive mobile application security, as it saves a lot of time, increases efficiency, enables a data-driven approach, allows for transparency in the security posture of the application by looking into all previous versions, and minimizes the risk of data breaches related to sensitive information, all this by using heuristics-based techniques.
 
 
 ## Architecture
 
+![MORF Architecture drawio (2)](https://github.com/amrudesh1/MORF/assets/20198748/f5bcdbbf-68ea-41bc-9c12-3f6d07e9049d)
+
 
 ## Presentations / Conferences
 
-- [BlackHat Asia 2023 - Aresenal](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292) 
+- [BlackHat Asia 2023 - Arsenal](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292)
+- [BlackHat US 2023 - Arsenal](https://www.blackhat.com/us-23/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-32370)  
 ## Demo
 
-### Insert a GIF after the inilisation of the ReadMe method.
+![ezgif com-video-to-gif](https://github.com/amrudesh1/MORF/assets/20198748/1fec6d18-e279-4a8a-b63c-01a1d66c20a2)
 
 
 ## Environment Variables
