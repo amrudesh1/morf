@@ -63,10 +63,6 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		}()
 	})
 
-	router.POST("/release", func(ctx *gin.Context) {
-
-	})
-
 	router.POST("/slackscan", func(ctx *gin.Context) {
 		requestBody := models.SlackData{}
 		if err := ctx.ShouldBindBodyWith(&requestBody, binding.JSON); err != nil {
