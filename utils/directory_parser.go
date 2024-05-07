@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"path/filepath"
 
+	log "github.com/sirupsen/logrus"
+
 	alf "github.com/spf13/afero"
 )
 
@@ -34,6 +36,7 @@ func createInputOutputDir(fs alf.Fs) {
 }
 
 func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
+
 	// Check if APK path is absolute or relative if its absolute then Lets only get the file name from the path and use it as the destination file name
 	var fileName string
 	if apkPath[0] == '/' {
@@ -59,7 +62,7 @@ func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
 
 	_, err = io.Copy(destFile, srcFile)
 	HandleError(err, "Error copying APK to input directory", true)
-
+	log.Info(sourceDir)
 	return destinationFilePath
 }
 
