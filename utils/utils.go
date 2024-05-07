@@ -417,6 +417,8 @@ func SanitizeSecrets(scanner_data []models.SecretModel) []models.SecretModel {
 	for _, secret := range sanitizedSecrets {
 		fmt.Printf("Type: %s\n", secret.Type)
 		fmt.Printf("Secret: %s\n", secret.SecretString)
+		fmt.Printf("File Name %s\n", secret.FileLocation)
+		fmt.Println()
 		fmt.Println("-----------------------------------")
 	}
 	return sanitizedSecrets
