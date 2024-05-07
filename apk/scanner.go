@@ -49,9 +49,6 @@ type PatternList struct {
 	}
 }
 
-var secretPatterns SecretPatterns
-var secretModel []models.SecretModel
-
 func StartSecScan(apkPath string) []models.SecretModel {
 	counter := 0
 	log.Println("Decompiling the APK file for sources")
@@ -65,7 +62,8 @@ func StartSecScan(apkPath string) []models.SecretModel {
 	}
 
 	//Decompile the resources of the APK file
-	res_decompile, res_error := utils.ExecuteCommand("java", []string{"-jar", "tools/apktool.jar", "d", "-s", apkPath, "-o", utils.GetResDir()}, false, true)
+	res_decompile, res_error := exec.Command("java", "-jar", "tools/apktool.jar", "d", "-s", apkPath, "-o", utils.GetResDir()).Output()
+
 	utils.HandleError(res_error, "Error while decompiling the APK file", true)
 
 	if res_decompile != nil {
@@ -88,7 +86,6 @@ func readPatternFile(patternFilePath string) []byte {
 }
 
 func StartScan(apkPath string) []models.SecretModel {
-	log.Info("Scanning for secrets in the code")
 	files := utils.ReadDir(utils.GetAppFS(), "patterns")
 
 	var wg sync.WaitGroup
@@ -103,67 +100,47 @@ func StartScan(apkPath string) []models.SecretModel {
 			go func(file os.FileInfo) {
 				defer wg.Done()
 				yamlFile := readPatternFile("patterns/" + file.Name())
-				// Make sure file name is ending with .yml or .yaml
-				err := error(nil)
+				var secretPatterns SecretPatterns
+				err := yaml.Unmarshal(yamlFile, &secretPatterns)
 				if err != nil {
-					fmt.Println(err)
-				}
-
-				mu.Lock()
-				err = yaml.Unmarshal(yamlFile, &secretPatterns)
-				mu.Unlock()
-
-				if err != nil {
-					fmt.Printf("Error unmarshaling YAML file %s:\n%s\n", file.Name(), err)
-					fmt.Printf("YAML content:\n%s\n", string(yamlFile))
-					return
-				}
-
-				if err != nil {
-					fmt.Println(file.Name())
-					fmt.Println(err)
+					fmt.Printf("Error unmarshaling YAML file %s: %s\n", file.Name(), err)
 					return
 				}
 
 				for _, pattern := range secretPatterns.Patterns {
 					pat := pattern.Pattern.Regex
-					stdout, err := utils.ExecuteCommand("rg", []string{"-n", "-e", fmt.Sprintf("\"%s\"", pat), "--multiline", apkPath}, true, false)
+					result, err := exec.Command("rg", "-n", "-e", pat, "--multiline", utils.GetFilesDir()).Output()
+					if err != nil {
+						continue
+					}
 
-					utils.HandleError(err, "Error running ripgrep:", true)
-					if stdout != nil {
-						if stdout.Len() > 0 {
-							// Split Stdout into lines and iterate over them
-							lines := strings.Split(stdout.String(), "\n")
-							for _, line := range lines {
-								parts := strings.SplitN(line, ":", 3)
-								if len(parts) != 3 {
-									continue
-								}
-
-								fileName := parts[0]
-								lineNumber, err := strconv.Atoi(parts[1])
-								content := parts[2]
-
-								contentParts := strings.SplitN(strings.TrimSpace(content), " ", 2)
-								typeName := contentParts[0]
-								patternFound := ""
-								if len(contentParts) > 1 {
-									patternFound = contentParts[1]
-								}
-
-								// Split Secret String between double quotes
-								if err == nil {
-									secret := models.SecretModel{
-										Type:         pattern.Pattern.Name,
-										LineNo:       lineNumber,
-										FileLocation: fileName,
-										SecretType:   typeName,
-										SecretString: strings.Split(patternFound, "\"")[1],
-									}
-
-									resultsChan <- secret
-								}
+					stdout := strings.TrimSpace(string(result))
+					if stdout != "" {
+						lines := strings.Split(stdout, "\n")
+						for _, line := range lines {
+							parts := strings.SplitN(line, ":", 3)
+							if len(parts) < 3 {
+								continue
 							}
+
+							fileName := parts[0]
+							lineNumber, err := strconv.Atoi(parts[1])
+							if err != nil {
+								log.Errorf("Error converting line number: %s\n", err)
+								continue
+							}
+
+							content := strings.TrimSpace(parts[2])
+							secretString := extractSecret(content)
+							secret := models.SecretModel{
+								Type:         pattern.Pattern.Name,
+								LineNo:       lineNumber,
+								FileLocation: fileName,
+								SecretType:   pattern.Pattern.Name, // Assuming SecretType is the same as Type
+								SecretString: secretString,
+							}
+
+							resultsChan <- secret
 						}
 					}
 				}
@@ -184,4 +161,36 @@ func StartScan(apkPath string) []models.SecretModel {
 	}
 
 	return secretModel
+}
+
+func extractSecret(content string) string {
+
+	// Check for content enclosed in XML tags
+
+	if strings.Contains(content, ">") && strings.Contains(content, "<") {
+		begin := strings.Index(content, ">") + 1
+		end := strings.LastIndex(content, "<")
+		if begin < end && begin > 0 && end > 0 { // Ensure indices are valid
+			return strings.TrimSpace(content[begin:end])
+		}
+	}
+
+	// Check if the content contains quotes, often used to enclose secrets
+	if strings.Count(content, "\"") >= 2 {
+		// Extract the content between the first pair of quotes
+		parts := strings.SplitN(content, "\"", 3)
+		if len(parts) > 1 {
+			return parts[1]
+		}
+	}
+
+	// Fallback: use the content after the last colon, if present
+	lastColon := strings.LastIndex(content, ":")
+	if lastColon != -1 {
+		// Trim any potential leading or trailing whitespace around the secret
+		return strings.TrimSpace(content[lastColon+1:])
+	}
+
+	// If no known patterns are detected, return the full content as a fallback
+	return content
 }
