@@ -63,7 +63,6 @@ func StartSecScan(apkPath string) []models.SecretModel {
 
 	//Decompile the resources of the APK file
 	res_decompile, res_error := exec.Command("java", "-jar", "tools/apktool.jar", "d", "-s", apkPath, "-o", utils.GetResDir()).Output()
-
 	utils.HandleError(res_error, "Error while decompiling the APK file", true)
 
 	if res_decompile != nil {
@@ -86,6 +85,7 @@ func readPatternFile(patternFilePath string) []byte {
 }
 
 func StartScan(apkPath string) []models.SecretModel {
+	log.Info("Starting secret scan on the APK file")
 	files := utils.ReadDir(utils.GetAppFS(), "patterns")
 
 	var wg sync.WaitGroup
