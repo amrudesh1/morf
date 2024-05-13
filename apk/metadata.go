@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"morf/models"
 	"morf/utils"
 	"os"
@@ -26,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	alf "github.com/spf13/afero"
 )
 
@@ -52,7 +52,6 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	// Move APK to input directory
 	apkPath = utils.CopyApktoInputDir(fs, apkPath)
 	fmt.Println("Starting metadata collection for " + apkPath)
-
 	metadata_success, metadata_error := exec.Command("java", "-cp", "tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", utils.GetInputDir(), "--out", utils.GetOutputDir()).Output()
 
 	if metadata_error != nil {
@@ -62,12 +61,22 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	}
 
 	if metadata_success != nil {
-		fmt.Println("Metadata collection successful")
+		log.Info("Metadata collection successful")
+
 		file_path, file_name := filepath.Split(apkPath)
-		fmt.Println(file_path)
+		log.Info("File path: " + file_path)
+		log.Info("File name: " + file_name)
 
 		// Make file readable
-		os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
+		json_file_path := utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1)
+		// Create a file with 777 permissions
+		_, err := os.Create(json_file_path)
+		if err != nil {
+			log.Error("Error creating file")
+			log.Error(err)
+		}
+		os.Chmod(json_file_path, 0777)
+
 		return startFileParser(utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1))
 	}
 
