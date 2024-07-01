@@ -56,7 +56,10 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+<<<<<<< HEAD
 
+=======
+>>>>>>> sanitized-history
 		ctx.JSON(http.StatusOK, gin.H{"message": "Sit Back and Relax! We are working on it!"})
 		go func() {
 			apk.StartJiraProcess(requestBody, db.DB, ctx)

@@ -30,8 +30,14 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 	// Use AAPT to get APK Version etc
 	// Check if AAPT is installed in the system or get aapt from the tools folder
 
+<<<<<<< HEAD
 	var aapt_success []byte
 	_, aapt_error := exec.LookPath("aapt")
+=======
+	aapt_success := []byte{}
+	aapt_error := error(nil)
+	_, aapt_error = exec.LookPath("aapt")
+>>>>>>> sanitized-history
 	if aapt_error != nil {
 		log.Error("AAPT not found in the system")
 		log.Error("Please install AAPT or add it to the system path")

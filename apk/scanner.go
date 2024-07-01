@@ -28,7 +28,6 @@ import (
 	"sync"
 
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v2"
 )
 
 type SecretPatterns struct {
@@ -106,22 +105,7 @@ func StartScan(apkPath string) []models.SecretModel {
 				// Make sure file name is ending with .yml or .yaml
 				err := error(nil)
 				if err != nil {
-					fmt.Println(err)
-				}
-
-				mu.Lock()
-				err = yaml.Unmarshal(yamlFile, &secretPatterns)
-				mu.Unlock()
-
-				if err != nil {
-					fmt.Printf("Error unmarshaling YAML file %s:\n%s\n", file.Name(), err)
-					fmt.Printf("YAML content:\n%s\n", string(yamlFile))
-					return
-				}
-
-				if err != nil {
-					fmt.Println(file.Name())
-					fmt.Println(err)
+					fmt.Printf("Error unmarshaling YAML file %s: %s\n", file.Name(), err)
 					return
 				}
 
@@ -164,6 +148,25 @@ func StartScan(apkPath string) []models.SecretModel {
 									resultsChan <- secret
 								}
 							}
+
+							fileName := parts[0]
+							lineNumber, err := strconv.Atoi(parts[1])
+							if err != nil {
+								log.Errorf("Error converting line number: %s\n", err)
+								continue
+							}
+
+							content := strings.TrimSpace(parts[2])
+							secretString := extractSecret(content)
+							secret := models.SecretModel{
+								Type:         pattern.Pattern.Name,
+								LineNo:       lineNumber,
+								FileLocation: fileName,
+								SecretType:   pattern.Pattern.Name, // Assuming SecretType is the same as Type
+								SecretString: secretString,
+							}
+
+							resultsChan <- secret
 						}
 					}
 				}
@@ -184,4 +187,36 @@ func StartScan(apkPath string) []models.SecretModel {
 	}
 
 	return secretModel
+}
+
+func extractSecret(content string) string {
+
+	// Check for content enclosed in XML tags
+
+	if strings.Contains(content, ">") && strings.Contains(content, "<") {
+		begin := strings.Index(content, ">") + 1
+		end := strings.LastIndex(content, "<")
+		if begin < end && begin > 0 && end > 0 { // Ensure indices are valid
+			return strings.TrimSpace(content[begin:end])
+		}
+	}
+
+	// Check if the content contains quotes, often used to enclose secrets
+	if strings.Count(content, "\"") >= 2 {
+		// Extract the content between the first pair of quotes
+		parts := strings.SplitN(content, "\"", 3)
+		if len(parts) > 1 {
+			return parts[1]
+		}
+	}
+
+	// Fallback: use the content after the last colon, if present
+	lastColon := strings.LastIndex(content, ":")
+	if lastColon != -1 {
+		// Trim any potential leading or trailing whitespace around the secret
+		return strings.TrimSpace(content[lastColon+1:])
+	}
+
+	// If no known patterns are detected, return the full content as a fallback
+	return content
 }
