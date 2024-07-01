@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"morf/models"
 	"morf/utils"
 	"os"
@@ -63,9 +62,11 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	}
 
 	if metadata_success != nil {
-		fmt.Println("Metadata collection successful")
+		log.Info("Metadata collection successful")
+
 		file_path, file_name := filepath.Split(apkPath)
-		fmt.Println(file_path)
+		log.Info("File path: " + file_path)
+		log.Info("File name: " + file_name)
 
 		// Make file readable
 		os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
