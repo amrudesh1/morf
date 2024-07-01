@@ -31,6 +31,8 @@ import (
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
+	alf "github.com/spf13/afero"
+	vip "github.com/spf13/viper"
 
 	"github.com/gin-gonic/gin"
 	"github.com/slack-go/slack"
@@ -205,6 +207,14 @@ func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) strin
 
 }
 
+func CreateReport(fs alf.Fs, secret models.Secrets, json_data []byte, secret_data []byte, fileName string) {
+	WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+secret.APKVersion+".json", string(json_data))
+	WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
+	WriteToFile(fs, "results"+"/"+fileName+"_"+secret.APKVersion+".json", string(json_data))
+	WriteToFile(fs, "results"+"/"+fileName+"_"+"Secrets_"+secret.APKVersion+".json", string(secret_data))
+	log.Info("APK Data saved to: " + vip.GetString("backup_path") + "/" + fileName + "_" + secret.APKVersion + ".json")
+}
+
 func CheckDuplicateInDB(startDB *gorm.DB, apkPath string) (bool, []byte) {
 	secret := db.GetSecrets(startDB)
 	for _, value := range secret {
@@ -315,9 +325,16 @@ func parseJiraMessage(secrets models.Secrets) []string {
 
 	for _, value := range secretModel {
 		heading := value.Type
+<<<<<<< HEAD
 		headingMarkup := fmt.Sprintf("\n=== %s ===\n", heading)
 		secretEntry := headingMarkup +
 			"{noformat}" + "Secret Value: " + value.SecretString + "\n" +
+=======
+		headingMarkup := fmt.Sprintf("\n === %s ===\n", heading)
+		secretEntry := "{noformat}" +
+			headingMarkup +
+			"Secret Value: " + value.SecretString + "\n" +
+>>>>>>> sanitized-history
 			"Line No: " + strconv.Itoa(value.LineNo) + "\n" +
 			"File Location: " + value.FileLocation + "\n" +
 			"{noformat}"
@@ -373,9 +390,7 @@ func ExecuteCommand(command string, args []string, captureOutput bool, useOutput
 		err = cmd.Run()
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("Error executing command: %s\nstderr: %s", err, stderr.String())
-	}
+	HandleError(err, stderr.String(), true)
 
 	return &stdout, nil
 }
@@ -407,10 +422,16 @@ func SanitizeSecrets(scanner_data []models.SecretModel) []models.SecretModel {
 	for _, secret := range sanitizedSecrets {
 		fmt.Printf("Type: %s\n", secret.Type)
 		fmt.Printf("Secret: %s\n", secret.SecretString)
+<<<<<<< HEAD
+=======
+		fmt.Printf("File Name %s\n", secret.FileLocation)
+		fmt.Println()
+>>>>>>> sanitized-history
 		fmt.Println("-----------------------------------")
 	}
 	return sanitizedSecrets
 }
+<<<<<<< HEAD
 
 type SecretWithVersion struct {
 	VersionCode  string // To store the version code
@@ -426,3 +447,5 @@ func FindUniqueSecrets(packageModel models.PackageDataModel, scannerData []model
 
 	return secretsWithVersion
 }
+=======
+>>>>>>> sanitized-history

@@ -6,6 +6,11 @@ import (
 	"io/fs"
 	"path/filepath"
 
+<<<<<<< HEAD
+=======
+	log "github.com/sirupsen/logrus"
+
+>>>>>>> sanitized-history
 	alf "github.com/spf13/afero"
 )
 
@@ -28,7 +33,17 @@ func CheckifmorftmpDirExists(fs alf.Fs) bool {
 	return exists
 }
 
+<<<<<<< HEAD
 func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
+=======
+func createInputOutputDir(fs alf.Fs) {
+	fs.Mkdir(tmpDir+"/input", 0755)
+	fs.Mkdir(tmpDir+"/output", 0755)
+}
+
+func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
+
+>>>>>>> sanitized-history
 	// Check if APK path is absolute or relative if its absolute then Lets only get the file name from the path and use it as the destination file name
 	var fileName string
 	if apkPath[0] == '/' {
@@ -39,6 +54,7 @@ func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
 
 	fmt.Println("APK Path:", apkPath)
 	destinationFilePath := tmpDir + "/input/" + fileName
+<<<<<<< HEAD
 
 	srcFile, err := appFS.Open(apkPath)
 	HandleError(err, "Error while opening the APK file", true)
@@ -46,14 +62,29 @@ func CopyApktoInputDir(appFS alf.Fs, apkPath string) string {
 	defer srcFile.Close()
 	destFile, err := appFS.Create(destinationFilePath)
 	HandleError(err, "Error while creating the destination file", true)
+=======
+	fmt.Println("Destination File Path:", destinationFilePath)
+	srcFile, err := appFS.Open(apkPath)
+	HandleError(err, "Error opening source file", true)
+
+	defer srcFile.Close()
+	destFile, err := appFS.Create(destinationFilePath)
+
+	HandleError(err, "Error creating destination file", true)
+>>>>>>> sanitized-history
 
 	defer destFile.Close()
 
 	fmt.Println("Moving APK to input directory:", tmpDir+"/input/"+apkPath)
 
 	_, err = io.Copy(destFile, srcFile)
+<<<<<<< HEAD
 	HandleError(err, "Error while copying the APK file", true)
 
+=======
+	HandleError(err, "Error copying APK to input directory", true)
+	log.Info(sourceDir)
+>>>>>>> sanitized-history
 	return destinationFilePath
 }
 
