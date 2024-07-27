@@ -54,7 +54,7 @@ func preFlight(cmd *cob.Command, args []string) error {
 }
 
 func runMORF(cmd *cob.Command, args []string) error {
-	logLevel := log.InfoLevel
+	logLevel := log.DebugLevel
 
 	log.SetFormatter(&log.TextFormatter{})
 	log.SetOutput(os.Stdout)
@@ -73,6 +73,7 @@ func init() {
 
 	vip.SetDefault("port", 8080)
 	vip.SetDefault("backup_path", "backup/")
+	vip.SetDefault("db_name", "Secrets")
 
 	MorfCmd.AddCommand(cliCmd)
 	MorfCmd.AddCommand(serverCmd)

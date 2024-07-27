@@ -52,6 +52,8 @@ func add(cmd *cob.Command, args []string) {
 	apkPath, _ = cmd.Flags().GetString("apk")
 	is_db_req, _ = cmd.Flags().GetBool("db")
 
+	fmt.Println(is_db_req)
+
 	if is_db_req {
 		db.InitDB()
 	}

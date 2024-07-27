@@ -423,3 +423,17 @@ func SanitizeSecrets(scanner_data []models.SecretModel) []models.SecretModel {
 	}
 	return sanitizedSecrets
 }
+
+func RunAAPT(apkPath string) []byte {
+	var aapt_success []byte
+	aapt_error := error(nil)
+	_, aapt_error = exec.LookPath("aapt")
+	if aapt_error != nil {
+		log.Error("AAPT not found in the system")
+		log.Error("Please install AAPT or add it to the system path")
+		aapt_success, aapt_error = exec.Command("tools/aapt", "dump", "badging", apkPath).Output()
+	} else {
+		aapt_success, aapt_error = exec.Command("aapt", "dump", "badging", apkPath).Output()
+	}
+	return aapt_success
+}
