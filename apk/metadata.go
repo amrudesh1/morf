@@ -16,7 +16,6 @@ limitations under the License.
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"morf/models"
 	"morf/utils"
@@ -35,12 +34,12 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	fs := alf.NewOsFs()
 
 	if utils.CheckifmorftmpDirExists(fs) {
-		fmt.Println("Deleting the temp directory")
+		log.Debug("Deleting the temp directory")
 		utils.DeleteTmpDir(fs)
-		fmt.Println("Creating a new temp directory")
+		log.Debug("Creating a new temp directory")
 		utils.CreateMorfDirintmp(fs)
 	} else {
-		fmt.Println("Creating a new temp directory")
+		log.Debug("Creating a new temp directory")
 		utils.CreateMorfDirintmp(fs)
 	}
 
@@ -51,32 +50,24 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 
 	// Move APK to input directory
 	apkPath = utils.CopyApktoInputDir(fs, apkPath)
-	fmt.Println("Starting metadata collection for " + apkPath)
+  
+  log.Info("Starting metadata collection for " + apkPath)
+  
 	metadata_success, metadata_error := exec.Command("java", "-cp", "tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", utils.GetInputDir(), "--out", utils.GetOutputDir()).Output()
 
 	if metadata_error != nil {
-		fmt.Println("Error while decompiling the APK file")
+		log.Error("Error while decompiling the APK file")
 		log.Fatal(metadata_error)
 		return models.MetaDataModel{}
 	}
 
 	if metadata_success != nil {
-		log.Info("Metadata collection successful")
-
+    log.Debug("Metadata collection successful")
 		file_path, file_name := filepath.Split(apkPath)
-		log.Info("File path: " + file_path)
-		log.Info("File name: " + file_name)
+		log.Debug(file_path)
 
 		// Make file readable
-		json_file_path := utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1)
-		// Create a file with 777 permissions
-		_, err := os.Create(json_file_path)
-		if err != nil {
-			log.Error("Error creating file")
-			log.Error(err)
-		}
-		os.Chmod(json_file_path, 0777)
-
+		os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
 		return startFileParser(utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1))
 	}
 
@@ -84,12 +75,12 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 }
 
 func startFileParser(s string) models.MetaDataModel {
-	fmt.Println("Starting file parser:" + s)
+	log.Debug("Starting file parser:" + s)
 	jsonFile, err := os.Open(s)
 	if err != nil {
-		fmt.Println(err)
+		log.Error(err)
 	}
-	fmt.Println("Successfully Opened " + s)
+	log.Debug("Successfully Opened " + s)
 	defer jsonFile.Close()
 
 	byteValue, _ := io.ReadAll(jsonFile)
