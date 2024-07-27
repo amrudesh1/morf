@@ -54,14 +54,15 @@ func CookJiraComment(jiraModel models.JiraModel, secret models.Secrets, ctx *gin
 func SlackRespond(jiraModel models.JiraModel, slackData models.SlackData) {
 	slack_app := slack.New(slackData.SlackToken)
 	_, err := slack_app.AuthTest()
-	if err != nil {
-		log.Error(err)
-	}
-	_, _, err = slack_app.PostMessage("C01S8U6HLHM", slack.MsgOptionText("```"+"MORF Scan has been completed successfully"+"```", false))
+	HandleError(err, "Error while authenticating to Slack", false)
+
+	_, _, err = slack_app.PostMessage("***REMOVED***", slack.MsgOptionText("```"+"MORF Scan has been completed successfully"+"```", false))
+	HandleError(err, "Error while sending message to Slack", false)
 }
 
 func commentToJira(jiraModel models.JiraModel, message string) string {
-	jira_url := "***REMOVED***" + "/rest/api/2/issue/" + jiraModel.Ticket_id + "/comment"
+	jira_link := os.Getenv("JIRA_LINK")
+	jira_url := jira_link + "/rest/api/2/issue/" + jiraModel.Ticket_id + "/comment"
 	final_body := map[string]string{"body": message}
 	final_body_json, _ := json.Marshal(final_body)
 	log.Info(final_body)
@@ -325,16 +326,10 @@ func parseJiraMessage(secrets models.Secrets) []string {
 
 	for _, value := range secretModel {
 		heading := value.Type
-<<<<<<< HEAD
-		headingMarkup := fmt.Sprintf("\n=== %s ===\n", heading)
-		secretEntry := headingMarkup +
-			"{noformat}" + "Secret Value: " + value.SecretString + "\n" +
-=======
 		headingMarkup := fmt.Sprintf("\n === %s ===\n", heading)
 		secretEntry := "{noformat}" +
 			headingMarkup +
 			"Secret Value: " + value.SecretString + "\n" +
->>>>>>> sanitized-history
 			"Line No: " + strconv.Itoa(value.LineNo) + "\n" +
 			"File Location: " + value.FileLocation + "\n" +
 			"{noformat}"
@@ -422,30 +417,21 @@ func SanitizeSecrets(scanner_data []models.SecretModel) []models.SecretModel {
 	for _, secret := range sanitizedSecrets {
 		fmt.Printf("Type: %s\n", secret.Type)
 		fmt.Printf("Secret: %s\n", secret.SecretString)
-<<<<<<< HEAD
-=======
-		fmt.Printf("File Name %s\n", secret.FileLocation)
-		fmt.Println()
->>>>>>> sanitized-history
 		fmt.Println("-----------------------------------")
 	}
 	return sanitizedSecrets
 }
-<<<<<<< HEAD
 
-type SecretWithVersion struct {
-	VersionCode  string // To store the version code
-	SecretDetail string // To store the secret details
+func RunAAPT(apkPath string) []byte {
+	var aapt_success []byte
+	aapt_error := error(nil)
+	_, aapt_error = exec.LookPath("aapt")
+	if aapt_error != nil {
+		log.Error("AAPT not found in the system")
+		log.Error("Please install AAPT or add it to the system path")
+		aapt_success, aapt_error = exec.Command("tools/aapt", "dump", "badging", apkPath).Output()
+	} else {
+		aapt_success, aapt_error = exec.Command("aapt", "dump", "badging", apkPath).Output()
+	}
+	return aapt_success
 }
-
-func FindUniqueSecrets(packageModel models.PackageDataModel, scannerData []models.SecretModel) []SecretWithVersion {
-
-	var secretsWithVersion []SecretWithVersion
-	err := db.DB.Model(models.Secrets{}).Select("version_code, secret_model").Scan(secretsWithVersion).Error
-
-	HandleError(err, "Error while scanning the secrets with version", false)
-
-	return secretsWithVersion
-}
-=======
->>>>>>> sanitized-history
