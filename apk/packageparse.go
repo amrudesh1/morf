@@ -15,13 +15,11 @@ limitations under the License.
 */package apk
 
 import (
+	"fmt"
 	"morf/models"
 	util "morf/utils"
-	"os/exec"
 	"regexp"
 	"strings"
-
-	log "github.com/sirupsen/logrus"
 
 	"github.com/lib/pq"
 )
@@ -30,23 +28,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 	// Use AAPT to get APK Version etc
 	// Check if AAPT is installed in the system or get aapt from the tools folder
 
-	aapt_success := []byte{}
-	aapt_error := error(nil)
-	_, aapt_error = exec.LookPath("aapt")
-	if aapt_error != nil {
-		log.Error("AAPT not found in the system")
-		log.Error("Please install AAPT or add it to the system path")
-		aapt_success, aapt_error = exec.Command("tools/aapt", "dump", "badging", apkPath).Output()
-	} else {
-		aapt_success, aapt_error = exec.Command("aapt", "dump", "badging", apkPath).Output()
-	}
-
-	aapt_byte_to_string := aapt_success[:]
-
-	if aapt_error != nil {
-		log.Error("Error while getting APK version etc")
-		log.Error(aapt_error)
-	}
+	aapt_byte_to_string := util.RunAAPT(apkPath)[:]
 
 	aapt_split_stirng := strings.Split(string(aapt_byte_to_string), "\n")
 	re := regexp.MustCompile(`'[^"]+'`)
@@ -133,6 +115,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 	}
 
 	packageModel := models.PackageDataModel{PackageDataID: 0, APKHash: util.ExtractHash(apkPath), PackageName: package_name, VersionCode: version_code, VersionName: version_name, CompileSdkVersion: complie_sdk_version, SdkVersion: sdk_version, TargetSdk: target_sdk, SupportScreens: pq.StringArray(support_screens), Densities: pq.StringArray(densities), NativeCode: pq.StringArray(native_code)}
+	fmt.Println("Package Model:", packageModel.PackageName)
 	return packageModel
 
 }

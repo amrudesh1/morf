@@ -29,7 +29,6 @@ import (
 )
 
 func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
-
 	router.GET("/health", func(c *gin.Context) {
 
 		c.JSON(200, gin.H{
