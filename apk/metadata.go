@@ -17,7 +17,6 @@ limitations under the License.
 import (
 	"encoding/json"
 	"io"
-
 	"morf/models"
 	"morf/utils"
 	"os"
@@ -51,9 +50,9 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 
 	// Move APK to input directory
 	apkPath = utils.CopyApktoInputDir(fs, apkPath)
-
-	log.Info("Starting metadata collection for " + apkPath)
-
+  
+  log.Info("Starting metadata collection for " + apkPath)
+  
 	metadata_success, metadata_error := exec.Command("java", "-cp", "tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", utils.GetInputDir(), "--out", utils.GetOutputDir()).Output()
 
 	if metadata_error != nil {
@@ -63,7 +62,7 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	}
 
 	if metadata_success != nil {
-		log.Debug("Metadata collection successful")
+    log.Debug("Metadata collection successful")
 		file_path, file_name := filepath.Split(apkPath)
 		log.Debug(file_path)
 
