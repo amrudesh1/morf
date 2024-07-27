@@ -20,11 +20,13 @@ import (
 	database "morf/db"
 	"morf/models"
 	"morf/utils"
+	util "morf/utils"
 	"net/http"
 	"path/filepath"
 
-	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -32,9 +34,8 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 	var fileName string
 
 	fs := utils.GetAppFS()
-
 	if is_db_req {
-		apkFound, json_data := utils.CheckDuplicateInDB(db, apkPath)
+		apkFound, json_data := util.CheckDuplicateInDB(db, apkPath)
 		if apkFound {
 			log.Info("APK already exists in the database")
 			log.Info(json_data)
@@ -52,64 +53,76 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 		fileName = apkPath
 	}
 
-	scanner_data := StartSecScan(utils.GetInputDir()+fileName, packageModel)
+	scanner_data := StartSecScan(utils.GetInputDir() + fileName)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
-	utils.HandleError(secret_error, "Error while marshalling the secret data", false)
-
-	secret := utils.CreateSecretModel(fileName, packageModel, metadata, scanner_data, secret_data)
-	insertIntoDB(secret, db, false)
-
-	json_data, json_error := json.MarshalIndent(secret, "", " ")
-	utils.HandleError(json_error, "Error while marshalling the secret data", false)
-
-	if !utils.CheckBackUpDirExists(fs) {
-		utils.CreateBackUpDir(fs)
+	if secret_error != nil {
+		log.Error(secret_error)
 	}
 
-	ParseResults(fs, fileName, json_data, secret, secret_data)
+	secret := util.CreateSecretModel(fileName, packageModel, metadata, scanner_data, secret_data)
+
+	if is_db_req {
+		database.InsertSecrets(secret, db)
+	}
+
+	json_data, json_error := json.MarshalIndent(secret, "", " ")
+
+	if json_error != nil {
+		log.Error(json_error)
+	}
+
+	//Check if backup folder exists
+	if !util.CheckBackUpDirExists(fs) {
+		util.CreateBackUpDir(fs)
+	}
+
+	utils.CreateReport(fs, secret, json_data, secret_data, fileName)
 }
 
 func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
-	apk_path := utils.DownloadFileUsingSlack(jiramodel, c)
 
+	apk_path := util.DownloadFileUsingSlack(jiramodel, c)
 	if apk_path == "" {
 		return
 	}
 
-	apkFound, json_data := utils.CheckDuplicateInDB(db, apk_path)
+	apkFound, json_data := util.CheckDuplicateInDB(db, apk_path)
 
 	if apkFound {
 		log.Info("APK already exists in the database")
 		var secrets models.Secrets
 		apk_data := json.Unmarshal([]byte(json_data), &secrets)
 		if apk_data != nil {
-			utils.HandleError(apk_data, "Error while unmarshalling the secret data", false)
+			log.Error(apk_data)
 		}
-		utils.CookJiraComment(jiramodel, secrets, c)
+		util.CookJiraComment(jiramodel, secrets, c)
 		return
 	}
 
 	packageModel := ExtractPackageData(apk_path)
 	metadata := StartMetaDataCollection(apk_path)
-	scanner_data := StartSecScan(utils.GetInputDir()+apk_path, packageModel)
+	scanner_data := StartSecScan(utils.GetInputDir() + apk_path)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
-	utils.HandleError(secret_error, "Error while marshalling the secret data", false)
-	secret := utils.CreateSecretModel(apk_path, packageModel, metadata, scanner_data, secret_data)
-	insertIntoDB(secret, db, true)
+	if secret_error != nil {
+		log.Error(secret_error)
+	}
 
-	utils.CookJiraComment(jiramodel, secret, c)
+	secret := util.CreateSecretModel(apk_path, packageModel, metadata, scanner_data, secret_data)
+	database.InsertSecrets(secret, db)
 
+	// Comment the data to JIRA ticket
+	util.CookJiraComment(jiramodel, secret, c)
 }
 
 func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bool, slackData models.SlackData) {
 	fs := utils.GetAppFS()
 
-	apkFound, json_data := utils.CheckDuplicateInDB(db, apkPath)
+	apkFound, json_data := util.CheckDuplicateInDB(db, apkPath)
 	if apkFound {
 		if isSlack {
-			utils.RespondSecretsToSlack(slackData, c, string(json_data))
+			util.RespondSecretsToSlack(slackData, c, string(json_data))
 		} else {
 
 			c.JSON(http.StatusOK, gin.H{
@@ -123,25 +136,29 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 
 	packageModel := ExtractPackageData(apkPath)
 	metadata := StartMetaDataCollection(apkPath)
-	scanner_data := StartSecScan(utils.GetInputDir()+apkPath, packageModel)
+	scanner_data := StartSecScan(utils.GetInputDir() + apkPath)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
 	if secret_error != nil {
 		log.Error(secret_error)
 	}
 
-	secret := utils.CreateSecretModel(apkPath, packageModel, metadata, scanner_data, secret_data)
-
-	insertIntoDB(secret, db, true)
+	secret := util.CreateSecretModel(apkPath, packageModel, metadata, scanner_data, secret_data)
+	database.InsertSecrets(secret, db)
 
 	json_data, json_error := json.MarshalIndent(secret, "", " ")
-	utils.HandleError(json_error, "Error while marshalling the secret data", false)
 
-	if !utils.CheckBackUpDirExists(fs) {
-		utils.CreateBackUpDir(fs)
+	if json_error != nil {
+		log.Error("JSON ERROR: ", json_error)
+		log.Error(json_error)
 	}
 
-	ParseResults(fs, apkPath, json_data, secret, secret_data)
+	//Check if backup folder exists
+	if !util.CheckBackUpDirExists(fs) {
+		util.CreateBackUpDir(fs)
+	}
+
+	utils.CreateReport(fs, secret, json_data, secret_data, apkPath)
 
 	if !isSlack {
 		c.JSON(http.StatusOK, gin.H{
@@ -151,13 +168,7 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 	}
 
 	if isSlack {
-		utils.RespondSecretsToSlack(slackData, c, string(json_data))
+		util.RespondSecretsToSlack(slackData, c, string(json_data))
 	}
 
-}
-
-func insertIntoDB(secret models.Secrets, db *gorm.DB, is_db_req bool) {
-	if is_db_req {
-		database.InsertSecrets(secret, db)
-	}
 }
