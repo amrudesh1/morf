@@ -1,6 +1,5 @@
 # Get Go Alpine Base Image from Docker Hub 
 FROM golang:buster AS builder
-
 #Install JRE for AAPT2
 
 ARG JDK_VERSION=11
@@ -33,6 +32,7 @@ RUN apt-get update && \
     rm -rf /usr/lib/jvm/java-${JDK_VERSION}-openjdk-amd64/jre/lib/amd64/libjavafx*.so && \
     rm -rf /usr/lib/jvm/java-${JDK_VERSION}-openjdk-amd64/jre/lib/amd64/libjfx*.so
 
+    
 ## Install Ripgrep 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ripgrep && \
