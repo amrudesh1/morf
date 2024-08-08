@@ -16,8 +16,9 @@ limitations under the License.
 
 import (
 	"fmt"
-	"morf/apk"
-	"morf/db"
+
+	"github.com/amrudesh1/morf/apk"
+	"github.com/amrudesh1/morf/db"
 
 	log "github.com/sirupsen/logrus"
 	cob "github.com/spf13/cobra"

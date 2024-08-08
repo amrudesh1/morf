@@ -19,13 +19,14 @@ package apk
 
 import (
 	"fmt"
-	"morf/models"
-	"morf/utils"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/amrudesh1/morf/models"
+	"github.com/amrudesh1/morf/utils"
 
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -109,6 +110,7 @@ func StartScan(apkPath string) []models.SecretModel {
 
 				for _, pattern := range secretPatterns.Patterns {
 					pat := pattern.Pattern.Regex
+					log.Info("Searching for pattern: " + pat)
 					result, err := exec.Command("rg", "-n", "-e", pat, "--multiline", utils.GetFilesDir()).Output()
 					if err != nil {
 						continue

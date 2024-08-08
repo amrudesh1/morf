@@ -18,11 +18,12 @@ package router
 
 import (
 	"fmt"
-	"morf/apk"
-	"morf/db"
-	"morf/models"
-	"morf/utils"
 	"net/http"
+
+	"github.com/amrudesh1/morf/apk"
+	"github.com/amrudesh1/morf/db"
+	"github.com/amrudesh1/morf/models"
+	"github.com/amrudesh1/morf/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
