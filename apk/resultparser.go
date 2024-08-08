@@ -1,8 +1,8 @@
 package apk
 
 import (
-	"morf/models"
-	"morf/utils"
+	"github.com/amrudesh1/morf/models"
+	"github.com/amrudesh1/morf/utils"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/afero"

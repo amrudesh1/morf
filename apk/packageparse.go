@@ -16,10 +16,12 @@ limitations under the License.
 
 import (
 	"fmt"
-	"morf/models"
-	util "morf/utils"
 	"regexp"
 	"strings"
+
+	"github.com/amrudesh1/morf/models"
+
+	util "github.com/amrudesh1/morf/utils"
 
 	"github.com/lib/pq"
 )

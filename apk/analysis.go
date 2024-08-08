@@ -17,12 +17,13 @@ limitations under the License.
 import (
 	"encoding/json"
 	"fmt"
-	database "morf/db"
-	"morf/models"
-	"morf/utils"
-	util "morf/utils"
 	"net/http"
 	"path/filepath"
+
+	database "github.com/amrudesh1/morf/db"
+	"github.com/amrudesh1/morf/models"
+	"github.com/amrudesh1/morf/utils"
+	util "github.com/amrudesh1/morf/utils"
 
 	log "github.com/sirupsen/logrus"
 

@@ -15,10 +15,11 @@ limitations under the License.
 */package cmd
 
 import (
-	"morf/db"
-	route "morf/router"
 	"net/http"
 	"time"
+
+	"github.com/amrudesh1/morf/db"
+	route "github.com/amrudesh1/morf/router"
 
 	gin "github.com/gin-gonic/gin"
 	cob "github.com/spf13/cobra"

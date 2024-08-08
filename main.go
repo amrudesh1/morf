@@ -17,7 +17,7 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 */
 package main
 
-import "morf/cmd"
+import "github.com/amrudesh1/morf/cmd"
 
 func main() {
 	cmd.Execute()
