@@ -16,8 +16,9 @@ limitations under the License.
 
 import (
 	"fmt"
-	"morf/models"
 	"os"
+
+	"github.com/amrudesh1/morf/models"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"

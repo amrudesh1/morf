@@ -21,14 +21,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"morf/db"
-	"morf/models"
 	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/amrudesh1/morf/db"
+	"github.com/amrudesh1/morf/models"
 
 	log "github.com/sirupsen/logrus"
 	alf "github.com/spf13/afero"
