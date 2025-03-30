@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  morf:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - DATABASE_URL=${DATABASE_URL}
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    ports:
+      - "9092:9092"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./log:/app/log

@@ -1,0 +1,13 @@
+/* Global styles */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Roboto+Mono:wght@300;400;500&display=swap');
+
+/* Base styles */
+:host {
+  display: block;
+  height: 100%;
+}
+
+/* Ensure the app takes up the full viewport */
+.min-h-screen {
+  min-height: 100vh;
+}
