@@ -1,0 +1,81 @@
+patterns:
+  - pattern:
+      name: AWS Access Key
+      regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"
+      confidence: high
+  - pattern:
+      name: AWS Secret Key
+      regex: "aws.*['\"][0-9a-zA-Z/+]{40}['\"]"
+      confidence: high
+  - pattern:
+      name: AWS MWS key
+      regex: "amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+      confidence: high
+  - pattern:
+      name: Facebook Secret Key
+      regex: "(facebook|fb).*['\"][0-9a-f]{32}['\"]"
+      confidence: high
+  - pattern:
+      name: Facebook Client ID
+      regex: "(facebook|fb).*['\"][0-9]{13,17}['\"]"
+      confidence: high
+  - pattern:
+      name: Twitter Secret Key
+      regex: "twitter.*[0-9a-z]{35,44}"
+      confidence: high
+  - pattern:
+      name: Github Token
+      regex: "(ghp|gho|ghu|ghs|ghr)_[0-9a-zA-Z]{36,76}"
+      confidence: high
+  - pattern:
+      name: LinkedIn Secret
+      regex: "linkedin.*[0-9a-z]{16}"
+      confidence: high
+  - pattern:
+      name: Slack Token
+      regex: "xox[baprs]-[0-9a-zA-Z]{10,48}"
+      confidence: high
+  - pattern:
+      name: Private Key
+      regex: "-----BEGIN.*PRIVATE KEY"
+      confidence: high
+  - pattern:
+      name: Google API Key
+      regex: "AIza[0-9A-Za-z\\-_]{35}"
+      confidence: high
+  - pattern:
+      name: Heroku API Key
+      regex: "heroku.*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+      confidence: high
+  - pattern:
+      name: MailChimp API Key
+      regex: "(mailchimp|mc).*[0-9a-f]{32}-us[0-9]{1,2}"
+      confidence: high
+  - pattern:
+      name: Mailgun API Key
+      regex: "key-[0-9a-z]{32}"
+      confidence: high
+  - pattern:
+      name: PayPal Token
+      regex: "access_token\\$production\\$[0-9a-z]{16}\\$[0-9a-f]{32}"
+      confidence: high
+  - pattern:
+      name: SendGrid API Key
+      regex: "SG\\.[\\w_]{16,32}\\.[\\w_]{16,64}"
+      confidence: high
+  - pattern:
+      name: Stripe API Key
+      regex: "sk_live_[0-9a-zA-Z]{24}"
+      confidence: high
+  - pattern:
+      name: Square Token
+      regex: "sq0(atp|csp)-[0-9A-Za-z\\-_]{22,43}"
+      confidence: high
+  - pattern:
+      name: Twilio API Key
+      regex: "twilio.*SK[0-9a-f]{32}"
+      confidence: high
+  - pattern:
+      name: Generic Secret
+      regex: "(password|secret|key|token).*['\"][0-9a-zA-Z\\-_]{16,64}['\"]"
+      confidence: high

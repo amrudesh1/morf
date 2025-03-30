@@ -1,0 +1,23 @@
+stages:
+  - analyze
+
+variables:
+  DOCKER_IMAGE: "your-dockerhub-username/morf:latest"
+  # Set APK_URL as a CI/CD variable when triggering the pipeline
+
+analyze_apk:
+  stage: analyze
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - curl -L "$APK_URL" -o app.apk
+    - docker run --rm -v "$CI_PROJECT_DIR":/data "$DOCKER_IMAGE" --apk /data/app.apk --output /data/results
+  artifacts:
+    when: always
+    paths:
+      - results/*
+      - backup/*
+  when: manual
