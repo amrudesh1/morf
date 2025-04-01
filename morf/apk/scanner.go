@@ -17,13 +17,12 @@ package apk
 
 import (
 	"fmt"
+	"morf/models"
+	"morf/utils"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
-
-	"morf/models"
-	"morf/utils"
 
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -138,7 +137,7 @@ func StartScan() []models.SecretModel {
 								Type:             pattern.Pattern.Name,
 								LineNo:           lineNumber,
 								FileLocation:     fileName,
-								SecretType:       pattern.Pattern.Name,
+								SecretType:       pattern.Pattern.Name, // Assuming SecretType is the same as Type
 								SecretString:     secretString,
 								SecretConfidence: pattern.Pattern.Confidence,
 							}
@@ -157,6 +156,7 @@ func StartScan() []models.SecretModel {
 	var secretModel []models.SecretModel
 
 	for secret := range resultsChan {
+		// Lock the critical section
 		mu.Lock()
 		secretModel = append(secretModel, secret)
 		mu.Unlock()
@@ -166,40 +166,49 @@ func StartScan() []models.SecretModel {
 }
 
 func extractSecret(content string) string {
+
+	// Check for content enclosed in XML tags
+
 	if strings.Contains(content, ">") && strings.Contains(content, "<") {
 		begin := strings.Index(content, ">") + 1
 		end := strings.LastIndex(content, "<")
-		if begin < end && begin > 0 && end > 0 {
+		if begin < end && begin > 0 && end > 0 { // Ensure indices are valid
 			return strings.TrimSpace(content[begin:end])
 		}
 	}
 
+	// Check if the content contains quotes, often used to enclose secrets
 	if strings.Count(content, "\"") >= 2 {
+		// Extract the content between the first pair of quotes
 		parts := strings.SplitN(content, "\"", 3)
 		if len(parts) > 1 {
 			return parts[1]
 		}
 	}
 
+	// Fallback: use the content after the last colon, if present
 	lastColon := strings.LastIndex(content, ":")
 	if lastColon != -1 {
+		// Trim any potential leading or trailing whitespace around the secret
 		return strings.TrimSpace(content[lastColon+1:])
 	}
 
+	// If no known patterns are detected, return the full content as a fallback
 	return content
 }
 
 func SanitizeSecrets(scanner_data []models.SecretModel) []models.SecretModel {
 	var sanitizedSecrets []models.SecretModel
+	// Use a map to track unique SecretStrings
 	uniqueSecrets := make(map[string]models.SecretModel)
 
 	for _, secret := range scanner_data {
+		// If the secret is not already in uniqueSecrets, add it
 		if _, exists := uniqueSecrets[secret.SecretString]; !exists {
 			uniqueSecrets[secret.SecretString] = secret
-			sanitizedSecrets = append(sanitizedSecrets, secret)
+			sanitizedSecrets = append(sanitizedSecrets, secret) // Append the unique secret to the sanitized list
 		}
 	}
-
 	for _, secret := range sanitizedSecrets {
 		fmt.Printf("Type: %s\n", secret.Type)
 		fmt.Printf("Secret: %s\n", secret.SecretString)
