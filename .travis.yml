@@ -1,0 +1,30 @@
+dist: focal
+
+services:
+  - docker
+
+env:
+  global:
+    - APK_URL=${APK_URL}
+    - DOCKER_IMAGE=your-dockerhub-username/morf:latest
+
+stages:
+  - analyze
+
+jobs:
+  include:
+    - stage: analyze
+      name: Analyze APK with MORF
+      script:
+        - sudo apt-get update && sudo apt-get install -y curl
+        - curl -L "$APK_URL" -o app.apk
+        - docker run --rm -v $(pwd):/data "$DOCKER_IMAGE" --apk /data/app.apk --output /data/results
+      after_script:
+        - tar -czf analysis-results.tar.gz results/
+      deploy:
+        provider: releases
+        api_key: $GITHUB_TOKEN
+        file: analysis-results.tar.gz
+        skip_cleanup: true
+        on:
+          all_branches: true

@@ -1,0 +1,31 @@
+name: MORF APK Analysis Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'URL of the APK file to analyze'
+        required: true
+
+jobs:
+  analyze_apk:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Download APK file
+      run: |
+        curl -L "${{ github.event.inputs.apk_url }}" -o app.apk
+
+    - name: Run MORF analysis in Docker
+      uses: addnab/docker-run-action@v3
+      with:
+        image: your-dockerhub-username/morf:latest
+        options: --rm -v ${{ github.workspace }}:/data
+        run: |
+          /app/morf --apk /data/app.apk --output /data/results
+
+    - name: Upload analysis results
+      uses: actions/upload-artifact@v3
+      with:
+        name: analysis-results
+        path: results/*

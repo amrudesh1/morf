@@ -1,0 +1,51 @@
+<div class="fixed inset-0 overflow-hidden" [@fadeInOut]>
+  <!-- Animated Background -->
+  <div class="absolute inset-0 bg-gradient-to-br from-blue-900 to-black">
+    <div class="particles-container">
+      <div *ngFor="let particle of particlePositions" 
+           class="particle" 
+           [ngStyle]="{
+             'top': particle.top,
+             'left': particle.left,
+             '--size': particle.size,
+             '--delay': particle.delay
+           }">
+      </div>
+    </div>
+  </div>
+  
+  <!-- Centered Content -->
+  <div class="absolute inset-0 flex flex-col items-center justify-center z-10">
+    <div class="text-center">
+      <div class="w-24 h-24 mb-6 mx-auto">
+        <img src="assets/morf.png" alt="MORF" class="spin drop-shadow-glow">
+      </div>
+      
+      <h2 class="text-2xl font-semibold text-white mb-4 splash-font">
+        Analyzing {{ selectedPlatform === 'android' ? 'APK' : 'IPA' }}
+      </h2>
+      
+      <!-- Animated Scanner Line -->
+      <div class="scanner-container mx-auto mb-6">
+        <div class="scanner-line"></div>
+      </div>
+      
+      <div class="space-y-2 text-blue-300">
+        <p class="splash-font-secondary text-lg">Scanning for sensitive information</p>
+        <div class="flex justify-center space-x-2">
+          <div class="loading-dot"></div>
+          <div class="loading-dot"></div>
+          <div class="loading-dot"></div>
+        </div>
+      </div>
+      
+      <!-- File Info -->
+      <div class="mt-8 inline-block px-6 py-3 rounded-lg bg-blue-900/20 backdrop-blur-sm border border-blue-500/30">
+        <p class="text-blue-300 splash-font-secondary">
+          <span class="text-blue-200">{{currentFile?.name}}</span><br>
+          {{getFileSize()}}
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
