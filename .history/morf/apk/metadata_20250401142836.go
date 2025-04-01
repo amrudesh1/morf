@@ -88,4 +88,46 @@ func startFileParser(jsonPath string, apkPath string) models.MetaDataModel {
 	ExtractComponentExportInfo(apkPath, &metadata)
 
 	return metadata
+
+func startFileParser(jsonPath string, apkPath string) models.MetaDataModel {
+	fmt.Println("Starting file parser:" + jsonPath)
+	jsonFile, err := os.Open(jsonPath)
+=======
+	if metadata_success != nil {
+		log.Debug("Metadata collection successful")
+		file_path, file_name := filepath.Split(apkPath)
+		log.Debug(file_path)
+
+		// Make file readable
+		os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
+		return startFileParser(utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1))
+	}
+
+	return models.MetaDataModel{}
+}
+
+func startFileParser(s string) models.MetaDataModel {
+	log.Debug("Starting file parser:" + s)
+	jsonFile, err := os.Open(s)
+>>>>>>> main:apk/metadata.go
+	if err != nil {
+		log.Error(err)
+	}
+<<<<<<< HEAD:morf/apk/metadata.go
+	fmt.Println("Successfully Opened " + jsonPath)
+=======
+	log.Debug("Successfully Opened " + s)
+>>>>>>> main:apk/metadata.go
+	defer jsonFile.Close()
+
+	byteValue, _ := io.ReadAll(jsonFile)
+
+	var metadata models.MetaDataModel
+	json.Unmarshal([]byte(byteValue), &metadata)
+
+	// Extract export information for components from the original APK
+	ExtractComponentExportInfo(apkPath, &metadata)
+
+	return metadata
+
 }
