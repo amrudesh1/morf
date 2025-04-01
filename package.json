@@ -1,0 +1,28 @@
+{
+  "name": "morf",
+  "version": "1.0.0",
+  "description": "Mobile Reconnaissance Framework",
+  "scripts": {
+    "start:backend": "cd backend && go run cmd/main.go",
+    "start:frontend": "cd frontend && ng serve",
+    "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "install:frontend": "cd frontend && npm install",
+    "build:frontend": "cd frontend && ng build",
+    "build:backend": "cd backend && go build -o ../bin/morf-server cmd/main.go",
+    "build": "npm run build:frontend && npm run build:backend",
+    "test:frontend": "cd frontend && ng test",
+    "test:backend": "cd backend && go test ./..."
+  },
+  "keywords": [
+    "security",
+    "mobile",
+    "scanning",
+    "apk",
+    "ipa"
+  ],
+  "author": "App",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

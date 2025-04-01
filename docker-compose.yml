@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - morf-backend
+    networks:
+      - morf-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  morf-backend:
+    build:
+      context: ./morf
+      dockerfile: Dockerfile
+    ports:
+      - "9092:9092"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - GIN_MODE=debug
+    volumes:
+      - ./uploads:/app/uploads
+    networks:
+      - morf-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  morf-network:
+    driver: bridge
+
+volumes:
+  uploads:

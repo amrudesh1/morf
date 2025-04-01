@@ -1,0 +1,28 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Logs
+*.log
+log/
+
+# Build artifacts
+*.exe
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+uploads/*
+!uploads/.gitkeep
+
+# Documentation
+*.md
+Architecture/

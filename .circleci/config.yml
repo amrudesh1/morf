@@ -1,0 +1,25 @@
+version: 2.1
+
+jobs:
+  analyze_apk:
+    docker:
+      - image: cimg/base:stable
+    environment:
+      APK_URL: ${APK_URL}  # Set this environment variable when triggering the pipeline
+    steps:
+      - run:
+          name: Download APK file
+          command: |
+            curl -L "$APK_URL" -o app.apk
+      - run:
+          name: Run MORF analysis in Docker
+          command: |
+            docker run --rm -v $(pwd):/data your-dockerhub-username/morf:latest --apk /data/app.apk --output /data/results
+      - store_artifacts:
+          path: results/
+          destination: analysis-results
+
+workflows:
+  analyze_and_deploy:
+    jobs:
+      - analyze_apk
