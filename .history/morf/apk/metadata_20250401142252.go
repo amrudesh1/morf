@@ -19,18 +19,29 @@ package apk
 import (
 	"encoding/json"
 	"io"
+<<<<<<< HEAD:morf/apk/metadata.go
+	"log"
 	"morf/models"
 	"morf/utils"
+=======
+>>>>>>> main:apk/metadata.go
 	"os"
 	"path/filepath"
 	"strings"
 
+<<<<<<< HEAD:morf/apk/metadata.go
+=======
+	"github.com/amrudesh1/morf/models"
+	"github.com/amrudesh1/morf/utils"
+
 	log "github.com/sirupsen/logrus"
+>>>>>>> main:apk/metadata.go
 	alf "github.com/spf13/afero"
 )
 
 func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 	// Check if temp directory exist and If yes delete it and create a new one
+
 	fs := alf.NewOsFs()
 
 	if utils.CheckifmorftmpDirExists(fs) {
@@ -50,9 +61,16 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 
 	// Move APK to input directory
 	apkPath = utils.CopyApktoInputDir(fs, apkPath)
-	log.Info("Starting metadata collection for " + apkPath)
+<<<<<<< HEAD:morf/apk/metadata.go
+	fmt.Println("Starting metadata collection for " + apkPath)
 
 	_, metadata_error := utils.ExecuteCommand("java", "-cp", "/app/tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", utils.GetInputDir(), "--out", utils.GetOutputDir())
+=======
+
+	log.Info("Starting metadata collection for " + apkPath)
+
+	metadata_success, metadata_error := exec.Command("java", "-cp", "tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", utils.GetInputDir(), "--out", utils.GetOutputDir()).Output()
+>>>>>>> main:apk/metadata.go
 
 	if metadata_error != nil {
 		log.Error("Error while decompiling the APK file")
@@ -60,9 +78,10 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 		return models.MetaDataModel{}
 	}
 
-	log.Debug("Metadata collection successful")
+<<<<<<< HEAD:morf/apk/metadata.go
+	fmt.Println("Metadata collection successful")
 	file_path, file_name := filepath.Split(apkPath)
-	log.Debug(file_path)
+	fmt.Println(file_path)
 
 	// Make file readable
 	os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
@@ -71,12 +90,34 @@ func StartMetaDataCollection(apkPath string) models.MetaDataModel {
 }
 
 func startFileParser(jsonPath string, apkPath string) models.MetaDataModel {
-	log.Debug("Starting file parser:" + jsonPath)
+	fmt.Println("Starting file parser:" + jsonPath)
 	jsonFile, err := os.Open(jsonPath)
+=======
+	if metadata_success != nil {
+		log.Debug("Metadata collection successful")
+		file_path, file_name := filepath.Split(apkPath)
+		log.Debug(file_path)
+
+		// Make file readable
+		os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
+		return startFileParser(utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1))
+	}
+
+	return models.MetaDataModel{}
+}
+
+func startFileParser(s string) models.MetaDataModel {
+	log.Debug("Starting file parser:" + s)
+	jsonFile, err := os.Open(s)
+>>>>>>> main:apk/metadata.go
 	if err != nil {
 		log.Error(err)
 	}
-	log.Debug("Successfully Opened " + jsonPath)
+<<<<<<< HEAD:morf/apk/metadata.go
+	fmt.Println("Successfully Opened " + jsonPath)
+=======
+	log.Debug("Successfully Opened " + s)
+>>>>>>> main:apk/metadata.go
 	defer jsonFile.Close()
 
 	byteValue, _ := io.ReadAll(jsonFile)
@@ -88,4 +129,5 @@ func startFileParser(jsonPath string, apkPath string) models.MetaDataModel {
 	ExtractComponentExportInfo(apkPath, &metadata)
 
 	return metadata
+
 }
