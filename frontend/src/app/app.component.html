@@ -1,0 +1,17 @@
+<div class="min-h-screen bg-gradient-to-br from-blue-900 to-black relative overflow-hidden">
+  <div [@screenAnimation]="currentScreen" class="w-full h-full">
+    <ng-container [ngSwitch]="currentScreen">
+      <!-- Splash Screen -->
+      <app-splash-screen *ngSwitchCase="'splash'"></app-splash-screen>
+
+      <!-- Upload Screen -->
+      <app-upload-screen *ngSwitchCase="'upload'"></app-upload-screen>
+
+      <!-- Processing Screen -->
+      <app-processing-screen *ngSwitchCase="'processing'"></app-processing-screen>
+
+      <!-- Results Screen -->
+      <app-results-screen *ngSwitchCase="'results'"></app-results-screen>
+    </ng-container>
+  </div>
+</div>

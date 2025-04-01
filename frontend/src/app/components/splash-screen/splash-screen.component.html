@@ -1,0 +1,58 @@
+<div class="fixed inset-0 overflow-hidden" [@fadeInOut]>
+  <!-- Animated Background -->
+  <div class="absolute inset-0 bg-gradient-to-br from-blue-900 to-black">
+    <div class="particles-container">
+      <div *ngFor="let particle of particlePositions" 
+           class="particle" 
+           [ngStyle]="{
+             'top': particle.top,
+             'left': particle.left,
+             '--size': particle.size,
+             '--delay': particle.delay
+           }">
+      </div>
+    </div>
+  </div>
+  
+  <!-- Centered Content -->
+  <div class="absolute inset-0 flex flex-col items-center justify-center z-10">
+    <!-- Logo with Breathing Glow Animation -->
+    <div class="logo-container mb-8">
+      <img src="assets/morf.png" alt="MORF" class="logo-reveal">
+    </div>
+    
+    <!-- Tagline with Matrix Effect -->
+    <p class="text-2xl text-blue-200 text-center mb-16 splash-font matrix-text framework-text">
+      <span *ngFor="let char of frameworkMatrixChars">{{char}}</span>
+    </p>
+    
+    <!-- Animated Scanner Line -->
+    <div class="scanner-container">
+      <div class="scanner-line"></div>
+    </div>
+  </div>
+  
+  <!-- Loading Indicator -->
+  <div class="absolute bottom-12 left-0 right-0 flex flex-col items-center">
+    <div class="w-64 h-1.5 bg-blue-900/50 rounded-full overflow-hidden backdrop-blur-sm">
+      <div class="loading-bar h-full"></div>
+    </div>
+    <div class="mt-4 flex items-center space-x-2">
+      <div class="loading-dot"></div>
+      <div class="loading-dot"></div>
+      <div class="loading-dot"></div>
+      <p class="text-blue-300 text-sm ml-2 splash-font-secondary">Initializing Security Scanner</p>
+    </div>
+  </div>
+  
+  <!-- Corner Elements -->
+  <div class="absolute top-8 left-8 border border-blue-500/30 p-3 rounded-lg bg-blue-900/10 backdrop-blur-sm">
+    <div class="text-xs text-blue-300 matrix-text">
+      <span *ngFor="let char of matrixChars">{{char}}</span>
+    </div>
+  </div>
+  
+  <div class="absolute bottom-8 right-8 border border-blue-500/30 p-3 rounded-lg bg-blue-900/10 backdrop-blur-sm">
+    <div class="text-xs text-blue-300 splash-font">v1.0.0</div>
+  </div>
+</div>

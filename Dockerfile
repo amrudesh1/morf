@@ -1,4 +1,3 @@
-# Get Go Alpine Base Image from Docker Hub 
 FROM golang:buster AS builder
 #Install JRE for AAPT2
 
@@ -52,6 +51,3 @@ ENV CGO_ENABLED=0
 RUN go build -v -x -o morf .
 
 EXPOSE 8888
-
-ENTRYPOINT ["./morf" , "server" , "-p" , "8888"]
-
