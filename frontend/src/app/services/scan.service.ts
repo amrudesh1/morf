@@ -1,6 +1,17 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, catchError, finalize, Observable, Observer, of } from 'rxjs';
+import {
+  BehaviorSubject,
+  Observable,
+  Observer,
+  Subject,
+  catchError,
+  of,
+  switchMap,
+  takeUntil,
+  takeWhile,
+  timer,
+} from 'rxjs';
 
 // Backend secret format
 interface BackendSecret {
@@ -80,6 +91,17 @@ interface ScanResponse {
   };
 }
 
+interface JobStatusResponse {
+  job_id: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  failed_at?: string;
+  error?: string;
+  result?: ScanResponse;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -152,15 +174,24 @@ export class ScanService {
   metadata$ = this.metadataSubject.asObservable();
 
   // Current screen
-  private currentScreenSubject = new BehaviorSubject<'splash' | 'upload' | 'processing' | 'results'>('splash');
+  private currentScreenSubject = new BehaviorSubject<'splash' | 'upload' | 'processing' | 'results' | 'patterns'>('splash');
   currentScreen$ = this.currentScreenSubject.asObservable();
 
   // Particle positions for background animation
   private particlePositionsSubject = new BehaviorSubject<Array<{top: string, left: string, size: string, delay: string}>>([]);
   particlePositions$ = this.particlePositionsSubject.asObservable();
 
+  // Cancellation signal for the in-flight poll loop. resetScan/processFile call
+  // cancelPolling() to stop a previous job's interval before starting a new one,
+  // preventing leaked timers if the user navigates between scans rapidly.
+  private cancelPolling$ = new Subject<void>();
+
   constructor(private http: HttpClient) {
     this.generateParticlePositions();
+  }
+
+  private cancelPolling() {
+    this.cancelPolling$.next();
   }
 
   setSelectedPlatform(platform: 'android' | 'ios') {
@@ -175,7 +206,7 @@ export class ScanService {
     this.secretsSubject.next(secrets);
   }
 
-  setCurrentScreen(screen: 'splash' | 'upload' | 'processing' | 'results') {
+  setCurrentScreen(screen: 'splash' | 'upload' | 'processing' | 'results' | 'patterns') {
     this.currentScreenSubject.next(screen);
   }
 
@@ -184,6 +215,7 @@ export class ScanService {
   }
 
   resetScan() {
+    this.cancelPolling();
     this.currentFileSubject.next(null);
     this.secretsSubject.next([]);
     this.metadataSubject.next(null);
@@ -200,7 +232,7 @@ export class ScanService {
     formData.append('file', file);
     
     console.log('Making API request to:', `${this.apiUrl}/upload`);
-    this.http.post<{message: string}>(`${this.apiUrl}/upload`, formData)
+    this.http.post<{message: string, job_id: string}>(`${this.apiUrl}/upload`, formData)
       .pipe(
         catchError(error => {
           console.error('Error uploading file:', error);
@@ -208,7 +240,7 @@ export class ScanService {
           
           if (error.error instanceof Blob) {
             // Return a new Observable for Blob error handling
-            return new Observable<{message: string}>((observer: Observer<{message: string}>) => {
+            return new Observable<{message: string, job_id: string}>((observer: Observer<{message: string, job_id: string}>) => {
               const reader = new FileReader();
               reader.onload = () => {
                 try {
@@ -229,14 +261,20 @@ export class ScanService {
           
           this.resetScan();
           alert(errorMessage);
-          return of({ message: errorMessage }); // Return an Observable
+          return of({ message: errorMessage, job_id: '' }); // Return an Observable
         })
       )
       .subscribe({
         next: (response) => {
           console.log('Upload Response:', response);
-          // Start polling for results
-          this.pollForResults(file.name);
+          // Start polling for results using job ID
+          if (response.job_id) {
+            this.pollForResultsByJobId(response.job_id);
+          } else {
+            console.error('No job_id in response');
+            this.resetScan();
+            alert('Failed to start scan. Please try again.');
+          }
         },
         error: (error) => {
           // Error is already handled in catchError
@@ -245,83 +283,127 @@ export class ScanService {
       });
   }
 
-  private pollForResults(fileName: string) {
-    console.log('Starting to poll for results:', fileName);
-    const pollInterval = setInterval(() => {
-      console.log('Polling API for results...');
-      this.http.get<ScanResponse>(`${this.apiUrl}/results/${fileName}`)
-        .subscribe({
-          next: (response) => {
-            console.log('Received API response:', response);
-            if (response && response.data) {
-              console.log('Valid response data received');
-              // Clear polling
-              clearInterval(pollInterval);
-              
-              // Set secrets
-              if (response.data.secrets) {
-                console.log('Setting secrets:', response.data.secrets.length);
-                // Transform backend secrets to frontend format
-                const transformedSecrets = response.data.secrets.map((secret: BackendSecret) => ({
-                  type: secret.type,
-                  lineNo: secret.lineNo,
-                  secretType: secret.secretType,
-                  fileLocation: secret.fileLocation,
-                  secretString: secret.secretString,
-                  secretConfidence: secret.secretConfidence
-                }));
-                this.secretsSubject.next(transformedSecrets);
-              }
-              
-              // Log metadata before setting
-              console.log('Setting metadata with:', {
-                activities: response.data.activities?.length || 0,
-                services: response.data.services?.length || 0,
-                contentProviders: response.data.contentProviders?.length || 0,
-                broadcastReceivers: response.data.broadcastReceivers?.length || 0,
-                usesLibrary: response.data.usesLibrary?.length || 0,
-                permissions: response.data.permissions?.length || 0,
-                customPermissions: response.data.customPermissions?.length || 0,
-                usesFeatures: response.data.usesFeatures?.length || 0
-              });
-              
-              // Set metadata
-              this.metadataSubject.next({
-                packageName: response.data.packageName,
-                version: response.data.version,
-                minSdk: response.data.minSdk,
-                targetSdk: response.data.targetSdk,
-                permissions: response.data.permissions || [],
-                activities: response.data.activities || [],
-                services: response.data.services || [],
-                contentProviders: response.data.contentProviders || [],
-                broadcastReceivers: response.data.broadcastReceivers || [],
-                usesLibrary: response.data.usesLibrary || [],
-                customPermissions: response.data.customPermissions || [],
-                usesFeatures: response.data.usesFeatures || [],
-                resourceData: response.data.resourceData || {
-                  numberOfStringResource: 0,
-                  drawables: {
-                    png: 0,
-                    jpg: 0,
-                    gif: 0,
-                    xml: 0
-                  },
-                  layouts: 0
-                }
-              });
-              
-              // Move to results screen
-              console.log('Moving to results screen');
-              this.setCurrentScreen('results');
-            }
-          },
-          error: (error) => {
-            // Continue polling on error
-            console.log('Polling for results...', error);
+  private pollForResultsByJobId(jobId: string) {
+    console.log('Starting to poll for results by job ID:', jobId);
+
+    // Cancel any prior poll that might still be in flight before starting a new one.
+    this.cancelPolling();
+
+    // Exponential backoff: start at 2s, double up to 30s. Total budget ≈ 10min.
+    const minDelayMs = 2_000;
+    const maxDelayMs = 30_000;
+    const totalBudgetMs = 10 * 60_000;
+    let nextDelay = minDelayMs;
+    let elapsed = 0;
+    let attempt = 0;
+    let done = false;
+
+    const pollOnce = (): Observable<JobStatusResponse> =>
+      this.http.get<JobStatusResponse>(`${this.apiUrl}/results/${jobId}`).pipe(
+        catchError((error) => {
+          // Treat 404 (job not visible yet) and transient network errors as "keep polling".
+          if (error?.status !== 404) {
+            console.error('Error polling for results:', error);
           }
-        });
-    }, 5000); // Poll every 5 seconds
+          return of({ job_id: jobId, status: 'queued', created_at: '' } as JobStatusResponse);
+        }),
+      );
+
+    timer(0)
+      .pipe(
+        switchMap(() =>
+          // Recursive scheduler keyed off `nextDelay` so we can vary the gap.
+          new Observable<JobStatusResponse>((sub) => {
+            let cancelled = false;
+            const tick = () => {
+              if (cancelled) return;
+              attempt++;
+              console.log(`Polling API for results (attempt ${attempt}, delay=${nextDelay}ms)`);
+              pollOnce().subscribe({
+                next: (resp) => {
+                  if (cancelled) return;
+                  sub.next(resp);
+                  if (done) {
+                    sub.complete();
+                    return;
+                  }
+                  elapsed += nextDelay;
+                  nextDelay = Math.min(nextDelay * 2, maxDelayMs);
+                  if (elapsed >= totalBudgetMs) {
+                    sub.complete();
+                    return;
+                  }
+                  setTimeout(tick, nextDelay);
+                },
+                error: (e) => sub.error(e),
+              });
+            };
+            setTimeout(tick, nextDelay);
+            return () => {
+              cancelled = true;
+            };
+          }),
+        ),
+        takeWhile((response) => {
+          if (response.status === 'completed' && response.result) {
+            done = true;
+            return true; // emit once more so the consumer sees the final value
+          }
+          if (response.status === 'failed') {
+            done = true;
+            return true;
+          }
+          return true;
+        }, true),
+        takeUntil(this.cancelPolling$),
+      )
+      .subscribe({
+        next: (response) => {
+          if (response.status === 'completed' && response.result) {
+            const resultData = response.result;
+            if (resultData.data?.secrets) {
+              const transformedSecrets = resultData.data.secrets.map((secret: BackendSecret) => ({
+                type: secret.type,
+                lineNo: secret.lineNo,
+                secretType: secret.secretType,
+                fileLocation: secret.fileLocation,
+                secretString: secret.secretString,
+                secretConfidence: secret.secretConfidence,
+              }));
+              this.secretsSubject.next(transformedSecrets);
+            }
+            this.metadataSubject.next({
+              packageName: resultData.data?.packageName || '',
+              version: resultData.data?.version || '',
+              minSdk: resultData.data?.minSdk || '',
+              targetSdk: resultData.data?.targetSdk || '',
+              permissions: resultData.data?.permissions || [],
+              activities: resultData.data?.activities || [],
+              services: resultData.data?.services || [],
+              contentProviders: resultData.data?.contentProviders || [],
+              broadcastReceivers: resultData.data?.broadcastReceivers || [],
+              usesLibrary: resultData.data?.usesLibrary || [],
+              customPermissions: resultData.data?.customPermissions || [],
+              usesFeatures: resultData.data?.usesFeatures || [],
+              resourceData: resultData.data?.resourceData || {
+                numberOfStringResource: 0,
+                drawables: { png: 0, jpg: 0, gif: 0, xml: 0 },
+                layouts: 0,
+              },
+            });
+            this.setCurrentScreen('results');
+          } else if (response.status === 'failed') {
+            this.resetScan();
+            alert(`Scan failed: ${response.error || 'Unknown error'}`);
+          }
+        },
+        complete: () => {
+          if (!done) {
+            this.resetScan();
+            alert('Scan is taking longer than expected. Please check back later.');
+          }
+        },
+      });
   }
   
   // Mock data function removed as we're using real API data

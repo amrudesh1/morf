@@ -267,6 +267,13 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
     return path.replace('/tmp/morf/output/apk/source/', '');
   }
 
+  // trackBy fns prevent the entire list from being re-rendered when the
+  // underlying data is replaced/reordered. Used by *ngFor in the template.
+  trackByIndex = (i: number) => i;
+  trackByValue = (_: number, v: string) => v;
+  trackByName = (_: number, item: { name?: string }) => item?.name ?? '';
+  trackBySecret = (_: number, s: Secret) =>
+    `${s.fileLocation}:${s.lineNo}:${s.secretType}:${s.secretString}`;
 
   resetScan = () => this.scanService.resetScan();
 }

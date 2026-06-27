@@ -24,7 +24,7 @@ import (
 type Secrets struct {
 	gorm.Model
 	FileName           string                                   `json:"fileName" gorm:"column:file_name"`
-	APKHash            string                                   `json:"apkHash" gorm:"column:apk_hash"`
+	APKHash            string                                   `json:"apkHash" gorm:"column:apk_hash;uniqueIndex:idx_apk_hash"`
 	APKVersion         string                                   `json:"apkVersion" gorm:"column:apk_version"`
 	SecretModel        SecretModelArray                         `json:"secretModel" gorm:"type:json;column:secret_model"`
 	Metadata           MetaDataModel                            `json:"metadata" gorm:"embedded"`

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"morf/backup"
 	database "morf/db"
+	"morf/metrics"
 	"morf/models"
 	"morf/response"
 	"morf/utils"
@@ -34,19 +35,48 @@ import (
 func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 	var fileName string
 
+	// Create job context with isolated workspace
+	jobCtx := utils.NewJobContext()
+	log.WithFields(log.Fields{
+		"job_id":   jobCtx.JobID,
+		"apk_path": apkPath,
+	}).Info("Starting CLI extraction with isolated workspace")
+
+	// Create workspace directories
+	if err := jobCtx.CreateWorkspace(); err != nil {
+		log.WithFields(log.Fields{
+			"job_id": jobCtx.JobID,
+			"error":  err.Error(),
+		}).Error("Failed to create workspace")
+		return
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		if err := jobCtx.CleanupWorkspace(); err != nil {
+			log.WithFields(log.Fields{
+				"job_id": jobCtx.JobID,
+				"error":  err.Error(),
+			}).Warn("Failed to cleanup workspace")
+		}
+	}()
+
 	fs := utils.GetAppFS()
 	if is_db_req {
 		apkFound, json_data := utils.CheckDuplicateInDB(db, apkPath)
 		if apkFound {
-			log.Info("APK already exists in the database")
+			log.WithFields(log.Fields{
+				"job_id": jobCtx.JobID,
+			}).Info("APK already exists in the database")
 			log.Info(json_data)
 		}
 	}
 
-	packageModel := ExtractPackageData(apkPath)
-	metadata := StartMetaDataCollection(apkPath)
+	metadata, packageModel := ExtractMetadataAndPackageData(apkPath, jobCtx)
 
-	fmt.Println("Metadata: Completed")
+	log.WithFields(log.Fields{
+		"job_id": jobCtx.JobID,
+	}).Info("Metadata: Completed")
 
 	if apkPath[0] == '/' {
 		fileName = filepath.Base(apkPath)
@@ -54,7 +84,7 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 		fileName = apkPath
 	}
 
-	scanner_data := StartSecScan(utils.GetInputDir() + fileName)
+	scanner_data := StartSecScan(apkPath, jobCtx)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
 	if secret_error != nil {
@@ -64,7 +94,8 @@ func StartCliExtraction(apkPath string, db *gorm.DB, is_db_req bool) {
 	secret := utils.CreateSecretModel(fileName, packageModel, metadata, scanner_data, secret_data)
 
 	if is_db_req {
-		database.InsertSecrets(secret, db)
+		// Use async write to avoid blocking response
+		database.InsertSecretsAsync(secret)
 	}
 
 	json_data, json_error := json.MarshalIndent(secret, "", " ")
@@ -87,10 +118,43 @@ func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
 		return
 	}
 
+	// Create job context with isolated workspace
+	jobCtx := utils.NewJobContext()
+	requestID := c.GetString("request_id")
+
+	log.WithFields(log.Fields{
+		"request_id": requestID,
+		"job_id":     jobCtx.JobID,
+		"apk_path":   apk_path,
+	}).Info("Starting JIRA process with isolated workspace")
+
+	// Create workspace directories
+	if err := jobCtx.CreateWorkspace(); err != nil {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"job_id":     jobCtx.JobID,
+			"error":      err.Error(),
+		}).Error("Failed to create workspace")
+		return
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		if err := jobCtx.CleanupWorkspace(); err != nil {
+			log.WithFields(log.Fields{
+				"request_id": requestID,
+				"job_id":     jobCtx.JobID,
+				"error":      err.Error(),
+			}).Warn("Failed to cleanup workspace")
+		}
+	}()
+
 	apkFound, json_data := utils.CheckDuplicateInDB(db, apk_path)
 
 	if apkFound {
-		log.Info("APK already exists in the database")
+		log.WithFields(log.Fields{
+			"job_id": jobCtx.JobID,
+		}).Info("APK already exists in the database")
 		var secrets models.Secrets
 		apk_data := json.Unmarshal([]byte(json_data), &secrets)
 		if apk_data != nil {
@@ -100,9 +164,8 @@ func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
 		return
 	}
 
-	packageModel := ExtractPackageData(apk_path)
-	metadata := StartMetaDataCollection(apk_path)
-	scanner_data := StartSecScan(utils.GetInputDir() + apk_path)
+	metadata, packageModel := ExtractMetadataAndPackageData(apk_path, jobCtx)
+	scanner_data := StartSecScan(apk_path, jobCtx)
 	secret_data, secret_error := json.Marshal(scanner_data)
 
 	if secret_error != nil {
@@ -110,7 +173,8 @@ func StartJiraProcess(jiramodel models.JiraModel, db *gorm.DB, c *gin.Context) {
 	}
 
 	secret := utils.CreateSecretModel(apk_path, packageModel, metadata, scanner_data, secret_data)
-	database.InsertSecrets(secret, db)
+	// Use async write to avoid blocking response
+	database.InsertSecretsAsync(secret)
 
 	// Comment the data to JIRA ticket
 	utils.CookJiraComment(jiramodel, secret, c)
@@ -174,18 +238,20 @@ func createAPIResponse(secret models.Secrets, scannerData []models.SecretModel) 
 }
 
 // Helper function to process APK data
-func processAPKData(apkPath string) (models.Secrets, []models.SecretModel, []byte, error) {
-	packageModel := ExtractPackageData(apkPath)
-	metadata := StartMetaDataCollection(apkPath)
-	scannerData := StartSecScan(utils.GetInputDir() + apkPath)
+func processAPKData(apkPath string, jobCtx *utils.JobContext) (models.Secrets, []models.SecretModel, []byte, error) {
+	metadata, packageModel := ExtractMetadataAndPackageData(apkPath, jobCtx)
+	scannerData := StartSecScan(apkPath, jobCtx)
 
 	secretData, secretError := json.Marshal(scannerData)
 	if secretError != nil {
-		log.Error(secretError)
+		log.WithFields(log.Fields{
+			"job_id": jobCtx.JobID,
+			"error":  secretError.Error(),
+		}).Error("Failed to marshal scanner data")
 		return models.Secrets{}, nil, nil, secretError
 	}
 
-	secret := utils.CreateSecretModel(apkPath, packageModel, metadata, scannerData, secretData)
+	secret := utils.CreateSecretModel(filepath.Base(apkPath), packageModel, metadata, scannerData, secretData)
 	return secret, scannerData, secretData, nil
 }
 
@@ -236,7 +302,8 @@ func handleDatabaseOperations(db *gorm.DB, secret models.Secrets) error {
 		return fmt.Errorf("database connection lost: %v", err)
 	}
 
-	database.InsertSecrets(secret, db)
+	// Use async write to avoid blocking
+	database.InsertSecretsAsync(secret)
 	return nil
 }
 
@@ -247,28 +314,78 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 		return response.CreateErrorResponse("Database connection is required")
 	}
 
+	// Create job context with isolated workspace
+	jobCtx := utils.NewJobContext()
+	requestID := c.GetString("request_id")
+
+	log.WithFields(log.Fields{
+		"request_id": requestID,
+		"job_id":     jobCtx.JobID,
+		"apk_path":   apkPath,
+	}).Info("Starting extraction process with isolated workspace")
+
+	// Create workspace directories
+	if err := jobCtx.CreateWorkspace(); err != nil {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"job_id":     jobCtx.JobID,
+			"error":      err.Error(),
+		}).Error("Failed to create workspace")
+		return response.CreateErrorResponse("Failed to create workspace")
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		if err := jobCtx.CleanupWorkspace(); err != nil {
+			log.WithFields(log.Fields{
+				"request_id": requestID,
+				"job_id":     jobCtx.JobID,
+				"error":      err.Error(),
+			}).Warn("Failed to cleanup workspace")
+		}
+	}()
+
 	// Check for existing APK
 	apkFound, jsonData := utils.CheckDuplicateInDB(db, apkPath)
 	if apkFound {
+		metrics.RecordScan("duplicate")
 		return handleExistingAPK(jsonData, isSlack, slackData, c)
 	}
 
 	// Process APK data
-	secret, scannerData, secretData, err := processAPKData(apkPath)
+	secret, scannerData, secretData, err := processAPKData(apkPath, jobCtx)
 	if err != nil {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"job_id":     jobCtx.JobID,
+			"error":      err.Error(),
+		}).Error("Error processing APK")
+		metrics.RecordScan("failed")
+		metrics.RecordError("apk_processing")
 		return response.CreateErrorResponse("Error processing APK")
 	}
 
-	// Handle database operations
-	if err := handleDatabaseOperations(db, secret); err != nil {
-		log.Error(err)
-		return response.CreateErrorResponse(err.Error())
-	}
+	// Handle database operations asynchronously to avoid blocking response
+	// This improves perceived latency by returning results immediately
+	go func() {
+		if err := handleDatabaseOperations(db, secret); err != nil {
+			log.WithFields(log.Fields{
+				"request_id": requestID,
+				"job_id":     jobCtx.JobID,
+				"error":      err.Error(),
+			}).Error("Async database operation failed")
+			metrics.RecordError("database")
+		}
+	}()
 
 	// Handle backup operations
 	backupHandler := backup.NewBackupHandler(utils.GetAppFS())
 	if err := backupHandler.HandleBackup(secret, secretData); err != nil {
-		log.Error("Backup operation failed:", err)
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"job_id":     jobCtx.JobID,
+			"error":      err.Error(),
+		}).Error("Backup operation failed")
 	}
 
 	// Return response

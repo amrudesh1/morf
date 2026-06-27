@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   morf:
     build:
       context: .
@@ -9,8 +22,39 @@ services:
         - DATABASE_URL=${DATABASE_URL}
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis:6379
     ports:
       - "9092:9092"
     volumes:
       - ./uploads:/app/uploads
       - ./log:/app/log
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Resource limits for security
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    # Security options
+    security_opt:
+      - seccomp:./seccomp/seccomp-apktool.json
+    # Resource limits per container
+    mem_limit: 8g
+    mem_reservation: 2g
+    cpus: 4.0
+    # CPU and memory limits for subprocesses are enforced via Docker
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+      nproc:
+        soft: 512
+        hard: 1024
+
+volumes:
+  redis-data:
