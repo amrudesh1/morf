@@ -1,0 +1,231 @@
+---
+# Canary Deployment Configuration for MORF
+# This file defines a canary deployment strategy for gradual rollout
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: morf-canary
+---
+# ConfigMap for canary configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: morf-canary-config
+  namespace: morf-canary
+data:
+  canary_percentage: "10"
+  promotion_criteria: "success_rate > 0.95 AND error_rate < 0.01"
+---
+# Canary Deployment (10% of traffic)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: morf-canary
+  namespace: morf-canary
+  labels:
+    app: morf
+    version: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: morf
+      version: canary
+  template:
+    metadata:
+      labels:
+        app: morf
+        version: canary
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9092"
+        prometheus.io/path: "/api/metrics"  # app exposes metrics at /api/metrics, not /metrics
+    spec:
+      containers:
+      - name: morf
+        image: morf:canary
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 9092
+          name: http
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: DATABASE_URL
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: REDIS_URL
+        - name: GIN_MODE
+          value: "release"
+        livenessProbe:
+          httpGet:
+            path: /api/live
+            port: 9092
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/ready
+            port: 9092
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+        volumeMounts:
+        - name: uploads
+          mountPath: /app/uploads
+      volumes:
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: morf-uploads-pvc
+---
+# Canary Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: morf-canary-service
+  namespace: morf-canary
+  labels:
+    app: morf
+    version: canary
+spec:
+  selector:
+    app: morf
+    version: canary
+  ports:
+  - port: 80
+    targetPort: 9092
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+# VirtualService for Istio (if using Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: morf-canary-vs
+  namespace: morf-canary
+spec:
+  hosts:
+  - morf.example.com
+  http:
+  - match:
+    - headers:
+        canary:
+          exact: "true"
+    route:
+    - destination:
+        host: morf-canary-service
+        port:
+          number: 80
+      weight: 100
+  - route:
+    - destination:
+        host: morf-service
+        port:
+          number: 80
+      weight: 90
+    - destination:
+        host: morf-canary-service
+        port:
+          number: 80
+      weight: 10
+---
+# DestinationRule for Istio
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: morf-canary-dr
+  namespace: morf-canary
+spec:
+  host: morf-canary-service
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        maxRetries: 3
+    outlierDetection:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+---
+# Prometheus ServiceMonitor for canary metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: morf-canary-metrics
+  namespace: morf-canary
+  labels:
+    app: morf
+    version: canary
+spec:
+  selector:
+    matchLabels:
+      app: morf
+      version: canary
+  endpoints:
+  - port: http
+    path: /api/metrics  # app exposes metrics at /api/metrics, not /metrics; fixes blind Flagger analysis
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# Canary Analysis Template (for Flagger, if using)
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: morf-canary
+  namespace: morf-canary
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: morf-canary
+  service:
+    port: 80
+    targetPort: 9092
+  analysis:
+    interval: 1m
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+    metrics:
+    - name: request-success-rate
+      thresholdRange:
+        min: 99
+      interval: 1m
+    - name: request-duration
+      thresholdRange:
+        max: 500
+      interval: 1m
+    - name: error-rate
+      thresholdRange:
+        max: 0.5
+      interval: 1m
+    webhooks:
+    - name: load-test
+      url: http://flagger-loadtester.morf-canary/
+      timeout: 5s
+      metadata:
+        cmd: "hey -z 1m -q 10 -c 2 http://morf-canary-service.morf-canary/"
+

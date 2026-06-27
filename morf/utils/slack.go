@@ -19,25 +19,97 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"morf/models"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/slack-go/slack"
 )
 
+// MaxAPKDownloadSize is the maximum allowed APK download size in bytes (500 MB).
+// Override this package variable before calling download functions if a different
+// limit is needed.
+var MaxAPKDownloadSize = int64(500 << 20)
+
+// apkDownloadTimeout is the per-request HTTP timeout applied when downloading APK
+// files from Slack.
+const apkDownloadTimeout = 30 * time.Second
+
+// slackPostTimeout is the per-request HTTP timeout applied when posting messages
+// back to Slack.
+const slackPostTimeout = 30 * time.Second
+
+// maxSlackPostWorkers caps the number of concurrent Slack PostMessage calls made
+// by RespondSecretsToSlack.
+const maxSlackPostWorkers = 4
+
+// limitedWriter wraps an io.Writer and returns an error if the cumulative number
+// of bytes written would exceed limit, defending against oversized downloads.
+type limitedWriter struct {
+	w     io.Writer
+	n     int64
+	limit int64
+}
+
+func (lw *limitedWriter) Write(p []byte) (int, error) {
+	if lw.n >= lw.limit {
+		return 0, fmt.Errorf("download exceeds maximum allowed size of %d bytes", lw.limit)
+	}
+	remaining := lw.limit - lw.n
+	if int64(len(p)) > remaining {
+		// Write only up to the limit, then signal that the file is too large.
+		n, err := lw.w.Write(p[:remaining])
+		lw.n += int64(n)
+		if err != nil {
+			return n, err
+		}
+		return n, fmt.Errorf("download exceeds maximum allowed size of %d bytes", lw.limit)
+	}
+	n, err := lw.w.Write(p)
+	lw.n += int64(n)
+	return n, err
+}
+
+// newDownloadClient returns an *http.Client configured with a hard timeout for
+// APK file downloads.
+func newDownloadClient() *http.Client {
+	return &http.Client{Timeout: apkDownloadTimeout}
+}
+
 // GetDownloadURLFromSlack extracts the download URL from Slack command data
+// Security improvements:
+// - Validates file type before download
+// - Validates URL is from slack.com domain
+// - Adds size limit on downloads (500MB)
+// - Adds timeout on HTTP downloads (30 seconds)
 func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) string {
-	slack_app := slack.New(slackData.SlackToken)
+	requestID := ctx.GetString("request_id")
+
+	log.WithFields(log.Fields{
+		"request_id": requestID,
+		"channel":    slackData.SlackChannel,
+		"timestamp":  slackData.TimeStamp,
+	}).Info("Processing Slack file download request")
+
+	slack_app := slack.New(slackData.SlackToken, slack.OptionHTTPClient(newDownloadClient()))
 
 	_, err := slack_app.AuthTest()
 	if err != nil {
-		log.Error(err)
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Slack authentication failed")
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Slack authentication failed"})
 		return ""
 	}
 
@@ -46,8 +118,12 @@ func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) strin
 	})
 
 	if err != nil {
-		log.Error(err)
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Failed to get Slack conversation history")
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return ""
 	}
 
 	file_url := ""
@@ -58,100 +134,273 @@ func GetDownloadUrlFromSlack(slackData models.SlackData, ctx *gin.Context) strin
 			for _, file := range value.Files {
 				file_url = file.URLPrivateDownload
 				file_name = file.Name
-
 			}
 		}
 	}
 
-	fmt.Println(file_url)
-	file, err := os.Create(file_name)
+	if file_url == "" || file_name == "" {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+		}).Error("File not found in Slack message")
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "File not found in Slack message"})
+		return ""
+	}
+
+	// Validate URL is from slack.com domain (SSRF protection)
+	parsedURL, err := url.Parse(file_url)
 	if err != nil {
-		log.Error(err)
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Invalid file URL")
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file URL"})
+		return ""
+	}
+
+	if !strings.HasSuffix(parsedURL.Hostname(), "slack.com") && !strings.HasSuffix(parsedURL.Hostname(), "slack-edge.com") {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"hostname":   parsedURL.Hostname(),
+		}).Error("File URL is not from slack.com domain (SSRF protection)")
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "File URL must be from slack.com domain"})
+		return ""
+	}
+
+	// Validate file type before download (must be APK)
+	if !strings.HasSuffix(strings.ToLower(file_name), ".apk") {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"file_name":  file_name,
+		}).Error("File is not an APK")
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "Only APK files are allowed",
+		})
+		return ""
+	}
+
+	// Create file with unique name to prevent collisions
+	uniqueFileName := generateUniqueFileName(file_name)
+
+	log.WithFields(log.Fields{
+		"request_id":  requestID,
+		"file_url":    maskURLForLogging(file_url), // Mask URL in logs
+		"file_name":   file_name,
+		"unique_name": uniqueFileName,
+	}).Info("Downloading file from Slack")
+
+	file, err := os.Create(uniqueFileName)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Failed to create file")
 		return ""
 	}
 
 	defer file.Close()
 
-	log.Print(file_url)
-	suc := slack_app.GetFile(file_url, file)
-	if suc != nil {
-		log.Error(suc)
+	// Download file with a 30-second timeout (via newDownloadClient) and a
+	// 500 MB size cap enforced by limitedWriter.
+	lw := &limitedWriter{w: file, limit: MaxAPKDownloadSize}
+	if err := slack_app.GetFile(file_url, lw); err != nil {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Failed to download file from Slack")
+		os.Remove(uniqueFileName) // Clean up on failure
 		return ""
 	}
 
-	//Check if file ends with .apk
-	if file_name[len(file_name)-4:] != ".apk" {
-		log.Error("File is not an APK")
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"status":  http.StatusBadRequest,
-			"message": "File is not an APK",
-		})
-		return ""
+	log.WithFields(log.Fields{
+		"request_id": requestID,
+		"file_name":  uniqueFileName,
+	}).Info("File downloaded successfully from Slack")
+
+	return uniqueFileName
+}
+
+// generateUniqueFileName generates a unique filename to prevent collisions
+func generateUniqueFileName(originalName string) string {
+	timestamp := time.Now().UnixNano()
+	ext := filepath.Ext(originalName)
+	name := strings.TrimSuffix(originalName, ext)
+	return fmt.Sprintf("%s_%d%s", name, timestamp, ext)
+}
+
+// GenerateUniqueFilename generates a unique filename using UUID to prevent collisions
+func GenerateUniqueFilename(originalName string) string {
+	jobID := uuid.New().String()
+	ext := filepath.Ext(originalName)
+	name := strings.TrimSuffix(originalName, ext)
+	return fmt.Sprintf("%s-%s%s", jobID, name, ext)
+}
+
+// maskURLForLogging masks sensitive parts of a URL for logging
+func maskURLForLogging(urlStr string) string {
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return "****"
 	}
-
-	return file_name
-
+	// Mask query parameters and path
+	return parsed.Scheme + "://" + parsed.Host + "/****"
 }
 
 // DownloadFileUsingSlack downloads a file from a URL provided in Slack
+// Security improvements:
+// - Validates URL is from slack.com domain (SSRF protection)
+// - Validates file type before download
+// - Adds size limit on downloads (500MB)
+// - Adds timeout on HTTP downloads (30 seconds)
 func DownloadFileUsingSlack(jiraModel models.JiraModel, ctx *gin.Context) string {
+	requestID := ctx.GetString("request_id")
 
-	slack_app := slack.New(jiraModel.SlackToken)
+	log.WithFields(log.Fields{
+		"request_id": requestID,
+		"file_url":   maskURLForLogging(jiraModel.FileUrl),
+	}).Info("Processing Slack file download request")
+
+	slack_app := slack.New(jiraModel.SlackToken, slack.OptionHTTPClient(newDownloadClient()))
 	_, err := slack_app.AuthTest()
 
 	if err != nil {
-		log.Error(err)
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Slack authentication failed")
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Slack authentication failed"})
+		return ""
+	}
+
+	// Validate URL is from slack.com domain (SSRF protection)
+	parsedURL, err := url.Parse(jiraModel.FileUrl)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Invalid file URL")
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file URL"})
+		return ""
+	}
+
+	if !strings.HasSuffix(parsedURL.Hostname(), "slack.com") && !strings.HasSuffix(parsedURL.Hostname(), "slack-edge.com") {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"hostname":   parsedURL.Hostname(),
+		}).Error("File URL is not from slack.com domain (SSRF protection)")
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "File URL must be from slack.com domain"})
 		return ""
 	}
 
 	// Split URL and get the last part of the URL
-	url := jiraModel.FileUrl
-	url_split := strings.Split(url, "/")
+	urlStr := jiraModel.FileUrl
+	url_split := strings.Split(urlStr, "/")
 	file_name := url_split[len(url_split)-1]
 
-	file, err := os.Create(file_name)
+	// Validate file type before download (must be APK)
+	if !strings.HasSuffix(strings.ToLower(file_name), ".apk") {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"file_name":  file_name,
+		}).Error("File is not an APK")
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "Only APK files are allowed",
+		})
+		return ""
+	}
+
+	// Create file with unique name
+	uniqueFileName := generateUniqueFileName(file_name)
+
+	file, err := os.Create(uniqueFileName)
 	if err != nil {
-		log.Error(err)
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Failed to create file")
 		return ""
 	}
 
 	defer file.Close()
 
-	suc := slack_app.GetFile(jiraModel.FileUrl, file)
-	if suc != nil {
+	// Download with a 30-second timeout (via newDownloadClient) and a 500 MB
+	// size cap enforced by limitedWriter.
+	lw := &limitedWriter{w: file, limit: MaxAPKDownloadSize}
+	if err := slack_app.GetFile(jiraModel.FileUrl, lw); err != nil {
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"error":      err.Error(),
+		}).Error("Failed to download file from Slack")
+		os.Remove(uniqueFileName)
 		return ""
 	}
 
-	if file_name[len(file_name)-4:] != ".apk" {
-		log.Error("File is not an APK")
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"status":  http.StatusBadRequest,
-			"message": "File is not an APK",
-		})
-		return ""
-	} else {
-		log.Info("File is an APK")
-		ctx.JSON(http.StatusOK, gin.H{
-			"status":  http.StatusOK,
-			"message": "Downloading of APK successful",
-		})
-	}
+	log.WithFields(log.Fields{
+		"request_id": requestID,
+		"file_name":  uniqueFileName,
+	}).Info("File downloaded successfully from Slack")
 
-	return file_name
+	ctx.JSON(http.StatusOK, gin.H{
+		"status":  http.StatusOK,
+		"message": "Downloading of APK successful",
+	})
 
+	return uniqueFileName
 }
 
-// RespondSecretsToSlack sends scan results back to Slack
+// RespondSecretsToSlack sends scan results back to Slack.
+// Chunks are posted concurrently (up to maxSlackPostWorkers in flight) using an
+// HTTP client with a per-request timeout. When more than one chunk is produced,
+// each is prefixed with its index so out-of-order delivery is identifiable.
+// All errors are aggregated; a single chunk failure does not abort the others.
 func RespondSecretsToSlack(slackData models.SlackData, ctx *gin.Context, data string) {
-	data_string := parseSlackData(data)
-	slack_app := slack.New(slackData.SlackToken)
-	for _, message := range data_string {
-		_, _, err := slack_app.PostMessage(slackData.SlackChannel, slack.MsgOptionText("```"+message+"```", false), slack.MsgOptionTS(slackData.TimeStamp))
-		if err != nil {
-			log.Error("Error sending message to Slack:", err)
-			return
-		}
+	chunks := parseSlackData(data)
+	total := len(chunks)
+
+	postClient := &http.Client{Timeout: slackPostTimeout}
+	slack_app := slack.New(slackData.SlackToken, slack.OptionHTTPClient(postClient))
+
+	var (
+		mu   sync.Mutex
+		errs []error
+		wg   sync.WaitGroup
+		sem  = make(chan struct{}, maxSlackPostWorkers)
+	)
+
+	for i, message := range chunks {
+		wg.Add(1)
+		sem <- struct{}{} // acquire a worker slot
+		go func(idx int, msg string) {
+			defer wg.Done()
+			defer func() { <-sem }() // release the slot
+
+			// Prefix each chunk with its sequence number when there are multiple
+			// chunks so the reader can reconstruct the intended order even if
+			// Slack delivers replies out of order.
+			text := msg
+			if total > 1 {
+				text = fmt.Sprintf("[%d/%d]\n%s", idx+1, total, msg)
+			}
+
+			_, _, err := slack_app.PostMessage(
+				slackData.SlackChannel,
+				slack.MsgOptionText("```"+text+"```", false),
+				slack.MsgOptionTS(slackData.TimeStamp),
+			)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+				log.WithField("chunk", idx+1).Error("Error sending message chunk to Slack:", err)
+			}
+		}(i, message)
+	}
+
+	wg.Wait()
+
+	if len(errs) > 0 {
+		log.Errorf("RespondSecretsToSlack: %d of %d chunk(s) failed to post", len(errs), total)
 	}
 }
 

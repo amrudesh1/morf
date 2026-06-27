@@ -15,28 +15,57 @@ limitations under the License.
 */package apk
 
 import (
+	"morf/metrics"
 	"morf/models"
 	"morf/utils"
-	util "morf/utils"
 	"regexp"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
 
+// Package-level compiled regexes (pp prefix to avoid collisions in the apk package).
+var (
+	ppPackageName       = regexp.MustCompile(`package:.*?name='([^']+)'`)
+	ppVersionCode       = regexp.MustCompile(`package:.*?versionCode='([^']+)'`)
+	ppVersionName       = regexp.MustCompile(`package:.*?versionName='([^']+)'`)
+	ppCompileSdkVersion = regexp.MustCompile(`package:.*?compileSdkVersion='([^']+)'`)
+	ppSdkVersion        = regexp.MustCompile(`sdkVersion:'([^']+)'`)
+	ppTargetSdk         = regexp.MustCompile(`targetSdkVersion:'([^']+)'`)
+	ppQuotedValue       = regexp.MustCompile(`'([^']+)'`)
+)
+
 func ExtractPackageData(apkPath string) models.PackageDataModel {
+	packageStart := time.Now()
+
+	// Check cache first
+	apkHash, _ := utils.HashFileCached(apkPath)
+	if cachedPackageData, found := utils.GetPackageDataFromCache(apkHash); found {
+		log.WithFields(log.Fields{
+			"apk_hash": apkHash,
+		}).Info("Package data retrieved from cache")
+		metrics.RecordScanDuration("package_extraction", time.Since(packageStart).Seconds())
+		return cachedPackageData
+	}
 
 	// Try using system aapt first
 	aapt_success := string("")
 	aapt_error := error(nil)
-	aapt_success, aapt_error = utils.ExecuteCommand("aapt", "dump", "badging", apkPath)
+	// Use timeout for aapt (2 minutes should be enough for package info extraction)
+	aaptStart := time.Now()
+	aapt_success, aapt_error = utils.ExecuteCommandWithTimeout(2*time.Minute, "aapt", "dump", "badging", apkPath)
+	metrics.RecordToolExecution("aapt", time.Since(aaptStart).Seconds())
 
 	if aapt_error != nil {
 		log.Error("Error while getting APK version etc")
 		log.Error(aapt_error)
 		log.Error("AAPT output: " + aapt_success)
+		metrics.RecordError("package_extraction")
 		return models.PackageDataModel{} // Return empty model on error
 	}
+
+	metrics.RecordScanDuration("package_extraction", time.Since(packageStart).Seconds())
 
 	log.Info("AAPT output length: ", len(aapt_success))
 	log.Debug("AAPT raw output: " + aapt_success)
@@ -60,7 +89,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 		// Extract package info
 		if strings.HasPrefix(line, "package:") {
 			// Extract package name
-			nameMatch := regexp.MustCompile(`package:.*?name='([^']+)'`).FindStringSubmatch(line)
+			nameMatch := ppPackageName.FindStringSubmatch(line)
 			if len(nameMatch) > 1 {
 				package_name = nameMatch[1]
 				log.Debug("Found package name: " + package_name)
@@ -69,7 +98,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 			}
 
 			// Extract version code
-			versionCodeMatch := regexp.MustCompile(`package:.*?versionCode='([^']+)'`).FindStringSubmatch(line)
+			versionCodeMatch := ppVersionCode.FindStringSubmatch(line)
 			if len(versionCodeMatch) > 1 {
 				version_code = versionCodeMatch[1]
 				log.Debug("Found version code: " + version_code)
@@ -78,7 +107,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 			}
 
 			// Extract version name
-			versionNameMatch := regexp.MustCompile(`package:.*?versionName='([^']+)'`).FindStringSubmatch(line)
+			versionNameMatch := ppVersionName.FindStringSubmatch(line)
 			if len(versionNameMatch) > 1 {
 				version_name = versionNameMatch[1]
 				log.Debug("Found version name: " + version_name)
@@ -87,7 +116,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 			}
 
 			// Extract compile SDK version
-			compileSdkMatch := regexp.MustCompile(`package:.*?compileSdkVersion='([^']+)'`).FindStringSubmatch(line)
+			compileSdkMatch := ppCompileSdkVersion.FindStringSubmatch(line)
 			if len(compileSdkMatch) > 1 {
 				complie_sdk_version = compileSdkMatch[1]
 				log.Debug("Found compile SDK version: " + complie_sdk_version)
@@ -98,7 +127,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 
 		// Extract SDK version
 		if strings.HasPrefix(line, "sdkVersion:") {
-			sdkMatch := regexp.MustCompile(`sdkVersion:'([^']+)'`).FindStringSubmatch(line)
+			sdkMatch := ppSdkVersion.FindStringSubmatch(line)
 			if len(sdkMatch) > 1 {
 				sdk_version = sdkMatch[1]
 				log.Debug("Found SDK version: " + sdk_version)
@@ -109,7 +138,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 
 		// Extract target SDK version
 		if strings.HasPrefix(line, "targetSdkVersion:") {
-			targetSdkMatch := regexp.MustCompile(`targetSdkVersion:'([^']+)'`).FindStringSubmatch(line)
+			targetSdkMatch := ppTargetSdk.FindStringSubmatch(line)
 			if len(targetSdkMatch) > 1 {
 				target_sdk = targetSdkMatch[1]
 				log.Debug("Found target SDK version: " + target_sdk)
@@ -122,7 +151,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 		if strings.HasPrefix(line, "supports-screens:") {
 			screensStr := strings.TrimPrefix(line, "supports-screens:")
 			screens := []string{}
-			screenMatches := regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(screensStr, -1)
+			screenMatches := ppQuotedValue.FindAllStringSubmatch(screensStr, -1)
 			for _, match := range screenMatches {
 				if len(match) > 1 {
 					screens = append(screens, match[1])
@@ -136,7 +165,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 		if strings.HasPrefix(line, "densities:") {
 			densitiesStr := strings.TrimPrefix(line, "densities:")
 			dens := []string{}
-			densityMatches := regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(densitiesStr, -1)
+			densityMatches := ppQuotedValue.FindAllStringSubmatch(densitiesStr, -1)
 			for _, match := range densityMatches {
 				if len(match) > 1 {
 					dens = append(dens, match[1])
@@ -150,7 +179,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 		if strings.HasPrefix(line, "native-code:") {
 			nativeCodeStr := strings.TrimPrefix(line, "native-code:")
 			codes := []string{}
-			codeMatches := regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(nativeCodeStr, -1)
+			codeMatches := ppQuotedValue.FindAllStringSubmatch(nativeCodeStr, -1)
 			for _, match := range codeMatches {
 				if len(match) > 1 {
 					codes = append(codes, match[1])
@@ -171,7 +200,7 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 
 	packageModel := models.PackageDataModel{
 		PackageDataID:     0,
-		APKHash:           util.ExtractHash(apkPath),
+		APKHash:           apkHash,
 		PackageName:       package_name,
 		VersionCode:       version_code,
 		VersionName:       version_name,
@@ -184,5 +213,16 @@ func ExtractPackageData(apkPath string) models.PackageDataModel {
 		NativeCode:        models.JSONStringArray(native_code),
 	}
 	log.Infof("Package Data: %+v", packageModel)
+
+	// Cache package data for future use
+	if apkHash != "" {
+		if err := utils.SetPackageDataInCache(apkHash, packageModel); err != nil {
+			log.WithFields(log.Fields{
+				"apk_hash": apkHash,
+				"error":    err.Error(),
+			}).Warn("Failed to cache package data")
+		}
+	}
+
 	return packageModel
 }

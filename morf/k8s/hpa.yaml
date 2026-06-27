@@ -1,0 +1,53 @@
+---
+# KEDA ScaledObject: scales the morf Deployment on Redis queue depth.
+# Activates when sum(morf_queue_depth) > 0; targets 50 jobs/pod.
+# Requires KEDA installed and Prometheus reachable from the keda namespace.
+#
+# NOTE — ONLY ONE AUTOSCALER MAY OWN A DEPLOYMENT:
+# A plain HorizontalPodAutoscaler and a KEDA ScaledObject both write
+# .spec.replicas on the target Deployment. If both exist they continuously
+# override each other, causing replica oscillation. The plain HPA that was
+# previously defined in this file has been REMOVED. KEDA is kept because it
+# is queue-depth aware and drives more accurate scaling for MORF's scan
+# workload than a CPU-only HPA. KEDA internally creates a managed HPA for its
+# own controller loop; no separate HPA resource must exist for the same target.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: morf-queue-scaler
+  namespace: morf
+spec:
+  scaleTargetRef:
+    name: morf
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+      metricName: morf_queue_depth_per_pod
+      threshold: '50'
+      query: |
+        sum(morf_queue_depth) / clamp_min(count(up{job="morf"} == 1), 1)
+---
+# ServiceMonitor for Prometheus metrics. scrapeTimeout was raised closer to
+# the interval to avoid timing-out on cold starts where the metrics endpoint
+# initializes lazily.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: morf-metrics
+  namespace: morf
+  labels:
+    app: morf
+spec:
+  selector:
+    matchLabels:
+      app: morf
+  endpoints:
+  - port: http
+    path: /api/metrics
+    interval: 30s
+    scrapeTimeout: 25s

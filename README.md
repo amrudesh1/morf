@@ -110,10 +110,31 @@ MORF combines a Go backend with an Angular frontend for powerful analysis with a
 
 ### Method 1: Docker (Recommended)
 
+**For macOS users**, see [README-LOCAL.md](README-LOCAL.md) for detailed local development guide.
+
 ```bash
+# Clone the repository
 git clone https://github.com/amrudesh1/morf
-cd morf
-docker-compose up --build
+cd MORF
+
+# Start all services (MySQL, Redis, Backend, Frontend)
+./run-local.sh start
+
+# Or using docker-compose directly
+docker-compose up -d
+```
+
+**Services will be available at:**
+- Frontend: http://localhost
+- Backend API: http://localhost:9092/api
+- Health Check: http://localhost:9092/api/health
+
+**Common commands:**
+```bash
+./run-local.sh start    # Start all services
+./run-local.sh stop     # Stop all services
+./run-local.sh status   # Check service status
+./run-local.sh logs     # View logs
 ```
 
 ### Method 2: Run Script

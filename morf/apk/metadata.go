@@ -18,67 +18,89 @@ package apk
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
-	"log"
+	"morf/metrics"
 	"morf/models"
 	"morf/utils"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
-	alf "github.com/spf13/afero"
+	log "github.com/sirupsen/logrus"
 )
 
-func StartMetaDataCollection(apkPath string) models.MetaDataModel {
-	// Check if temp directory exist and If yes delete it and create a new one
+func StartMetaDataCollection(apkPath string, jobCtx *utils.JobContext) models.MetaDataModel {
+	metadataStart := time.Now()
+	log.WithFields(log.Fields{
+		"job_id":   jobCtx.JobID,
+		"apk_path": apkPath,
+	}).Info("Starting metadata collection (using original APK path, no copy)")
 
-	fs := alf.NewOsFs()
-
-	if utils.CheckifmorftmpDirExists(fs) {
-		fmt.Println("Deleting the temp directory")
-		utils.DeleteTmpDir(fs)
-		fmt.Println("Creating a new temp directory")
-		utils.CreateMorfDirintmp(fs)
-	} else {
-		fmt.Println("Creating a new temp directory")
-		utils.CreateMorfDirintmp(fs)
+	// Check cache first
+	apkHash, _ := utils.HashFileCached(apkPath)
+	if cachedMetadata, found := utils.GetMetadataFromCache(apkHash); found {
+		log.WithFields(log.Fields{
+			"job_id":   jobCtx.JobID,
+			"apk_hash": apkHash,
+		}).Info("Metadata retrieved from cache")
+		metrics.RecordScanDuration("metadata", time.Since(metadataStart).Seconds())
+		return cachedMetadata
 	}
 
-	// Create input and output directory
-	if _, err := os.Stat(utils.GetInputDir()); os.IsNotExist(err) {
-		utils.CreateInputOutputDir(fs)
-	}
+	// Use original APK path directly - no copy needed
+	// apkanalyzer expects --in to be a directory containing APK files
+	// Pass the directory containing the original APK file
+	apkDir := filepath.Dir(apkPath)
 
-	// Move APK to input directory
-	apkPath = utils.CopyApktoInputDir(fs, apkPath)
-	fmt.Println("Starting metadata collection for " + apkPath)
-
-	_, metadata_error := utils.ExecuteCommand("java", "-cp", "/app/tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", utils.GetInputDir(), "--out", utils.GetOutputDir())
+	// Use timeout for apkanalyzer (5 minutes should be enough for metadata extraction)
+	apkanalyzerStart := time.Now()
+	_, metadata_error := utils.ExecuteCommandWithTimeout(5*time.Minute, "java", "-cp", "/app/tools/apkanalyzer.jar", "sk.styk.martin.bakalarka.execute.Main", "-analyze", "--in", apkDir, "--out", jobCtx.GetOutputDir())
+	metrics.RecordToolExecution("apkanalyzer", time.Since(apkanalyzerStart).Seconds())
 
 	if metadata_error != nil {
-		fmt.Println("Error while decompiling the APK file")
-		log.Fatal(metadata_error)
+		log.WithFields(log.Fields{
+			"job_id": jobCtx.JobID,
+			"error":  metadata_error.Error(),
+		}).Error("Error while extracting metadata from the APK file")
+		metrics.RecordError("metadata_extraction")
 		return models.MetaDataModel{}
 	}
 
-	fmt.Println("Metadata collection successful")
-	file_path, file_name := filepath.Split(apkPath)
-	fmt.Println(file_path)
+	metrics.RecordScanDuration("metadata", time.Since(metadataStart).Seconds())
+
+	log.WithFields(log.Fields{
+		"job_id": jobCtx.JobID,
+	}).Info("Metadata collection successful")
+
+	file_name := filepath.Base(apkPath)
+	jsonPath := filepath.Join(jobCtx.GetOutputDir(), strings.Replace(file_name, ".apk", ".json", -1))
 
 	// Make file readable
-	os.Chmod(utils.GetOutputDir()+strings.Replace(file_name, ".apk", ".json", -1), 0777)
-	jsonPath := utils.GetOutputDir() + strings.Replace(file_name, ".apk", ".json", -1)
-	return startFileParser(jsonPath, apkPath)
+	os.Chmod(jsonPath, 0777)
+
+	return startFileParser(jsonPath, apkPath, jobCtx)
 }
 
-func startFileParser(jsonPath string, apkPath string) models.MetaDataModel {
-	fmt.Println("Starting file parser:" + jsonPath)
+func startFileParser(jsonPath string, apkPath string, jobCtx *utils.JobContext) models.MetaDataModel {
+	log.WithFields(log.Fields{
+		"json_path": jsonPath,
+		"job_id":    jobCtx.JobID,
+	}).Info("Starting file parser")
 	jsonFile, err := os.Open(jsonPath)
 	if err != nil {
-		fmt.Println(err)
+		log.WithFields(log.Fields{
+			"error":     err.Error(),
+			"json_path": jsonPath,
+			"job_id":    jobCtx.JobID,
+		}).Error("Failed to open JSON file")
+		return models.MetaDataModel{}
 	}
-	fmt.Println("Successfully Opened " + jsonPath)
+	log.WithFields(log.Fields{
+		"json_path": jsonPath,
+		"job_id":    jobCtx.JobID,
+	}).Info("Successfully opened JSON file")
 	defer jsonFile.Close()
 
 	byteValue, _ := io.ReadAll(jsonFile)
@@ -89,6 +111,58 @@ func startFileParser(jsonPath string, apkPath string) models.MetaDataModel {
 	// Extract export information for components from the original APK
 	ExtractComponentExportInfo(apkPath, &metadata)
 
-	return metadata
+	// Cache metadata for future use
+	if apkHash, err := utils.HashFileCached(apkPath); err == nil && apkHash != "" {
+		if err := utils.SetMetadataInCache(apkHash, metadata); err != nil {
+			log.WithFields(log.Fields{
+				"job_id":   jobCtx.JobID,
+				"apk_hash": apkHash,
+				"error":    err.Error(),
+			}).Warn("Failed to cache metadata")
+		}
+	}
 
+	return metadata
+}
+
+// ExtractMetadataAndPackageData runs metadata and package extraction in parallel
+func ExtractMetadataAndPackageData(apkPath string, jobCtx *utils.JobContext) (models.MetaDataModel, models.PackageDataModel) {
+	log.WithFields(log.Fields{
+		"job_id":   jobCtx.JobID,
+		"apk_path": apkPath,
+	}).Info("Starting parallel metadata and package data extraction")
+
+	var wg sync.WaitGroup
+	var metadata models.MetaDataModel
+	var packageModel models.PackageDataModel
+
+	// Run both extractions in parallel
+	wg.Add(2)
+
+	// Goroutine 1: Extract metadata using apkanalyzer
+	go func() {
+		defer wg.Done()
+		log.WithFields(log.Fields{
+			"job_id": jobCtx.JobID,
+		}).Info("Extracting metadata (parallel)")
+		metadata = StartMetaDataCollection(apkPath, jobCtx)
+	}()
+
+	// Goroutine 2: Extract package data using aapt
+	go func() {
+		defer wg.Done()
+		log.WithFields(log.Fields{
+			"job_id": jobCtx.JobID,
+		}).Info("Extracting package data (parallel)")
+		packageModel = ExtractPackageData(apkPath)
+	}()
+
+	// Wait for both to complete
+	wg.Wait()
+
+	log.WithFields(log.Fields{
+		"job_id": jobCtx.JobID,
+	}).Info("Parallel metadata and package data extraction completed")
+
+	return metadata, packageModel
 }

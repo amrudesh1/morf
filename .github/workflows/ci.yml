@@ -1,31 +1,152 @@
-name: MORF APK Analysis Pipeline
+name: CI/CD Pipeline
 
 on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
   workflow_dispatch:
-    inputs:
-      apk_url:
-        description: 'URL of the APK file to analyze'
-        required: true
+
+env:
+  DOCKER_IMAGE: ghcr.io/${{ github.repository }}/morf
+  REGISTRY: ghcr.io
 
 jobs:
-  analyze_apk:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Download APK file
-      run: |
-        curl -L "${{ github.event.inputs.apk_url }}" -o app.apk
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./morf
+          file: ./morf/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+            ${{ env.DOCKER_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    - name: Run MORF analysis in Docker
-      uses: addnab/docker-run-action@v3
-      with:
-        image: your-dockerhub-username/morf:latest
-        options: --rm -v ${{ github.workspace }}:/data
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Run unit tests
+        working-directory: ./morf
         run: |
-          /app/morf --apk /data/app.apk --output /data/results
+          go mod download
+          go test -v -race -coverprofile=coverage.out ./...
+          go tool cover -html=coverage.out -o coverage.html
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./morf/coverage.out
+          flags: unittests
 
-    - name: Upload analysis results
-      uses: actions/upload-artifact@v3
-      with:
-        name: analysis-results
-        path: results/*
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './morf'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt json -out gosec-report.json ./morf/...'
+      
+      - name: Upload Gosec results
+        uses: actions/upload-artifact@v3
+        with:
+          name: gosec-report
+          path: gosec-report.json
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          working-directory: ./morf
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test (headless)
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: npm test -- --watch=false --browsers=ChromeHeadlessCI --code-coverage || npm test -- --watch=false --browsers=ChromeHeadless --code-coverage
+
+      - name: Build (production)
+        run: npm run build -- --configuration production
+
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./frontend/coverage/**/lcov.info
+          flags: frontend
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v3

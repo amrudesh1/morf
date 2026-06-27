@@ -1,0 +1,104 @@
+{
+  "dashboard": {
+    "title": "MORF - Reliability",
+    "tags": ["morf", "reliability", "errors"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Scan Success Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "rate(morf_scans_total{status=\"success\"}[5m]) / rate(morf_scans_total[5m]) * 100",
+            "legendFormat": "Success Rate",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "Success Rate (%)", "max": 100, "min": 0},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Error Rate by Type",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "rate(morf_errors_total[5m])",
+            "legendFormat": "{{type}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Errors/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Total Errors",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(morf_errors_total)",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Failed Scans",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(morf_scans_total{status=\"failed\"})",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Scan Status Breakdown",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "sum by (status) (morf_scans_total)",
+            "legendFormat": "{{status}}",
+            "refId": "A"
+          }
+        ]
+      }
+    ]
+  }
+}
+
