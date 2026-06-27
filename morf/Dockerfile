@@ -1,5 +1,5 @@
 # Stage 1: Build the Go binary (Alpine for smaller size)
-FROM golang:1.24-alpine AS go-builder
+FROM golang:1.26-alpine AS go-builder
 WORKDIR /app
 
 # Install build dependencies
