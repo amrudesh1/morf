@@ -57,7 +57,7 @@ jobs:
           go tool cover -html=coverage.out -o coverage.html
       
       - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v7
         with:
           file: ./morf/coverage.out
           flags: unittests
@@ -138,7 +138,7 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v7
         with:
           files: ./frontend/coverage/**/lcov.info
           flags: frontend
