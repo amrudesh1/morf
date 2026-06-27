@@ -1,61 +1,49 @@
-# Dependencies
-node_modules/
-vendor/
-
-# Build outputs
-dist/
-build/
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# IDE and editor files
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Environment files
+# Environment variables
 .env
 .env.local
 .env.*.local
 
-# System files
-.DS_Store
-Thumbs.db
-
-# Go specific
-*.test
-*.out
-/bin
-/pkg
-
-# Angular specific
-.angular/
-.sass-cache/
-connect.lock
-coverage/
-libpeerconnection.log
-testem.log
-/typings
-
-# Docker
-.docker/
-
-# Temporary files
-tmp/
-temp/
+# Docker volumes and data
 uploads/
+log/
+*.log
 
 # Database
 *.db
 *.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test coverage
+coverage/
+*.out
+*.html
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Node modules (if running frontend locally)
+node_modules/
+
+# Go build cache
+.cache/

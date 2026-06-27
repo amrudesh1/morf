@@ -18,12 +18,16 @@ package utils
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"morf/models"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -31,7 +35,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// CheckDuplicateInDB checks if an APK has already been scanned
+// CheckDuplicateInDB checks if an APK has already been scanned using normalized schema.
+// All associations (PackageData + SecretFindings + Activities + Services +
+// ContentProviders + BroadcastReceivers) are loaded in a single Preload chain,
+// matching the pattern used by db.GetSecrets, instead of five sequential per-
+// association Find calls.
 func CheckDuplicateInDB(db *gorm.DB, apkPath string) (bool, string) {
 	// Check if database connection is valid
 	if db == nil {
@@ -41,21 +49,120 @@ func CheckDuplicateInDB(db *gorm.DB, apkPath string) (bool, string) {
 
 	apkhash := ExtractHash(apkPath)
 
-	var secret models.Secrets
-	result := db.Where("apk_hash = ?", apkhash).First(&secret)
-	if result.Error == nil {
-		// APK found in database
-		log.Infof("File %s found in database", secret.FileName)
-		jsonData, err := json.Marshal(secret)
-		if err != nil {
-			log.Error("Error marshaling secret data:", err)
-			return true, ""
-		}
-		return true, string(jsonData)
+	// Single Preload chain: one set of round-trips (main query + one per
+	// association) instead of two top-level Finds followed by five child Finds.
+	var secret models.Secret
+	if err := db.
+		Preload("PackageData").
+		Preload("SecretFindings").
+		Preload("Activities").
+		Preload("Services").
+		Preload("ContentProviders").
+		Preload("BroadcastReceivers").
+		Where("apk_hash = ?", apkhash).
+		Order("created_at DESC").
+		First(&secret).Error; err != nil {
+		log.Infof("APK hash %s not found in database", apkhash)
+		return false, ""
 	}
 
-	log.Infof("File %s not found in database", secret.FileName)
-	return false, ""
+	// Reconstruct old Secrets model format for backward compatibility.
+	// Associations are already populated by the Preload chain above.
+	secretModelArray := make([]models.SecretModel, 0, len(secret.SecretFindings))
+	for _, finding := range secret.SecretFindings {
+		secretModelArray = append(secretModelArray, models.SecretModel{
+			Type:             finding.Type,
+			LineNo:           finding.LineNo,
+			FileLocation:     finding.FileLocation,
+			SecretType:       finding.SecretType,
+			SecretString:     finding.SecretString,
+			SecretConfidence: finding.SecretConfidence,
+		})
+	}
+
+	// Parse metadata JSON
+	var metadata models.MetaDataModel
+	if err := json.Unmarshal([]byte(secret.Metadata), &metadata); err != nil {
+		log.Warnf("Failed to unmarshal metadata: %v", err)
+		metadata = models.MetaDataModel{}
+	}
+
+	// Convert activities
+	activitiesArray := make([]models.ManifestActivityInfo, 0, len(secret.Activities))
+	for _, activity := range secret.Activities {
+		var intentFilters []models.ManifestFilter
+		if activity.IntentFilters != "" {
+			json.Unmarshal([]byte(activity.IntentFilters), &intentFilters)
+		}
+		activitiesArray = append(activitiesArray, models.ManifestActivityInfo{
+			Name:          activity.Name,
+			Exported:      activity.Exported,
+			IntentFilters: intentFilters,
+		})
+	}
+
+	// Convert services
+	servicesArray := make([]models.ManifestServiceInfo, 0, len(secret.Services))
+	for _, service := range secret.Services {
+		servicesArray = append(servicesArray, models.ManifestServiceInfo{
+			Name:     service.Name,
+			Exported: service.Exported,
+		})
+	}
+
+	// Convert content providers
+	providersArray := make([]models.ManifestProviderInfo, 0, len(secret.ContentProviders))
+	for _, provider := range secret.ContentProviders {
+		providersArray = append(providersArray, models.ManifestProviderInfo{
+			Name:     provider.Name,
+			Exported: provider.Exported,
+		})
+	}
+
+	// Convert broadcast receivers
+	receiversArray := make([]models.ManifestReceiverInfo, 0, len(secret.BroadcastReceivers))
+	for _, receiver := range secret.BroadcastReceivers {
+		receiversArray = append(receiversArray, models.ManifestReceiverInfo{
+			Name:     receiver.Name,
+			Exported: receiver.Exported,
+		})
+	}
+
+	// Reconstruct Secrets model using the preloaded PackageData instead of
+	// a separate by-hash lookup.
+	oldSecret := models.Secrets{
+		FileName:    secret.FileName,
+		APKHash:     secret.APKHash,
+		APKVersion:  secret.APKVersion,
+		SecretModel: models.SecretModelArray(secretModelArray),
+		Metadata:    metadata,
+		PackageDataModel: models.PackageDataModel{
+			APKHash:           secret.PackageData.APKHash,
+			PackageName:       secret.PackageData.PackageName,
+			VersionCode:       secret.PackageData.VersionCode,
+			VersionName:       secret.PackageData.VersionName,
+			CompileSdkVersion: secret.PackageData.CompileSdkVersion,
+			SdkVersion:        secret.PackageData.SdkVersion,
+			TargetSdk:         secret.PackageData.TargetSdk,
+			MinSDK:            secret.PackageData.MinSDK,
+			SupportScreens:    secret.PackageData.SupportScreens,
+			Densities:         secret.PackageData.Densities,
+			NativeCode:        secret.PackageData.NativeCode,
+		},
+		Activities:         models.JSONComponentArray[models.ManifestActivityInfo](activitiesArray),
+		Services:           models.JSONComponentArray[models.ManifestServiceInfo](servicesArray),
+		ContentProviders:   models.JSONComponentArray[models.ManifestProviderInfo](providersArray),
+		BroadcastReceivers: models.JSONComponentArray[models.ManifestReceiverInfo](receiversArray),
+	}
+
+	jsonData, err := json.Marshal(oldSecret)
+	if err != nil {
+		log.Error("Error marshaling secret data:", err)
+		return true, ""
+	}
+
+	log.Infof("File %s found in database", secret.FileName)
+	return true, string(jsonData)
 }
 
 func CreateSecretModel(apkPath string, packageModel models.PackageDataModel, metadata models.MetaDataModel, scanner_data []models.SecretModel, secretData []byte) models.Secrets {
@@ -136,42 +243,176 @@ func parseJiraMessage(secrets models.Secrets) []string {
 	return messages
 }
 
+// commentToJira posts a comment to a JIRA ticket
+// Security improvements:
+// - Validates JIRA URL is from allowed domain (SSRF protection)
+// - Sanitizes URL to prevent SSRF
+// - Uses Basic Auth in headers (already correct)
+// - Adds timeout on JIRA API calls (30 seconds)
 func commentToJira(jiraModel models.JiraModel, message string) string {
-	jira_link := os.Getenv("JIRA_LINK")
-	jira_url := jira_link + "/rest/api/2/issue/" + jiraModel.Ticket_id + "/comment"
-	final_body := map[string]string{"body": message}
-	final_body_json, _ := json.Marshal(final_body)
-	log.Info(final_body)
-	req, err := http.NewRequest("POST", jira_url, bytes.NewBuffer([]byte(final_body_json)))
-
-	log.Print(jiraModel.JiraToken)
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Basic "+jiraModel.JiraToken)
-
-	if err != nil {
-		log.Error(err)
+	// Get JIRA base URL from environment or use provided host
+	jiraBaseURL := os.Getenv("JIRA_LINK")
+	if jiraBaseURL == "" && jiraModel.JiraHost != "" {
+		jiraBaseURL = jiraModel.JiraHost
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	if jiraBaseURL == "" {
+		log.Error("JIRA_LINK environment variable not set and no host provided")
+		return "JIRA_LINK not configured"
+	}
 
+	// Validate and sanitize JIRA URL (SSRF protection)
+	_, err := url.Parse(jiraBaseURL)
 	if err != nil {
-		log.Error(err)
+		log.WithFields(log.Fields{
+			"error": err.Error(),
+			"url":   maskURLForLogging(jiraBaseURL),
+		}).Error("Invalid JIRA base URL")
+		return "Invalid JIRA URL"
+	}
+
+	// Sanitize ticket ID to prevent path traversal
+	ticketID := sanitizeTicketID(jiraModel.Ticket_id)
+	if ticketID == "" {
+		log.Error("Invalid ticket ID")
+		return "Invalid ticket ID"
+	}
+
+	// Construct JIRA API URL
+	jiraURL := fmt.Sprintf("%s/rest/api/2/issue/%s/comment", jiraBaseURL, ticketID)
+
+	// Validate final URL is still from allowed domain
+	parsedURL, err := url.Parse(jiraURL)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"error": err.Error(),
+		}).Error("Invalid JIRA URL")
+		return "Invalid JIRA URL"
+	}
+
+	// Check if URL is from allowed domain (prevent SSRF)
+	allowedDomains := []string{"atlassian.com", "jira.com"}
+	hostname := strings.ToLower(parsedURL.Hostname())
+	allowed := false
+	for _, domain := range allowedDomains {
+		if strings.HasSuffix(hostname, domain) {
+			allowed = true
+			break
+		}
+	}
+
+	if !allowed {
+		log.WithFields(log.Fields{
+			"hostname": hostname,
+		}).Error("JIRA URL is not from allowed domain (SSRF protection)")
+		return "JIRA URL not from allowed domain"
+	}
+
+	// Prepare request body
+	finalBody := map[string]string{"body": message}
+	finalBodyJSON, err := json.Marshal(finalBody)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"error": err.Error(),
+		}).Error("Failed to marshal JIRA comment body")
+		return "Failed to prepare comment"
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", jiraURL, bytes.NewBuffer(finalBodyJSON))
+	if err != nil {
+		log.WithFields(log.Fields{
+			"error": err.Error(),
+		}).Error("Failed to create JIRA request")
+		return "Failed to create request"
+	}
+
+	// Set headers - credentials already in header (Basic Auth)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Validate JiraToken format (should be base64 encoded for Basic Auth)
+	if jiraModel.JiraToken == "" {
+		log.Error("JIRA token is empty")
+		return "JIRA token required"
+	}
+
+	// If token is not already base64 encoded, encode it
+	// Basic Auth format: base64(username:password)
+	token := jiraModel.JiraToken
+	if !isBase64Encoded(token) {
+		// Assume it's username:password format
+		token = base64.StdEncoding.EncodeToString([]byte(token))
+	}
+
+	req.Header.Set("Authorization", "Basic "+token)
+
+	// Create HTTP client with timeout (30 seconds)
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	log.WithFields(log.Fields{
+		"jira_url":  maskURLForLogging(jiraURL),
+		"ticket_id": ticketID,
+	}).Info("Posting comment to JIRA")
+
+	// Execute request
+	resp, err := client.Do(req)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"error": err.Error(),
+		}).Error("Failed to post comment to JIRA")
+		return "Request failed"
 	}
 
 	defer resp.Body.Close()
 
-	log.Info("response Status:", resp.Status)
-	log.Info("response Headers:", resp.Header)
+	log.WithFields(log.Fields{
+		"status_code": resp.StatusCode,
+		"status":      resp.Status,
+	}).Info("JIRA API response")
 
 	if resp.StatusCode == 201 {
-		log.Info("Commented on Jira ticket")
+		log.Info("Successfully commented on JIRA ticket")
 		SlackRespond(jiraModel, models.SlackData{SlackToken: jiraModel.SlackToken, SlackChannel: ""})
+		return resp.Status
 	}
 
+	log.WithFields(log.Fields{
+		"status_code": resp.StatusCode,
+		"status":      resp.Status,
+	}).Warn("JIRA API returned non-success status")
 	return resp.Status
+}
 
+// sanitizeTicketID sanitizes ticket ID to prevent path traversal
+func sanitizeTicketID(ticketID string) string {
+	// Remove any path traversal attempts
+	ticketID = strings.ReplaceAll(ticketID, "..", "")
+	ticketID = strings.ReplaceAll(ticketID, "/", "")
+	ticketID = strings.ReplaceAll(ticketID, "\\", "")
+	ticketID = strings.TrimSpace(ticketID)
+
+	// Validate ticket ID format (alphanumeric and hyphens)
+	if len(ticketID) == 0 || len(ticketID) > 50 {
+		return ""
+	}
+
+	// Check for valid characters (alphanumeric, hyphens, underscores)
+	for _, char := range ticketID {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '_') {
+			return ""
+		}
+	}
+
+	return ticketID
+}
+
+// isBase64Encoded checks if a string is base64 encoded
+func isBase64Encoded(s string) bool {
+	_, err := base64.StdEncoding.DecodeString(s)
+	return err == nil
 }
 
 func SlackRespond(jiraModel models.JiraModel, slackData models.SlackData) {

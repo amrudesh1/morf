@@ -15,7 +15,6 @@ limitations under the License.
 */package cmd
 
 import (
-	"fmt"
 	"morf/db"
 	route "morf/router"
 	"net/http"
@@ -24,9 +23,38 @@ import (
 
 	gin "github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
+	log "github.com/sirupsen/logrus"
 	cob "github.com/spf13/cobra"
 	vip "github.com/spf13/viper"
 )
+
+// maskDatabaseURL masks sensitive information in a database URL for logging
+func maskDatabaseURL(dbURL string) string {
+	// Simple string-based masking without regex
+	// Format: username:password@tcp(host:port)/dbname
+
+	// Find the position of @ and : characters
+	atPos := -1
+	colonPos := -1
+
+	for i := 0; i < len(dbURL); i++ {
+		if dbURL[i] == '@' {
+			atPos = i
+			break
+		}
+		if dbURL[i] == ':' && colonPos == -1 {
+			colonPos = i
+		}
+	}
+
+	if atPos > 0 && colonPos > 0 && colonPos < atPos {
+		// Mask both username and password
+		return "****:****@" + dbURL[atPos+1:]
+	}
+
+	// If URL format is different, return a generic masked version
+	return "****"
+}
 
 var port int = 0
 
@@ -57,9 +85,14 @@ func GetServerCmd() *cob.Command {
 			if databaseURL != "" {
 				dbType = "mysql"
 				os.Setenv("DATABASE_URL", databaseURL)
-				fmt.Printf("Using MySQL database with URL: %s\n", databaseURL)
+				// Mask database URL in logs
+				maskedURL := maskDatabaseURL(databaseURL)
+				log.WithFields(log.Fields{
+					"database_type": "mysql",
+					"database_url":  maskedURL,
+				}).Info("Using MySQL database")
 			} else {
-				fmt.Println("No DATABASE_URL found, using SQLite database")
+				log.Info("No DATABASE_URL found, using SQLite database")
 			}
 
 			db.InitDB()

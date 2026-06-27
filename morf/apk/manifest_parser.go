@@ -23,8 +23,36 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
+)
+
+// Package-level compiled regexes for manifest parsing (mp prefix to avoid name collisions).
+var (
+	mpAndroidNameRe      = regexp.MustCompile(`android:name\(.*?\)="([^"]+)"`)
+	mpExportedStringRe   = regexp.MustCompile(`android:exported\(.*?\)="([^"]+)"`)
+	mpExportedHexRe      = regexp.MustCompile(`android:exported\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`)
+	mpGrantUriStringRe   = regexp.MustCompile(`android:grantUriPermissions\(.*?\)="([^"]+)"`)
+	mpGrantUriHexRe      = regexp.MustCompile(`android:grantUriPermissions\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`)
+	mpAuthoritiesRe      = regexp.MustCompile(`android:authorities\(.*?\)="([^"]+)"`)
+	mpAutoVerifyStringRe = regexp.MustCompile(`android:autoVerify\(.*?\)="([^"]+)"`)
+	mpAutoVerifyHexRe    = regexp.MustCompile(`android:autoVerify\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`)
+	mpActionRe           = regexp.MustCompile(`(?m)^[ \t]*E: action[^\n]*\n[ \t]*A: android:name\(.*?\)="([^"]+)"`)
+	mpCategoryRe         = regexp.MustCompile(`(?m)^[ \t]*E: category[^\n]*\n[ \t]*A: android:name\(.*?\)="([^"]+)"`)
+
+	// mpAttrStringRe maps known attribute names to their pre-compiled string-format regexes,
+	// eliminating per-call dynamic compilation inside extractAttribute.
+	mpAttrStringRe = map[string]*regexp.Regexp{
+		"scheme":      regexp.MustCompile(`android:scheme\(.*?\)="([^"]+)"`),
+		"host":        regexp.MustCompile(`android:host\(.*?\)="([^"]+)"`),
+		"port":        regexp.MustCompile(`android:port\(.*?\)="([^"]+)"`),
+		"path":        regexp.MustCompile(`android:path\(.*?\)="([^"]+)"`),
+		"pathPattern": regexp.MustCompile(`android:pathPattern\(.*?\)="([^"]+)"`),
+		"pathPrefix":  regexp.MustCompile(`android:pathPrefix\(.*?\)="([^"]+)"`),
+		"mimeType":    regexp.MustCompile(`android:mimeType\(.*?\)="([^"]+)"`),
+		"priority":    regexp.MustCompile(`android:priority\(.*?\)="([^"]+)"`),
+	}
 )
 
 // ExtractComponentExportInfo extracts export information for components from the APK manifest
@@ -32,7 +60,8 @@ func ExtractComponentExportInfo(apkPath string, metadata *models.MetaDataModel) 
 	log.Info("Starting component extraction from manifest")
 
 	// Extract activities, services, receivers, and providers from the manifest
-	xmlTree, err := utils.ExecuteCommand("aapt", "dump", "xmltree", apkPath, "AndroidManifest.xml")
+	// Use timeout for aapt (2 minutes should be enough for manifest parsing)
+	xmlTree, err := utils.ExecuteCommandWithTimeout(2*time.Minute, "aapt", "dump", "xmltree", apkPath, "AndroidManifest.xml")
 	if err != nil {
 		log.Error("Error extracting manifest XML tree:", err)
 		setDefaultExportedValues(metadata)
@@ -45,24 +74,27 @@ func ExtractComponentExportInfo(apkPath string, metadata *models.MetaDataModel) 
 	targetSdk, _ := strconv.Atoi(metadata.AndroidManifest.UsesTargetSdkVersion)
 	log.Infof("Target SDK version: %d", targetSdk)
 
+	// Split the manifest lines once; each extractor reuses the same slice (SCAN-10).
+	xmlLines := strings.Split(xmlTree, "\n")
+
 	// Extract activities
 	log.Debug("Extracting activities...")
-	activities := extractActivities(xmlTree, targetSdk)
+	activities := extractActivities(xmlLines, targetSdk)
 	metadata.AndroidManifest.Activities = models.JSONComponentArray[models.ManifestActivityInfo](activities)
 
 	// Extract services
 	log.Debug("Extracting services...")
-	services := extractServices(xmlTree, targetSdk)
+	services := extractServices(xmlLines, targetSdk)
 	metadata.AndroidManifest.Services = models.JSONComponentArray[models.ManifestServiceInfo](services)
 
 	// Extract broadcast receivers
 	log.Debug("Extracting broadcast receivers...")
-	receivers := extractReceivers(xmlTree, targetSdk)
+	receivers := extractReceivers(xmlLines, targetSdk)
 	metadata.AndroidManifest.BroadcastReceivers = models.JSONComponentArray[models.ManifestReceiverInfo](receivers)
 
 	// Extract content providers
 	log.Debug("Extracting content providers...")
-	providers := extractProviders(xmlTree, targetSdk)
+	providers := extractProviders(xmlLines, targetSdk)
 	metadata.AndroidManifest.ContentProviders = models.JSONComponentArray[models.ManifestProviderInfo](providers)
 
 	// Log component counts for debugging
@@ -140,20 +172,21 @@ func isHexValueTrue(hexValue string) bool {
 	return hexValue == "0xffffffff"
 }
 
-// extractActivities extracts activity information from the manifest XML tree
-func extractActivities(xmlTree string, targetSdk int) []models.ManifestActivityInfo {
+// extractActivities extracts activity information from the manifest XML tree.
+// lines is the pre-split manifest (SCAN-10: split once by the caller).
+func extractActivities(lines []string, targetSdk int) []models.ManifestActivityInfo {
 	activities := make([]models.ManifestActivityInfo, 0)
 
 	// Split the XML tree by activity tags
 	log.Debug("Extracting activity blocks from manifest...")
-	activityBlocks := extractComponentBlocks(xmlTree, "activity")
+	activityBlocks := extractComponentBlocks(lines, "activity")
 	log.Debugf("Found %d activity blocks", len(activityBlocks))
 
 	for i, block := range activityBlocks {
 		log.Debugf("Processing activity block %d/%d", i+1, len(activityBlocks))
 
 		// Extract activity name
-		nameMatch := regexp.MustCompile(`android:name\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		nameMatch := mpAndroidNameRe.FindStringSubmatch(block)
 		if len(nameMatch) < 2 {
 			log.Debug("Skipping activity block without name attribute")
 			continue
@@ -166,13 +199,13 @@ func extractActivities(xmlTree string, targetSdk int) []models.ManifestActivityI
 		exported := false
 
 		// Check for string format: android:exported="true"
-		exportedStringMatch := regexp.MustCompile(`android:exported\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		exportedStringMatch := mpExportedStringRe.FindStringSubmatch(block)
 		if len(exportedStringMatch) >= 2 {
 			exported = exportedStringMatch[1] == "true"
 			log.Debugf("Activity %s has explicit string exported=%v", activityName, exported)
 		} else {
 			// Check for hex format: android:exported(0x01010010)=(type 0x12)0xffffffff
-			exportedHexMatch := regexp.MustCompile(`android:exported\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`).FindStringSubmatch(block)
+			exportedHexMatch := mpExportedHexRe.FindStringSubmatch(block)
 			if len(exportedHexMatch) >= 2 {
 				exported = isHexValueTrue(exportedHexMatch[1])
 				log.Debugf("Activity %s has explicit hex exported=%v (%s)", activityName, exported, exportedHexMatch[1])
@@ -210,20 +243,21 @@ func extractActivities(xmlTree string, targetSdk int) []models.ManifestActivityI
 	return activities
 }
 
-// extractServices extracts service information from the manifest XML tree
-func extractServices(xmlTree string, targetSdk int) []models.ManifestServiceInfo {
+// extractServices extracts service information from the manifest XML tree.
+// lines is the pre-split manifest (SCAN-10: split once by the caller).
+func extractServices(lines []string, targetSdk int) []models.ManifestServiceInfo {
 	services := make([]models.ManifestServiceInfo, 0)
 
 	// Split the XML tree by service tags
 	log.Debug("Extracting service blocks from manifest...")
-	serviceBlocks := extractComponentBlocks(xmlTree, "service")
+	serviceBlocks := extractComponentBlocks(lines, "service")
 	log.Debugf("Found %d service blocks", len(serviceBlocks))
 
 	for i, block := range serviceBlocks {
 		log.Debugf("Processing service block %d/%d", i+1, len(serviceBlocks))
 
 		// Extract service name
-		nameMatch := regexp.MustCompile(`android:name\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		nameMatch := mpAndroidNameRe.FindStringSubmatch(block)
 		if len(nameMatch) < 2 {
 			log.Debug("Skipping service block without name attribute")
 			continue
@@ -236,13 +270,13 @@ func extractServices(xmlTree string, targetSdk int) []models.ManifestServiceInfo
 		exported := false
 
 		// Check for string format: android:exported="true"
-		exportedStringMatch := regexp.MustCompile(`android:exported\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		exportedStringMatch := mpExportedStringRe.FindStringSubmatch(block)
 		if len(exportedStringMatch) >= 2 {
 			exported = exportedStringMatch[1] == "true"
 			log.Debugf("Service %s has explicit string exported=%v", serviceName, exported)
 		} else {
 			// Check for hex format: android:exported(0x01010010)=(type 0x12)0xffffffff
-			exportedHexMatch := regexp.MustCompile(`android:exported\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`).FindStringSubmatch(block)
+			exportedHexMatch := mpExportedHexRe.FindStringSubmatch(block)
 			if len(exportedHexMatch) >= 2 {
 				exported = isHexValueTrue(exportedHexMatch[1])
 				log.Debugf("Service %s has explicit hex exported=%v (%s)", serviceName, exported, exportedHexMatch[1])
@@ -280,20 +314,21 @@ func extractServices(xmlTree string, targetSdk int) []models.ManifestServiceInfo
 	return services
 }
 
-// extractReceivers extracts broadcast receiver information from the manifest XML tree
-func extractReceivers(xmlTree string, targetSdk int) []models.ManifestReceiverInfo {
+// extractReceivers extracts broadcast receiver information from the manifest XML tree.
+// lines is the pre-split manifest (SCAN-10: split once by the caller).
+func extractReceivers(lines []string, targetSdk int) []models.ManifestReceiverInfo {
 	receivers := make([]models.ManifestReceiverInfo, 0)
 
 	// Split the XML tree by receiver tags
 	log.Debug("Extracting receiver blocks from manifest...")
-	receiverBlocks := extractComponentBlocks(xmlTree, "receiver")
+	receiverBlocks := extractComponentBlocks(lines, "receiver")
 	log.Debugf("Found %d receiver blocks", len(receiverBlocks))
 
 	for i, block := range receiverBlocks {
 		log.Debugf("Processing receiver block %d/%d", i+1, len(receiverBlocks))
 
 		// Extract receiver name
-		nameMatch := regexp.MustCompile(`android:name\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		nameMatch := mpAndroidNameRe.FindStringSubmatch(block)
 		if len(nameMatch) < 2 {
 			log.Debug("Skipping receiver block without name attribute")
 			continue
@@ -306,13 +341,13 @@ func extractReceivers(xmlTree string, targetSdk int) []models.ManifestReceiverIn
 		exported := false
 
 		// Check for string format: android:exported="true"
-		exportedStringMatch := regexp.MustCompile(`android:exported\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		exportedStringMatch := mpExportedStringRe.FindStringSubmatch(block)
 		if len(exportedStringMatch) >= 2 {
 			exported = exportedStringMatch[1] == "true"
 			log.Debugf("Receiver %s has explicit string exported=%v", receiverName, exported)
 		} else {
 			// Check for hex format: android:exported(0x01010010)=(type 0x12)0xffffffff
-			exportedHexMatch := regexp.MustCompile(`android:exported\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`).FindStringSubmatch(block)
+			exportedHexMatch := mpExportedHexRe.FindStringSubmatch(block)
 			if len(exportedHexMatch) >= 2 {
 				exported = isHexValueTrue(exportedHexMatch[1])
 				log.Debugf("Receiver %s has explicit hex exported=%v (%s)", receiverName, exported, exportedHexMatch[1])
@@ -350,20 +385,21 @@ func extractReceivers(xmlTree string, targetSdk int) []models.ManifestReceiverIn
 	return receivers
 }
 
-// extractProviders extracts content provider information from the manifest XML tree
-func extractProviders(xmlTree string, targetSdk int) []models.ManifestProviderInfo {
+// extractProviders extracts content provider information from the manifest XML tree.
+// lines is the pre-split manifest (SCAN-10: split once by the caller).
+func extractProviders(lines []string, targetSdk int) []models.ManifestProviderInfo {
 	providers := make([]models.ManifestProviderInfo, 0)
 
 	// Split the XML tree by provider tags
 	log.Debug("Extracting provider blocks from manifest...")
-	providerBlocks := extractComponentBlocks(xmlTree, "provider")
+	providerBlocks := extractComponentBlocks(lines, "provider")
 	log.Debugf("Found %d provider blocks", len(providerBlocks))
 
 	for i, block := range providerBlocks {
 		log.Debugf("Processing provider block %d/%d", i+1, len(providerBlocks))
 
 		// Extract provider name
-		nameMatch := regexp.MustCompile(`android:name\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		nameMatch := mpAndroidNameRe.FindStringSubmatch(block)
 		if len(nameMatch) < 2 {
 			log.Debug("Skipping provider block without name attribute")
 			continue
@@ -376,26 +412,26 @@ func extractProviders(xmlTree string, targetSdk int) []models.ManifestProviderIn
 		exported := false
 
 		// Check for string format: android:exported="true"
-		exportedStringMatch := regexp.MustCompile(`android:exported\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		exportedStringMatch := mpExportedStringRe.FindStringSubmatch(block)
 		if len(exportedStringMatch) >= 2 {
 			exported = exportedStringMatch[1] == "true"
 			log.Debugf("Provider %s has explicit string exported=%v", providerName, exported)
 		} else {
 			// Check for hex format: android:exported(0x01010010)=(type 0x12)0xffffffff
-			exportedHexMatch := regexp.MustCompile(`android:exported\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`).FindStringSubmatch(block)
+			exportedHexMatch := mpExportedHexRe.FindStringSubmatch(block)
 			if len(exportedHexMatch) >= 2 {
 				exported = isHexValueTrue(exportedHexMatch[1])
 				log.Debugf("Provider %s has explicit hex exported=%v (%s)", providerName, exported, exportedHexMatch[1])
 			} else {
 				// For providers, the default is false unless android:grantUriPermissions is true
 				// Check for string format first
-				grantUriStringMatch := regexp.MustCompile(`android:grantUriPermissions\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+				grantUriStringMatch := mpGrantUriStringRe.FindStringSubmatch(block)
 				if len(grantUriStringMatch) >= 2 {
 					exported = grantUriStringMatch[1] == "true"
 					log.Debugf("Provider %s has string grantUriPermissions=%v", providerName, exported)
 				} else {
 					// Check for hex format
-					grantUriHexMatch := regexp.MustCompile(`android:grantUriPermissions\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`).FindStringSubmatch(block)
+					grantUriHexMatch := mpGrantUriHexRe.FindStringSubmatch(block)
 					if len(grantUriHexMatch) >= 2 {
 						exported = isHexValueTrue(grantUriHexMatch[1])
 						log.Debugf("Provider %s has hex grantUriPermissions=%v (%s)", providerName, exported, grantUriHexMatch[1])
@@ -407,7 +443,7 @@ func extractProviders(xmlTree string, targetSdk int) []models.ManifestProviderIn
 		}
 
 		// Extract authorities
-		authoritiesMatch := regexp.MustCompile(`android:authorities\(.*?\)="([^"]+)"`).FindStringSubmatch(block)
+		authoritiesMatch := mpAuthoritiesRe.FindStringSubmatch(block)
 		var authorities []string
 		if len(authoritiesMatch) >= 2 {
 			authorities = strings.Split(authoritiesMatch[1], ";")
@@ -495,21 +531,19 @@ func processIntentFilterBlock(filterBlock string) *models.ManifestFilter {
 	filter := &models.ManifestFilter{}
 
 	// Check for autoVerify attribute - string format
-	autoVerifyStringMatch := regexp.MustCompile(`android:autoVerify\(.*?\)="([^"]+)"`).FindStringSubmatch(filterBlock)
+	autoVerifyStringMatch := mpAutoVerifyStringRe.FindStringSubmatch(filterBlock)
 	if len(autoVerifyStringMatch) >= 2 && autoVerifyStringMatch[1] == "true" {
 		filter.AutoVerify = true
 	} else {
 		// Check for autoVerify attribute - hex format
-		autoVerifyHexMatch := regexp.MustCompile(`android:autoVerify\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`).FindStringSubmatch(filterBlock)
+		autoVerifyHexMatch := mpAutoVerifyHexRe.FindStringSubmatch(filterBlock)
 		if len(autoVerifyHexMatch) >= 2 {
 			filter.AutoVerify = isHexValueTrue(autoVerifyHexMatch[1])
 		}
 	}
 
 	// Extract actions
-	actionPattern := `(?m)^[ \t]*E: action[^\n]*\n[ \t]*A: android:name\(.*?\)="([^"]+)"`
-	actionRegex := regexp.MustCompile(actionPattern)
-	actionMatches := actionRegex.FindAllStringSubmatch(filterBlock, -1)
+	actionMatches := mpActionRe.FindAllStringSubmatch(filterBlock, -1)
 	for _, actionMatch := range actionMatches {
 		if len(actionMatch) >= 2 {
 			filter.Actions = append(filter.Actions, actionMatch[1])
@@ -517,9 +551,7 @@ func processIntentFilterBlock(filterBlock string) *models.ManifestFilter {
 	}
 
 	// Extract categories
-	categoryPattern := `(?m)^[ \t]*E: category[^\n]*\n[ \t]*A: android:name\(.*?\)="([^"]+)"`
-	categoryRegex := regexp.MustCompile(categoryPattern)
-	categoryMatches := categoryRegex.FindAllStringSubmatch(filterBlock, -1)
+	categoryMatches := mpCategoryRe.FindAllStringSubmatch(filterBlock, -1)
 	for _, categoryMatch := range categoryMatches {
 		if len(categoryMatch) >= 2 {
 			filter.Categories = append(filter.Categories, categoryMatch[1])
@@ -630,24 +662,26 @@ func processDataBlock(dataBlock string, filter *models.ManifestFilter) {
 	}
 }
 
-// extractAttribute extracts an attribute value from a block
+// extractAttribute extracts an attribute value from a block using pre-compiled regexes.
+// Falls back to dynamic compilation for attribute names not in mpAttrStringRe.
 func extractAttribute(block string, attrName string) string {
-	// Try string format first
-	pattern := `android:` + attrName + `\(.*?\)="([^"]+)"`
-	regex := regexp.MustCompile(pattern)
-	match := regex.FindStringSubmatch(block)
+	re, ok := mpAttrStringRe[attrName]
+	if !ok {
+		// Fallback for any unknown attribute name not covered by the pre-compiled map.
+		re = regexp.MustCompile(`android:` + attrName + `\(.*?\)="([^"]+)"`)
+	}
+	match := re.FindStringSubmatch(block)
 	if len(match) >= 2 {
 		return match[1]
 	}
 	return ""
 }
 
-// extractComponentBlocks extracts component blocks from the XML tree
-func extractComponentBlocks(xmlTree string, componentType string) []string {
+// extractComponentBlocks extracts component blocks from the XML tree.
+// lines is the pre-split manifest (SCAN-10: caller splits once, passed here directly).
+func extractComponentBlocks(lines []string, componentType string) []string {
 	var blocks []string
 
-	// Split the XML tree into lines
-	lines := strings.Split(xmlTree, "\n")
 	var currentBlock []string
 	inBlock := false
 	inApplication := false
