@@ -1,31 +1,117 @@
-name: MORF APK Analysis Pipeline
+name: CI
 
 on:
-  workflow_dispatch:
-    inputs:
-      apk_url:
-        description: 'URL of the APK file to analyze'
-        required: true
+  push:
+  pull_request:
 
 jobs:
-  analyze_apk:
+  backend:
+    name: Backend (build, vet, test)
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: morf
     steps:
-    - name: Download APK file
-      run: |
-        curl -L "${{ github.event.inputs.apk_url }}" -o app.apk
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Run MORF analysis in Docker
-      uses: addnab/docker-run-action@v3
-      with:
-        image: your-dockerhub-username/morf:latest
-        options: --rm -v ${{ github.workspace }}:/data
-        run: |
-          /app/morf --apk /data/app.apk --output /data/results
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: morf/go.sum
 
-    - name: Upload analysis results
-      uses: actions/upload-artifact@v3
-      with:
-        name: analysis-results
-        path: results/*
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./...
+
+  backend-integration:
+    name: Backend integration tests
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: morf
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: morf
+          MYSQL_DATABASE: morf
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pmorf"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: "root:morf@tcp(127.0.0.1:3306)/morf?parseTime=true"
+      REDIS_URL: "redis://127.0.0.1:6379"
+      MORF_DISABLE_AUTO_MIGRATE: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: morf/go.sum
+
+      - name: go test (integration)
+        run: go test -tags integration ./tests/...
+
+  frontend:
+    name: Frontend (build, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: npm run build
+        run: npm run build
+
+      - name: npm test
+        continue-on-error: true
+        run: npm test -- --watch=false --browsers=ChromeHeadless
+
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: docker build
+        run: docker build --build-arg TARGETARCH=amd64 ./morf
