@@ -19,6 +19,7 @@ package utils
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -65,6 +66,16 @@ func TestIsRetryable(t *testing.T) {
 	// Test regular error
 	regularErr := errors.New("regular error")
 	assert.False(t, IsRetryable(regularErr), "Regular error should not be retryable")
+
+	// Typed sentinels take precedence over the string heuristics.
+	assert.False(t, IsRetryable(fmt.Errorf("opaque: %w", ErrNonRetryable)),
+		"ErrNonRetryable-wrapped error should not be retryable")
+	assert.True(t, IsRetryable(fmt.Errorf("opaque: %w", ErrRetryable)),
+		"ErrRetryable-wrapped error should be retryable")
+	// A message that would otherwise match the retryable "500" heuristic is
+	// forced non-retryable by the sentinel.
+	assert.False(t, IsRetryable(fmt.Errorf("HTTP 500 but deterministic: %w", ErrNonRetryable)),
+		"ErrNonRetryable must override the 5xx string heuristic")
 }
 
 func TestRetryWithContext(t *testing.T) {

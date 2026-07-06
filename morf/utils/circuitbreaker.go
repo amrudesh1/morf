@@ -244,13 +244,22 @@ func (cb *CircuitBreaker) Reset() {
 
 // Global circuit breakers for different services.
 //
-// Only the database breaker is wired: the sole production call sites are
-// utils.Do("db", ...) in db/db.go. The previously-registered redis/slack/jira
-// breakers had no call sites, so they were removed to avoid implying
-// circuit-breaker protection that is not actually wired.
+// Two breakers are wired:
+//   - "db":    the sole production call sites are utils.Do("db", ...) in db/db.go.
+//   - "redis": SC-1 (single-Redis SPOF) — the non-blocking Redis operations in
+//     queue/ and utils/cache.go run through utils.Do("redis", ...). When Redis
+//     is repeatedly failing the breaker opens and sheds those ops immediately
+//     (fast-fail) instead of every producer/worker piling onto a hung Redis;
+//     the breaker's open state is also surfaced in GET /ready so K8s stops
+//     routing to a pod whose Redis is down.
+//
+// The previously-registered slack/jira breakers had no call sites, so they
+// were removed to avoid implying circuit-breaker protection that is not
+// actually wired.
 var (
-	dbCircuitBreaker   *CircuitBreaker
-	circuitBreakerOnce sync.Once
+	dbCircuitBreaker    *CircuitBreaker
+	redisCircuitBreaker *CircuitBreaker
+	circuitBreakerOnce  sync.Once
 	// breakerRegistry maps friendly names to circuit breakers for Do().
 	breakerRegistry map[string]*CircuitBreaker
 )
@@ -258,28 +267,66 @@ var (
 // InitCircuitBreakers initializes global circuit breakers
 func InitCircuitBreakers() {
 	circuitBreakerOnce.Do(func() {
+		// Export breaker transitions so trips are visible in metrics.
+		// CircuitState values (closed=0, open=1, half-open=2) map directly
+		// onto the morf_circuit_breaker_state gauge encoding.
+		onStateChange := func(name string, from, to CircuitState) {
+			metrics.SetCircuitBreakerState(name, float64(to))
+			if to == StateOpen {
+				metrics.RecordCircuitBreakerTrip(name)
+			}
+		}
+
 		dbCircuitBreaker = NewCircuitBreaker(Config{
-			Name:         "database",
-			MaxFailures:  5,
-			ResetTimeout: 30 * time.Second,
-			// Export breaker transitions so trips are visible in metrics.
-			// CircuitState values (closed=0, open=1, half-open=2) map directly
-			// onto the morf_circuit_breaker_state gauge encoding.
-			OnStateChange: func(name string, from, to CircuitState) {
-				metrics.SetCircuitBreakerState(name, float64(to))
-				if to == StateOpen {
-					metrics.RecordCircuitBreakerTrip(name)
-				}
-			},
+			Name:          "database",
+			MaxFailures:   5,
+			ResetTimeout:  30 * time.Second,
+			OnStateChange: onStateChange,
 		})
 
-		// Seed the gauge so the breaker reports closed before its first trip.
+		redisCircuitBreaker = NewCircuitBreaker(Config{
+			Name:          "redis",
+			MaxFailures:   5,
+			ResetTimeout:  30 * time.Second,
+			OnStateChange: onStateChange,
+		})
+
+		// Seed the gauges so the breakers report closed before their first trip.
 		metrics.SetCircuitBreakerState("database", float64(StateClosed))
+		metrics.SetCircuitBreakerState("redis", float64(StateClosed))
 
 		breakerRegistry = map[string]*CircuitBreaker{
-			"db": dbCircuitBreaker,
+			"db":    dbCircuitBreaker,
+			"redis": redisCircuitBreaker,
 		}
 	})
+}
+
+// BreakerState returns the current state of the named circuit breaker and
+// whether it is registered. Used by health/readiness handlers to surface a
+// tripped breaker (e.g. GET /ready reporting Redis as unhealthy when the
+// "redis" breaker is open). If the breaker is not registered (or
+// InitCircuitBreakers has not run), ok is false.
+func BreakerState(name string) (state CircuitState, ok bool) {
+	if breakerRegistry == nil {
+		return StateClosed, false
+	}
+	cb, found := breakerRegistry[name]
+	if !found {
+		return StateClosed, false
+	}
+	return cb.GetState(), true
+}
+
+// IsBreakerOpen reports whether the named circuit breaker is currently open
+// (i.e. shedding calls). Returns false for an unregistered breaker so callers
+// fail-open before initialisation.
+func IsBreakerOpen(name string) bool {
+	state, ok := BreakerState(name)
+	if !ok {
+		return false
+	}
+	return state == StateOpen
 }
 
 // Do looks up the named circuit breaker from the registry and runs fn through it.

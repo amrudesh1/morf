@@ -18,6 +18,7 @@ package router
 
 import (
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"morf/apk"
 	"morf/auth"
@@ -205,6 +206,13 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		if queue.GetQueue() == nil {
 			health["redis"] = "unavailable"
 			health["status"] = "degraded"
+		} else if utils.IsBreakerOpen("redis") {
+			// SC-1: the "redis" circuit breaker is open — Redis has been failing
+			// repeatedly and is being shed. Report degraded regardless of a
+			// single probe outcome.
+			health["redis"] = "unhealthy"
+			health["status"] = "degraded"
+			health["redis_error"] = "circuit breaker open"
 		} else {
 			// Test Redis connection by getting queue depth
 			_, err := queue.GetQueue().GetQueueDepth()
@@ -238,17 +246,22 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		ready := true
 		checks := gin.H{}
 
-		// Check Redis
+		// Check Redis. SC-1: readiness reflects BOTH a live probe (GetQueueDepth)
+		// AND the "redis" circuit breaker state. If the breaker is open, Redis has
+		// been failing repeatedly and this pod should stop receiving traffic even
+		// if a single probe happens to succeed — so K8s routes around a pod whose
+		// Redis is effectively down.
 		if queue.GetQueue() == nil {
 			ready = false
 			checks["redis"] = "not initialized"
+		} else if utils.IsBreakerOpen("redis") {
+			ready = false
+			checks["redis"] = "circuit breaker open"
+		} else if _, err := queue.GetQueue().GetQueueDepth(); err != nil {
+			ready = false
+			checks["redis"] = "unhealthy"
 		} else {
-			if _, err := queue.GetQueue().GetQueueDepth(); err != nil {
-				ready = false
-				checks["redis"] = "unhealthy"
-			} else {
-				checks["redis"] = "ready"
-			}
+			checks["redis"] = "ready"
 		}
 
 		// Check database (optional)
@@ -846,26 +859,35 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			return
 		}
 
-		// Check queue depth for backpressure
+		// Check queue depth for backpressure (cheap upfront reject before we spend
+		// I/O storing the upload). FAIL-CLOSED: if the depth probe errors, reject
+		// with 429 rather than admitting blindly — an admit-on-error path lets an
+		// unbounded flood in exactly when Redis is unhealthy. The AUTHORITATIVE,
+		// race-free admission happens atomically at enqueue time below via
+		// EnqueueJobAtomicWithLimit; this is just an early-out.
 		queueDepth, err := queue.GetQueue().GetQueueDepth()
 		if err != nil {
 			log.WithFields(log.Fields{
 				"request_id": requestID,
 				"error":      err.Error(),
-			}).Warn("Failed to get queue depth")
-		} else {
-			metrics.SetQueueDepth(float64(queueDepth))
-			if int(queueDepth) > queueDepthThreshold {
-				log.WithFields(log.Fields{
-					"request_id":  requestID,
-					"queue_depth": queueDepth,
-				}).Warn("Queue depth exceeded threshold")
-				c.JSON(http.StatusTooManyRequests, gin.H{
-					"error":       "Queue is full, please try again later",
-					"retry_after": 60,
-				})
-				return
-			}
+			}).Warn("Failed to get queue depth; rejecting (fail-closed)")
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":       "Queue backpressure check unavailable, please try again later",
+				"retry_after": 60,
+			})
+			return
+		}
+		metrics.SetQueueDepth(float64(queueDepth))
+		if int(queueDepth) > queueDepthThreshold {
+			log.WithFields(log.Fields{
+				"request_id":  requestID,
+				"queue_depth": queueDepth,
+			}).Warn("Queue depth exceeded threshold")
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":       "Queue is full, please try again later",
+				"retry_after": 60,
+			})
+			return
 		}
 
 		// Get webhook URL and secret from form (optional)
@@ -956,19 +978,31 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			WebhookSecret:    webhookSecret,
 		}
 
-		// R-3: publish the job atomically — HSet(job) + SAdd(status:queued) +
-		// Expire + RPush(job_queue) run as ONE Lua unit, so a crash can never
-		// leave a job registered in status:queued without it being on the queue
-		// (the silent-loss failure mode of the old CreateJob-then-PushJob pair).
-		// On failure (after a successful Put), delete the stored object so nothing
-		// leaks.
-		if err := queue.GetQueue().EnqueueJobAtomic(job); err != nil {
+		// R-3 + fail-closed admission: publish the job atomically with an ATOMIC
+		// queue-depth admission check — the LLEN check and the HSet+SAdd+Expire+
+		// RPush run as ONE Lua unit, so a crash can never orphan the job AND two
+		// producers can no longer both slip past the depth limit (the
+		// check-then-enqueue race the upfront GetQueueDepth alone cannot close).
+		// On any failure (after a successful Put) delete the stored object so
+		// nothing leaks. ErrQueueFull maps to 429; anything else is a 500.
+		if err := queue.GetQueue().EnqueueJobAtomicWithLimit(job, queueDepthThreshold, 1); err != nil {
 			if delErr := store.Delete(ctx, storageKey); delErr != nil {
 				log.WithFields(log.Fields{
 					"request_id":  requestID,
 					"storage_key": storageKey,
 					"error":       delErr.Error(),
 				}).Warn("Failed to clean up stored object after enqueue error")
+			}
+			if goerrors.Is(err, queue.ErrQueueFull) {
+				log.WithFields(log.Fields{
+					"request_id": requestID,
+					"job_id":     jobID,
+				}).Warn("Queue full at atomic admission; rejecting upload")
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error":       "Queue is full, please try again later",
+					"retry_after": 60,
+				})
+				return
 			}
 			log.WithFields(log.Fields{
 				"request_id": requestID,
@@ -1070,23 +1104,30 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			return
 		}
 
-		// Check queue depth for backpressure
+		// Check queue depth for backpressure (cheap upfront reject). FAIL-CLOSED:
+		// a depth-probe error rejects the whole batch with 429 rather than
+		// admitting blindly. Per-file admission below is race-free/atomic via
+		// EnqueueJobAtomicWithLimit, which re-checks the live depth for each file.
 		queueDepth, err := queue.GetQueue().GetQueueDepth()
 		if err != nil {
 			log.WithFields(log.Fields{
 				"request_id": requestID,
 				"error":      err.Error(),
-			}).Warn("Failed to get queue depth")
-		} else {
-			metrics.SetQueueDepth(float64(queueDepth))
-			// For bulk uploads, check if queue has room for all files
-			if int(queueDepth)+len(files) > queueDepthThreshold {
-				c.JSON(http.StatusTooManyRequests, gin.H{
-					"error":       "Queue is too full for bulk upload, please try again later",
-					"retry_after": 60,
-				})
-				return
-			}
+			}).Warn("Failed to get queue depth; rejecting bulk upload (fail-closed)")
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":       "Queue backpressure check unavailable, please try again later",
+				"retry_after": 60,
+			})
+			return
+		}
+		metrics.SetQueueDepth(float64(queueDepth))
+		// For bulk uploads, check if queue has room for all files
+		if int(queueDepth)+len(files) > queueDepthThreshold {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":       "Queue is too full for bulk upload, please try again later",
+				"retry_after": 60,
+			})
+			return
 		}
 
 		// UPLOAD-4: the storage backend must be available before we accept any
@@ -1158,11 +1199,18 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 				WebhookSecret:    webhookSecret,
 			}
 
-			// R-3: atomic publish (HSet+SAdd+Expire+RPush as one unit) so a crash
-			// cannot orphan the job. On failure, delete the stored object.
-			if err := queue.GetQueue().EnqueueJobAtomic(job); err != nil {
+			// R-3 + fail-closed admission: atomic publish with an atomic depth
+			// check (HSet+SAdd+Expire+RPush guarded by LLEN, as one unit) so a
+			// crash cannot orphan the job AND a burst of concurrent bulk uploads
+			// cannot collectively overrun the depth limit. A rejected file is
+			// reported individually; its stored object is deleted so nothing leaks.
+			if err := queue.GetQueue().EnqueueJobAtomicWithLimit(job, queueDepthThreshold, 1); err != nil {
 				_ = store.Delete(ctx, storageKey)
-				errors = append(errors, fmt.Sprintf("%s: Failed to queue job: %s", file.Filename, err.Error()))
+				if goerrors.Is(err, queue.ErrQueueFull) {
+					errors = append(errors, fmt.Sprintf("%s: Queue is full, rejected", file.Filename))
+				} else {
+					errors = append(errors, fmt.Sprintf("%s: Failed to queue job: %s", file.Filename, err.Error()))
+				}
 				continue
 			}
 

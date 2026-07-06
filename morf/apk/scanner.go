@@ -186,7 +186,11 @@ func StartSecScanE(ctx context.Context, apkPath string, jobCtx *utils.JobContext
 		}).Error("Decompilation failed in one or more phases")
 		metrics.RecordScan("failed")
 		metrics.RecordError("decompilation")
-		return nil, fmt.Errorf("apk decompilation failed (source_err=%v, res_err=%v)", sourceError, resError)
+		// A corrupt/unparseable archive fails identically on every attempt, so
+		// tag the error with ErrNonRetryable: the worker's isRetryable then
+		// classifies it via errors.Is (typed) rather than message-text matching,
+		// sending it straight to the DLQ with no wasted retries.
+		return nil, fmt.Errorf("apk decompilation failed (source_err=%v, res_err=%v): %w", sourceError, resError, utils.ErrNonRetryable)
 	}
 
 	decompileDuration := time.Since(scanStart).Seconds()

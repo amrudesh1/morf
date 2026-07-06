@@ -12,6 +12,8 @@ package worker
 
 import (
 	"errors"
+	"fmt"
+	"morf/utils"
 	"testing"
 	"time"
 )
@@ -32,6 +34,12 @@ func TestIsRetryable(t *testing.T) {
 		{errors.New("connection refused"), true},
 		{errors.New("i/o timeout"), true},
 		{errors.New("some transient redis error"), true},
+		// Typed sentinels take precedence over (and no longer depend on) the
+		// message text. A generic message wrapped with ErrNonRetryable is NOT
+		// retried; one wrapped with ErrRetryable IS retried.
+		{fmt.Errorf("something opaque: %w", utils.ErrNonRetryable), false},
+		{fmt.Errorf("safety check failed: %w: %w", utils.ErrNonRetryable, errors.New("bomb")), false},
+		{fmt.Errorf("transient blip: %w", utils.ErrRetryable), true},
 	}
 	for _, c := range cases {
 		if got := isRetryable(c.err); got != c.want {

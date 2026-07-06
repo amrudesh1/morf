@@ -21,6 +21,7 @@ import (
 	"errors"
 	"math"
 	"math/rand"
+	"morf/config"
 	"net"
 	"net/url"
 	"strings"
@@ -28,6 +29,20 @@ import (
 
 	log "github.com/sirupsen/logrus"
 )
+
+// ErrNonRetryable is a sentinel that marks an error as deterministically
+// non-retryable: wrapping any error with it (fmt.Errorf("...: %w", ErrNonRetryable))
+// makes IsRetryable / worker classification return "do not retry" via errors.Is,
+// without relying on fragile substring matching of the error text. Producers of
+// deterministic failures (safety rejection, corrupt/unparseable input, input
+// validation) should wrap with this sentinel.
+var ErrNonRetryable = errors.New("non-retryable error")
+
+// ErrRetryable is the dual sentinel: wrapping an error with it marks the error
+// as transient and worth retrying, again matched via errors.Is. Prefer these
+// typed sentinels over string matching when the caller knows the class of the
+// failure at the point it is produced.
+var ErrRetryable = errors.New("retryable error")
 
 // RetryableError indicates if an error should be retried
 type RetryableError struct {
@@ -44,13 +59,31 @@ func (e *RetryableError) Unwrap() error {
 	return e.Err
 }
 
-// IsRetryable checks if an error is retryable
+// IsRetryable checks if an error is retryable.
+//
+// Classification precedence (most authoritative first):
+//  1. Typed sentinels: errors.Is(err, ErrNonRetryable) -> false,
+//     errors.Is(err, ErrRetryable) -> true. Prefer wrapping errors with these
+//     over relying on the string heuristics below.
+//  2. The *RetryableError wrapper's Retryable flag.
+//  3. Structural checks (net.Error, *url.Error) and, as a last resort, the
+//     legacy substring heuristics for HTTP-status / "timeout" / "validation"
+//     error text that predates the typed sentinels.
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	// Check for RetryableError wrapper
+	// (1) Typed sentinels take precedence over every heuristic below. Check
+	// non-retryable first so an error tagged both ways errs on the safe side.
+	if errors.Is(err, ErrNonRetryable) {
+		return false
+	}
+	if errors.Is(err, ErrRetryable) {
+		return true
+	}
+
+	// (2) Check for RetryableError wrapper
 	var retryableErr *RetryableError
 	if errors.As(err, &retryableErr) {
 		return retryableErr.Retryable
@@ -98,14 +131,21 @@ type RetryConfig struct {
 	Jitter       bool
 }
 
-// DefaultRetryConfig returns a default retry configuration
+// DefaultRetryConfig returns the default retry configuration. The values are
+// config-driven (env-overridable through the shared config helpers) so
+// operators can tune retry aggressiveness without a rebuild:
+//   - MORF_RETRY_MAX_RETRIES  (int,      default 3)
+//   - MORF_RETRY_INITIAL_DELAY(duration, default 1s)
+//   - MORF_RETRY_MAX_DELAY    (duration, default 30s)
+//   - MORF_RETRY_MULTIPLIER   (float,    default 2.0)
+//   - MORF_RETRY_JITTER       (bool,     default true)
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxRetries:   3,
-		InitialDelay: 1 * time.Second,
-		MaxDelay:     30 * time.Second,
-		Multiplier:   2.0,
-		Jitter:       true,
+		MaxRetries:   config.Int("MORF_RETRY_MAX_RETRIES", 3),
+		InitialDelay: config.DurationPositive("MORF_RETRY_INITIAL_DELAY", 1*time.Second),
+		MaxDelay:     config.DurationPositive("MORF_RETRY_MAX_DELAY", 30*time.Second),
+		Multiplier:   config.FloatPositive("MORF_RETRY_MULTIPLIER", 2.0),
+		Jitter:       config.Bool("MORF_RETRY_JITTER", true),
 	}
 }
 
