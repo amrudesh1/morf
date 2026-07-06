@@ -1,0 +1,118 @@
+{
+  "dashboard": {
+    "title": "MORF - Scan Performance",
+    "tags": ["morf", "performance", "scans"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Scan Duration (p50, p95, p99)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(morf_scan_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50 - {{phase}}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(morf_scan_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 - {{phase}}",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(morf_scan_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99 - {{phase}}",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Duration (seconds)"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Scan Throughput",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "rate(morf_scans_total[5m])",
+            "legendFormat": "{{status}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "label": "Scans/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Total Scans",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(morf_scans_total)",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Active Scans",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+        "targets": [
+          {
+            "expr": "morf_active_scans",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Secrets Found Distribution",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "rate(morf_secrets_found_bucket[5m])",
+            "legendFormat": "{{le}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Count"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}
+

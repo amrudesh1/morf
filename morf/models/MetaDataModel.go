@@ -20,6 +20,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
@@ -45,12 +46,14 @@ func (a *JSONStringArray) Scan(value interface{}) error {
 		return nil
 	}
 
-	// If the value is already a JSON array, unmarshal it directly
+	// If the value is already a JSON array, unmarshal it directly. A value that
+	// looks like an array but fails to parse is genuine corruption — surface it
+	// rather than silently substituting an empty array (consistent with
+	// JSONComponentArray.Scan).
 	if bytes[0] == '[' {
 		if err := json.Unmarshal(bytes, a); err != nil {
 			log.Errorf("Error unmarshaling JSON array: %v", err)
-			*a = JSONStringArray{}
-			return nil
+			return fmt.Errorf("JSONStringArray.Scan: unmarshal array: %w", err)
 		}
 		return nil
 	}
@@ -118,10 +121,10 @@ type MetaDataModel struct {
 		NumberOfServices           int                                      `json:"numberOfServices"`
 		NumberOfContentProviders   int                                      `json:"numberOfContentProviders"`
 		NumberOfBroadcastReceivers int                                      `json:"numberOfBroadcastReceivers"`
-		Activities                 JSONComponentArray[ManifestActivityInfo] `gorm:"type:json;default:'[]'" json:"activities"`
-		Services                   JSONComponentArray[ManifestServiceInfo]  `gorm:"type:json;default:'[]'" json:"services"`
-		ContentProviders           JSONComponentArray[ManifestProviderInfo] `gorm:"type:json;default:'[]'" json:"contentProviders"`
-		BroadcastReceivers         JSONComponentArray[ManifestReceiverInfo] `gorm:"type:json;default:'[]'" json:"broadcastReceivers"`
+		Activities                 JSONComponentArray[ManifestActivityInfo] `gorm:"type:json" json:"activities"`
+		Services                   JSONComponentArray[ManifestServiceInfo]  `gorm:"type:json" json:"services"`
+		ContentProviders           JSONComponentArray[ManifestProviderInfo] `gorm:"type:json" json:"contentProviders"`
+		BroadcastReceivers         JSONComponentArray[ManifestReceiverInfo] `gorm:"type:json" json:"broadcastReceivers"`
 		UsesPermissions            JSONStringArray                          `gorm:"type:json" json:"usesPermissions"`
 		UsesLibrary                JSONStringArray                          `gorm:"type:json" json:"usesLibrary"`
 		UsesFeature                JSONStringArray                          `gorm:"type:json" json:"usesFeature"`
@@ -143,8 +146,11 @@ type MetaDataModel struct {
 		Version          int    `json:"version"`
 		IssuerName       string `json:"issuerName"`
 		SubjectName      string `json:"subjectName"`
-	} `gorm:"embedded;"`
+	} `gorm:"embedded;embeddedPrefix:cert_" json:"certificateData"`
 	ResourceData ResourceData `gorm:"embedded;" json:"resourceData"`
 	FileDigest   struct {
-	} `gorm:"embedded;" json:"fileDigest" `
+		Sha256 string `json:"sha256"`
+		Sha1   string `json:"sha1"`
+		Md5    string `json:"md5"`
+	} `gorm:"embedded;" json:"fileDigest"`
 }

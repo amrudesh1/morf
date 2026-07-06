@@ -19,6 +19,7 @@ package apk
 import (
 	"morf/models"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -29,12 +30,16 @@ func TestParseManifestFromSample(t *testing.T) {
 		t.Fatalf("Failed to read sample XML tree: %v", err)
 	}
 
+	// Manifest is split into lines once; extractors now take []string
+	// (single-walk refactor, finding SCAN-10).
+	lines := strings.Split(string(xmlTree), "\n")
+
 	// Create a metadata model
 	metadata := &models.MetaDataModel{}
 	metadata.AndroidManifest.UsesTargetSdkVersion = "34" // Android 14
 
 	// Extract activities
-	activities := extractActivities(string(xmlTree), 34)
+	activities := extractActivities(lines, 34)
 	t.Logf("Found %d activities", len(activities))
 
 	// Expected activity export states
@@ -60,7 +65,7 @@ func TestParseManifestFromSample(t *testing.T) {
 	}
 
 	// Extract services
-	services := extractServices(string(xmlTree), 34)
+	services := extractServices(lines, 34)
 	t.Logf("Found %d services", len(services))
 
 	// Expected service export states
@@ -83,7 +88,7 @@ func TestParseManifestFromSample(t *testing.T) {
 	}
 
 	// Extract receivers
-	receivers := extractReceivers(string(xmlTree), 34)
+	receivers := extractReceivers(lines, 34)
 	t.Logf("Found %d receivers", len(receivers))
 
 	// Expected receiver export states
@@ -107,7 +112,7 @@ func TestParseManifestFromSample(t *testing.T) {
 	}
 
 	// Extract providers
-	providers := extractProviders(string(xmlTree), 34)
+	providers := extractProviders(lines, 34)
 	t.Logf("Found %d providers", len(providers))
 
 	// Expected provider export states

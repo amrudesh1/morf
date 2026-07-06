@@ -20,6 +20,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -49,9 +50,10 @@ type ManifestReceiverInfo struct {
 
 // ManifestProviderInfo represents information about an Android content provider
 type ManifestProviderInfo struct {
-	Name        string   `json:"name"`
-	Exported    bool     `json:"exported"`
-	Authorities []string `json:"authorities,omitempty"`
+	Name                string   `json:"name"`
+	Exported            bool     `json:"exported"`
+	Authorities         []string `json:"authorities,omitempty"`
+	GrantUriPermissions bool     `json:"grantUriPermissions,omitempty"`
 }
 
 // ManifestFilter represents an intent filter in the Android manifest
@@ -96,19 +98,22 @@ func (a *JSONComponentArray[T]) Scan(value interface{}) error {
 		return nil
 	}
 
-	// If the value is already a JSON array, unmarshal it directly
+	// If the value is a JSON array, unmarshal it directly. Propagate the error on
+	// failure so the caller can distinguish a genuinely empty column from a corrupt
+	// or unreadable one; GORM would otherwise see a successful empty load (finding 059).
 	if bytes[0] == '[' {
 		if err := json.Unmarshal(bytes, a); err != nil {
 			log.Errorf("Error unmarshaling JSON array: %v", err)
 			*a = JSONComponentArray[T]{}
-			return nil
+			return err
 		}
 		return nil
 	}
 
-	// Default to empty array on error
+	// A non-empty value whose first byte is not '[' is unreadable/corrupt stored
+	// data: surface an error rather than silently returning an empty slice (finding 059).
 	*a = JSONComponentArray[T]{}
-	return nil
+	return fmt.Errorf("failed to unmarshal JSONComponentArray: unexpected non-array value (first byte %q)", bytes[0])
 }
 
 func (a JSONComponentArray[T]) Value() (driver.Value, error) {

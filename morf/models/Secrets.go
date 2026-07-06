@@ -24,11 +24,11 @@ import (
 type Secrets struct {
 	gorm.Model
 	FileName           string                                   `json:"fileName" gorm:"column:file_name"`
-	APKHash            string                                   `json:"apkHash" gorm:"column:apk_hash"`
+	APKHash            string                                   `json:"apkHash" gorm:"column:apk_hash;size:255"`
 	APKVersion         string                                   `json:"apkVersion" gorm:"column:apk_version"`
 	SecretModel        SecretModelArray                         `json:"secretModel" gorm:"type:json;column:secret_model"`
-	Metadata           MetaDataModel                            `json:"metadata" gorm:"embedded"`
-	PackageDataModel   PackageDataModel                         `json:"packageDataModel" gorm:"embedded"`
+	Metadata           MetaDataModel                            `json:"metadata" gorm:"embedded;embeddedPrefix:meta_"`
+	PackageDataModel   PackageDataModel                         `json:"packageDataModel" gorm:"embedded;embeddedPrefix:pkg_"`
 	Activities         JSONComponentArray[ManifestActivityInfo] `json:"activities" gorm:"type:json;column:activities"`
 	Services           JSONComponentArray[ManifestServiceInfo]  `json:"services" gorm:"type:json;column:services"`
 	ContentProviders   JSONComponentArray[ManifestProviderInfo] `json:"contentProviders" gorm:"type:json;column:content_providers"`

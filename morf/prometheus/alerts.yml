@@ -1,0 +1,173 @@
+groups:
+  - name: morf_alerts
+    interval: 30s
+    rules:
+      # Scan failure rate alert
+      - alert: HighScanFailureRate
+        expr: |
+          (
+            sum(rate(morf_scans_total{status="failed"}[5m]))
+            /
+            sum(rate(morf_scans_total[5m]))
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High scan failure rate detected"
+          description: "Scan failure rate is {{ $value | humanizePercentage }} (threshold: 1%)"
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/investigate-failed-scans.md"
+
+      # Latency alert
+      - alert: HighScanLatency
+        expr: |
+          histogram_quantile(0.95, rate(morf_scan_duration_seconds_bucket{phase="total"}[5m])) > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High scan latency detected"
+          description: "p95 scan latency is {{ $value }}s (threshold: 90s)"
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/scaling.md"
+
+      # Queue depth alert
+      - alert: HighQueueDepth
+        expr: morf_queue_depth > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High queue depth detected"
+          description: "Queue depth is {{ $value }} (threshold: 100). Workers may be saturated; consider scaling worker pool."
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/scaling.md"
+
+      # Database connection errors
+      - alert: DatabaseConnectionErrors
+        expr: rate(morf_errors_total{type="database"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection errors detected"
+          description: "Database error rate is {{ $value }} errors/sec"
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/system-health.md"
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(morf_errors_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors/sec (threshold: 10/sec)"
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/common-issues.md"
+
+      # Tool execution failures
+      - alert: ToolExecutionFailures
+        expr: rate(morf_errors_total{type=~"tool_execution|metadata_extraction|package_extraction|decompilation"}[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tool execution failures detected"
+          description: "Tool execution error rate is {{ $value }} errors/sec. Check apktool/aapt/ripgrep availability and APK validity."
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/investigate-failed-scans.md"
+
+      # No scans received
+      - alert: NoScansReceived
+        expr: rate(morf_scans_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No scans received"
+          description: "No scans have been received in the last 10 minutes"
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/system-health.md"
+
+      # HTTP 5xx errors
+      - alert: HighHTTP5xxRate
+        expr: |
+          sum(rate(morf_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(morf_http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: "HTTP 5xx error rate is {{ $value | humanizePercentage }} (threshold: 1%)"
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/system-health.md"
+
+      # Rate-limit pressure: signals abusive clients or under-provisioned limits
+      - alert: HighRateLimitDrop
+        expr: rate(morf_errors_total{type="rate_limited"}[5m]) > 5
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Many requests being rate-limited"
+          description: "{{ $value }} req/s rejected by per-IP rate limiter. Tune MORF_RATE_LIMIT_RPS or investigate clients."
+
+  # SLO recording rules. SLO targets:
+  #   - Availability: 99.9% of HTTP requests succeed (non-5xx) over 30d.
+  #   - Latency:      99% of scans complete within 5 min.
+  # Burn-rate alerts page when budget is consumed faster than expected.
+  - name: morf_slo_recordings
+    interval: 30s
+    rules:
+      # Availability SLI
+      - record: job:morf_http_availability:ratio_rate5m
+        expr: |
+          sum(rate(morf_http_requests_total{status!~"5.."}[5m]))
+          /
+          sum(rate(morf_http_requests_total[5m]))
+      - record: job:morf_http_availability:ratio_rate1h
+        expr: |
+          sum(rate(morf_http_requests_total{status!~"5.."}[1h]))
+          /
+          sum(rate(morf_http_requests_total[1h]))
+
+      # Scan latency SLI: fraction of scans under 300s.
+      - record: job:morf_scan_under_300s:ratio_rate5m
+        expr: |
+          sum(rate(morf_scan_duration_seconds_bucket{phase="total",le="300"}[5m]))
+          /
+          sum(rate(morf_scan_duration_seconds_count{phase="total"}[5m]))
+
+  - name: morf_slo_alerts
+    interval: 30s
+    rules:
+      - alert: AvailabilityBurnRateFast
+        expr: (1 - job:morf_http_availability:ratio_rate5m) > (14.4 * (1 - 0.999))
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "Availability SLO burn rate (1h budget) exceeded"
+          description: "Burning >2% of 30d error budget per hour. Page oncall."
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/system-health.md"
+
+      - alert: AvailabilityBurnRateSlow
+        expr: (1 - job:morf_http_availability:ratio_rate1h) > (6 * (1 - 0.999))
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "Availability SLO burn rate (6h budget) elevated"
+          description: "Sustained error rate eating >5% of 30d error budget per 6h."
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/system-health.md"
+
+      - alert: ScanLatencySLOBreach
+        expr: job:morf_scan_under_300s:ratio_rate5m < 0.99
+        for: 15m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "Scan latency SLO breach"
+          description: "Less than 99% of scans complete within 5 min."
+          runbook_url: "https://github.com/your-org/morf/blob/main/morf/docs/runbooks/scaling.md"

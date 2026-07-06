@@ -82,12 +82,18 @@ PREPARE stmt FROM @drop_receivers;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- Add indexes if they don't exist
-SET @add_idx_activities = IF(@idx_activities_exists = 0,
-    'ALTER TABLE secrets ADD INDEX idx_activities ((CAST(activities->>\'$[*].intentFilters[*].data[*].scheme\' AS CHAR(36))))',
+-- Drop the legacy wildcard JSON functional indexes if present.
+-- The original definitions used CAST(activities->>'$[*]...' AS CHAR(36)): a wildcard
+-- ([*]) JSON path returns a multi-valued/array result that MySQL cannot cast to a
+-- scalar CHAR in a functional index, so the ALTER errored at runtime and the index
+-- was never created (the per-statement error is swallowed by a Warnf in db.go).
+-- This component data now lives in the normalized tables (migrations 003/004), so
+-- these indexes are dropped rather than rebuilt.
+SET @add_idx_activities = IF(@idx_activities_exists = 1,
+    'ALTER TABLE secrets DROP INDEX idx_activities',
     'SELECT 1');
-SET @add_idx_activities_host = IF(@idx_activities_host_exists = 0,
-    'ALTER TABLE secrets ADD INDEX idx_activities_host ((CAST(activities->>\'$[*].intentFilters[*].data[*].host\' AS CHAR(36))))',
+SET @add_idx_activities_host = IF(@idx_activities_host_exists = 1,
+    'ALTER TABLE secrets DROP INDEX idx_activities_host',
     'SELECT 1');
 
 PREPARE stmt FROM @add_idx_activities;

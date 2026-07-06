@@ -1,0 +1,232 @@
+---
+# Stable production Deployment for MORF (paired with HPA + PDB).
+# The canary-deployment.yaml file targets 10% traffic; this is the 90%.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: morf
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: morf
+  namespace: morf
+  labels:
+    app: morf
+    version: stable
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: morf
+      version: stable
+  template:
+    metadata:
+      labels:
+        app: morf
+        version: stable
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9092"
+        prometheus.io/path: "/api/metrics"
+    spec:
+      # Pod-level security baseline. App runs as non-root uid 1000 (see Dockerfile)
+      # and uses the RuntimeDefault seccomp profile (stricter than unconfined; a
+      # safe starting point — tighten to the custom seccomp/seccomp-apktool.json
+      # profile once validated). Container-level context (below) hardens further.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Initialize the database schema before the main container starts.
+      # Replaces the previous AutoMigrate-on-every-boot, which serialized
+      # under load and risked schema-lock issues.
+      initContainers:
+      - name: migrate
+        image: morf:stable
+        imagePullPolicy: IfNotPresent
+        command: ["morf", "migrate"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: DATABASE_URL
+      containers:
+      - name: morf
+        image: morf:stable
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        ports:
+        - containerPort: 9092
+          name: http
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: DATABASE_URL
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: REDIS_URL
+        - name: GIN_MODE
+          value: "release"
+        # Worker tuning. MORF_WORKER_MAX caps the auto-derived count.
+        - name: MORF_WORKER_MAX
+          value: "16"
+        - name: MORF_QUEUE_DEPTH_THRESHOLD
+          value: "2000"
+        - name: MORF_CORS_ALLOWED_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: morf-config
+              key: CORS_ALLOWED_ORIGINS
+              optional: true
+        # AutoMigrate is disabled in steady-state pods; the initContainer ran it.
+        - name: MORF_DISABLE_AUTO_MIGRATE
+          value: "true"
+        livenessProbe:
+          httpGet:
+            path: /api/live
+            port: 9092
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/ready
+            port: 9092
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            # CPU request raised from 1 → 2 cores.
+            # HPA / KEDA utilization% is computed against the REQUEST, not the
+            # limit. A request of 1 with a limit of 4 meant the old HPA 70%
+            # target fired at 0.7 cores — long before the pod could actually use
+            # its full 4-core limit. Setting request=2 halves the 1:4 gap to
+            # 1:2, so the app's cgroup-aware worker thread derivation sees a
+            # realistic ceiling and any future CPU-based autoscaling threshold
+            # (e.g. 70% of 2 = 1.4 cores) stays coherent with actual workload.
+            cpu: "2"
+            memory: "2Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        volumeMounts:
+        # readOnlyRootFilesystem: true makes / immutable, so every path the app
+        # writes to needs an explicit writable volume. This emptyDir covers /tmp
+        # (and therefore /tmp/morf, the scanner's working dir); the uploads PVC
+        # below mounts on top at /tmp/morf/uploads for shared persistent storage.
+        - name: tmp
+          mountPath: /tmp
+        - name: uploads
+          mountPath: /tmp/morf/uploads
+          # Shared ReadWriteMany PVC keeps uploads accessible across all replicas
+          # so horizontal scale-out does not produce pod-local file silos.
+          # Alternative: set MORF_STORAGE_BACKEND=s3 (see volumes comment below)
+          # and remove this mount; pods become fully stateless.
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: morf-uploads-pvc
+          # morf-uploads-pvc must be provisioned with accessMode ReadWriteMany
+          # (e.g. NFS or a CSI driver that supports RWX) so every replica can
+          # read and write uploads concurrently.
+          #
+          # Object-storage alternative (fully stateless, preferred for cloud):
+          #   Remove this volume + volumeMount and set these env vars instead:
+          #   - name: MORF_STORAGE_BACKEND
+          #     value: "s3"
+          #   - name: MORF_S3_BUCKET
+          #     value: "morf-uploads"
+          #   - name: MORF_S3_REGION
+          #     value: "us-east-1"
+          #   - name: MORF_S3_ENDPOINT   # optional: for non-AWS S3-compatible stores
+          #     value: ""
+          #   AWS credentials should come from IRSA / Workload Identity, not
+          #   hard-coded secrets.
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: morf
+            version: stable
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: morf-service
+  namespace: morf
+  labels:
+    app: morf
+spec:
+  selector:
+    app: morf
+    version: stable
+  ports:
+  - port: 80
+    targetPort: 9092
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+# PodDisruptionBudget: ensure cluster maintenance can never evict the
+# Deployment to zero. Pairs with HPA's minReplicas: 2.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: morf-pdb
+  namespace: morf
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: morf
+      version: stable
+---
+# Shared upload volume — ReadWriteMany so all replicas can read/write in parallel.
+# Provision this with a CSI driver that supports RWX (e.g. AWS EFS, NFS).
+# If switching to object storage (MORF_STORAGE_BACKEND=s3), delete this PVC
+# and the corresponding volumeMount/volume stanza in the Deployment above.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: morf-uploads-pvc
+  namespace: morf
+  labels:
+    app: morf
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  # storageClassName: efs-sc   # uncomment and set to your RWX storage class

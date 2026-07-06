@@ -16,15 +16,16 @@ limitations under the License.
 
 package models
 
-// PackageInfo defines the interface for package information
-type PackageInfo interface {
-	GetPackageName() string
-	GetVersion() string
-	GetMinSDK() string
-	GetTargetSDK() string
-}
-
-// PackageDataModel represents package information extracted from an APK
+// PackageDataModel represents package information extracted from an APK.
+//
+// NOTE: PackageDataModel duplicates models.PackageData (see PackageData.go). Both
+// carry the same field set (APKHash, PackageName, VersionCode, VersionName,
+// CompileSdkVersion, SdkVersion, TargetSdk, MinSDK, SupportScreens, Densities,
+// NativeCode). PackageDataModel is the legacy representation embedded into the
+// Secrets table (no standalone gorm table); PackageData is the normalized
+// standalone table. They are maintained in parallel during the normalization
+// migration. Once the migration completes, PackageDataModel and the old Secrets
+// table should be retired, leaving PackageData as the single source of truth.
 type PackageDataModel struct {
 	PackageDataID     int             `json:"packageDataId"`
 	APKHash           string          `json:"apkHash"`
@@ -38,21 +39,4 @@ type PackageDataModel struct {
 	SupportScreens    JSONStringArray `gorm:"type:json" json:"supportScreens"`
 	Densities         JSONStringArray `gorm:"type:json" json:"densities"`
 	NativeCode        JSONStringArray `gorm:"type:json" json:"nativeCode"`
-}
-
-// Implement the PackageInfo interface
-func (p PackageDataModel) GetPackageName() string {
-	return p.PackageName
-}
-
-func (p PackageDataModel) GetVersion() string {
-	return p.VersionName
-}
-
-func (p PackageDataModel) GetMinSDK() string {
-	return p.MinSDK
-}
-
-func (p PackageDataModel) GetTargetSDK() string {
-	return p.TargetSdk
 }
