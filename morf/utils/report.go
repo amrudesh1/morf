@@ -18,6 +18,7 @@ package utils
 
 import (
 	"morf/models"
+	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
 	alf "github.com/spf13/afero"
@@ -25,14 +26,48 @@ import (
 )
 
 // CreateReport generates a report from scan results
-func CreateReport(fs alf.Fs, secret models.Secrets, json_data []byte, secret_data []byte, fileName string) {
+func CreateReport(fs alf.Fs, secret models.Secrets, json_data []byte, secret_data []byte, fileName string) error {
+	// Ensure the results/ directory exists before writing into it.
+	if err := fs.MkdirAll("results", 0755); err != nil {
+		log.Error("Failed to create results directory: ", err)
+		return err
+	}
+
+	backupPath := vip.GetString("backup_path")
+
+	// fileName and version (the latter derived from the attacker-controlled aapt
+	// manifest versionName) are concatenated directly into output paths below.
+	// Strip any directory components so a value like "../../etc/passwd" or one
+	// containing path separators cannot escape the intended report directories.
+	fileName = filepath.Base(fileName)
+	version := filepath.Base(secret.PackageDataModel.VersionName)
+
+	reportPath := backupPath + fileName + "_" + version + ".json"
+	resultsReportPath := "results" + "/" + fileName + "_" + version + ".json"
+	secretsPath := backupPath + fileName + "_" + "Secrets_" + version + ".json"
+	resultsSecretsPath := "results" + "/" + fileName + "_" + "Secrets_" + version + ".json"
+
 	// Write full report
-	WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+secret.PackageDataModel.VersionName+".json", string(json_data))
-	WriteToFile(fs, "results"+"/"+fileName+"_"+secret.PackageDataModel.VersionName+".json", string(json_data))
+	if err := WriteToFile(fs, reportPath, string(json_data)); err != nil {
+		log.Error("Failed to write report to "+reportPath+": ", err)
+		return err
+	}
+	if err := WriteToFile(fs, resultsReportPath, string(json_data)); err != nil {
+		log.Error("Failed to write report to "+resultsReportPath+": ", err)
+		return err
+	}
 
 	// Write secrets report
-	WriteToFile(fs, vip.GetString("backup_path")+fileName+"_"+"Secrets_"+secret.PackageDataModel.VersionName+".json", string(secret_data))
-	WriteToFile(fs, "results"+"/"+fileName+"_"+"Secrets_"+secret.PackageDataModel.VersionName+".json", string(secret_data))
+	if err := WriteToFile(fs, secretsPath, string(secret_data)); err != nil {
+		log.Error("Failed to write secrets report to "+secretsPath+": ", err)
+		return err
+	}
+	if err := WriteToFile(fs, resultsSecretsPath, string(secret_data)); err != nil {
+		log.Error("Failed to write secrets report to "+resultsSecretsPath+": ", err)
+		return err
+	}
 
-	log.Info("APK Data saved to: " + vip.GetString("backup_path") + "/" + fileName + "_" + secret.PackageDataModel.VersionName + ".json")
+	// Log the exact path that was written (matches reportPath above).
+	log.Info("APK Data saved to: " + reportPath)
+	return nil
 }

@@ -3,7 +3,6 @@ package response
 import (
 	"encoding/json"
 	"morf/models"
-	"morf/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -44,15 +43,6 @@ func (h *APIResponseHandler) CreateSuccessResponse() gin.H {
 // CreateDuplicateResponse creates a response for duplicate APK
 func (h *APIResponseHandler) CreateDuplicateResponse() gin.H {
 	return CreateDuplicateResponse(h.CreateBasicResponse())
-}
-
-// HandleExistingAPK handles the response for an existing APK
-func (h *APIResponseHandler) HandleExistingAPK(isSlack bool, slackData models.SlackData, c *gin.Context, jsonData string) gin.H {
-	if isSlack {
-		utils.RespondSecretsToSlack(slackData, c, jsonData)
-		return nil
-	}
-	return h.CreateDuplicateResponse()
 }
 
 // ParseExistingSecret parses JSON data into a Secrets model

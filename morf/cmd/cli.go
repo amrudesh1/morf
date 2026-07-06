@@ -17,6 +17,8 @@ limitations under the License.
 package cmd
 
 import (
+	"strings"
+
 	"morf/apk"
 	"morf/db"
 
@@ -27,7 +29,6 @@ import (
 // GetCliCmd returns the CLI command for MORF
 func GetCliCmd() *cobra.Command {
 	var apkPath string
-	var jsonPath string
 	var useDb bool
 
 	var cliCmd = &cobra.Command{
@@ -46,7 +47,7 @@ func GetCliCmd() *cobra.Command {
 			}
 
 			// Validate APK file extension
-			if apkPath[len(apkPath)-4:] != ".apk" {
+			if len(apkPath) < 4 || !strings.HasSuffix(strings.ToLower(apkPath), ".apk") {
 				log.Error("The file must be an APK file")
 				return
 			}
@@ -69,7 +70,6 @@ func GetCliCmd() *cobra.Command {
 
 	// Add command flags
 	cliCmd.Flags().StringVarP(&apkPath, "apk", "a", "", "Path to the APK file")
-	cliCmd.Flags().StringVarP(&jsonPath, "json", "j", "", "Path to output JSON file")
 	cliCmd.Flags().BoolVarP(&useDb, "use-db", "d", false, "Enable database storage")
 
 	return cliCmd

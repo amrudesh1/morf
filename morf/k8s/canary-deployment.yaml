@@ -1,0 +1,296 @@
+---
+# Canary Deployment Configuration for MORF
+# This file defines a canary deployment strategy for gradual rollout
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: morf-canary
+---
+# ConfigMap for canary configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: morf-canary-config
+  namespace: morf-canary
+data:
+  canary_percentage: "10"
+  promotion_criteria: "success_rate > 0.95 AND error_rate < 0.01"
+---
+# Canary Deployment (10% of traffic)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: morf-canary
+  namespace: morf-canary
+  labels:
+    app: morf
+    version: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: morf
+      version: canary
+  template:
+    metadata:
+      labels:
+        app: morf
+        version: canary
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9092"
+        prometheus.io/path: "/api/metrics"  # app exposes metrics at /api/metrics, not /metrics
+    spec:
+      # Pod-level security baseline — mirrors the stable deployment. App runs as
+      # non-root uid 1000 (see Dockerfile) with the RuntimeDefault seccomp profile.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Initialize the database schema before the canary container starts, instead
+      # of AutoMigrate-on-boot. Mirrors the stable deployment's migrate initContainer.
+      initContainers:
+      - name: migrate
+        image: morf:canary
+        imagePullPolicy: Always
+        command: ["morf", "migrate"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: DATABASE_URL
+      containers:
+      - name: morf
+        image: morf:canary
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        ports:
+        - containerPort: 9092
+          name: http
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: DATABASE_URL
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: morf-secrets
+              key: REDIS_URL
+        - name: GIN_MODE
+          value: "release"
+        # AutoMigrate is disabled; the migrate initContainer ran the schema setup.
+        - name: MORF_DISABLE_AUTO_MIGRATE
+          value: "true"
+        livenessProbe:
+          httpGet:
+            path: /api/live
+            port: 9092
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/ready
+            port: 9092
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+        volumeMounts:
+        # readOnlyRootFilesystem: true requires explicit writable volumes for every
+        # path the app writes. This emptyDir covers /tmp (and /tmp/morf, the scanner
+        # working dir); the uploads PVC mounts on top at /tmp/morf/uploads.
+        - name: tmp
+          mountPath: /tmp
+        - name: uploads
+          # Match the app's actual upload path (stable deployment uses /tmp/morf/uploads).
+          mountPath: /tmp/morf/uploads
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: morf-uploads-pvc
+---
+# Upload volume for the canary namespace. The PVC in deployment.yaml lives in the
+# "morf" namespace and is not visible here, so the canary needs its own claim or
+# its pod stays Pending (unschedulable). Provision with a CSI driver that supports
+# RWX (e.g. AWS EFS, NFS). For a fully stateless canary, drop this PVC + the volume
+# and set MORF_STORAGE_BACKEND=s3 instead.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: morf-uploads-pvc
+  namespace: morf-canary
+  labels:
+    app: morf
+    version: canary
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  # storageClassName: efs-sc   # uncomment and set to your RWX storage class
+---
+# Canary Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: morf-canary-service
+  namespace: morf-canary
+  labels:
+    app: morf
+    version: canary
+spec:
+  selector:
+    app: morf
+    version: canary
+  ports:
+  - port: 80
+    targetPort: 9092
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+# VirtualService for Istio (if using Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: morf-canary-vs
+  namespace: morf-canary
+spec:
+  hosts:
+  - morf.example.com
+  http:
+  - match:
+    - headers:
+        canary:
+          exact: "true"
+    route:
+    - destination:
+        host: morf-canary-service
+        port:
+          number: 80
+      weight: 100
+  - route:
+    - destination:
+        host: morf-service
+        port:
+          number: 80
+      weight: 90
+    - destination:
+        host: morf-canary-service
+        port:
+          number: 80
+      weight: 10
+---
+# DestinationRule for Istio
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: morf-canary-dr
+  namespace: morf-canary
+spec:
+  host: morf-canary-service
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        maxRetries: 3
+    outlierDetection:
+      consecutiveErrors: 3
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+---
+# Prometheus ServiceMonitor for canary metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: morf-canary-metrics
+  namespace: morf-canary
+  labels:
+    app: morf
+    version: canary
+spec:
+  selector:
+    matchLabels:
+      app: morf
+      version: canary
+  endpoints:
+  - port: http
+    path: /api/metrics  # app exposes metrics at /api/metrics, not /metrics; fixes blind Flagger analysis
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# Canary Analysis Template (for Flagger, if using)
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: morf-canary
+  namespace: morf-canary
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: morf-canary
+  service:
+    port: 80
+    targetPort: 9092
+  analysis:
+    interval: 1m
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+    metrics:
+    - name: request-success-rate
+      thresholdRange:
+        min: 99
+      interval: 1m
+    - name: request-duration
+      thresholdRange:
+        max: 500
+      interval: 1m
+    - name: error-rate
+      thresholdRange:
+        max: 0.5
+      interval: 1m
+    webhooks:
+    - name: load-test
+      url: http://flagger-loadtester.morf-canary/
+      timeout: 5s
+      metadata:
+        cmd: "hey -z 1m -q 10 -c 2 http://morf-canary-service.morf-canary/"
+
