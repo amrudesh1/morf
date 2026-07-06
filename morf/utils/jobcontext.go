@@ -69,7 +69,7 @@ func (jc *JobContext) CreateWorkspace() error {
 	}
 
 	for _, dir := range dirs {
-		if err := jc.fs.MkdirAll(dir, 0755); err != nil {
+		if err := jc.fs.MkdirAll(dir, 0700); err != nil {
 			log.WithFields(log.Fields{
 				"job_id": jc.JobID,
 				"dir":    dir,

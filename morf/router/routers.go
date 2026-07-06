@@ -1273,7 +1273,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			"filename":   filename,
 		}).Info("Getting pattern file")
 
-		patterns, err := utils.LoadPatternsFromFile(filepath.Join(utils.GetPatternsDir(), filename))
+		patterns, err := utils.LoadPatternsByFilename(filename)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"request_id": requestID,
@@ -1315,7 +1315,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		}).Info("Testing pattern")
 
 		// Load patterns
-		patterns, err := utils.LoadPatternsFromFile(filepath.Join(utils.GetPatternsDir(), filename))
+		patterns, err := utils.LoadPatternsByFilename(filename)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": fmt.Sprintf("Pattern file not found: %s", err.Error()),
