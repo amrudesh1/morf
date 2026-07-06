@@ -72,7 +72,7 @@ RUN apt-get update && \
 RUN mkdir -p /app/tools && \
     mkdir -p /tmp/morf/input && \
     mkdir -p /tmp/morf/output && \
-    chmod -R 777 /tmp/morf
+    chmod -R 700 /tmp/morf
 
 # Copy binary from builder (stripped and optimized)
 COPY --from=go-builder /app/morf /usr/local/bin/morf
