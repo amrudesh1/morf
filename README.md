@@ -42,6 +42,12 @@
 
 MORF is an advanced **mobile security analysis tool** that automatically discovers sensitive information within Android and iOS applications. Designed for security professionals, penetration testers, and developers, MORF provides comprehensive insights into mobile app security posture.
 
+> **v2 architecture:** MORF now runs as a scalable service — a **Redis-backed job queue + worker pool** (scans are async, retrieved by `jobID`), **API-key authentication + rate limiting**, **Prometheus/Grafana** observability, a **normalized MySQL schema**, runtime **pattern management** (`/api/patterns` CRUD + UI), plus PDF export, scan comparison, webhooks, zip-bomb protection, caching, and S3 storage. The binary is multi-mode: `morf server` (API + workers), `morf api`, `morf worker`, `morf migrate`, `morf apikey`. See [README-LOCAL.md](README-LOCAL.md) and `morf/docs/` for details.
+
+> **⚠️ Known issues**
+> - **MySQL 8 + AutoMigrate:** `morf server` against a fresh MySQL 8 fails migration with `JSON column 'meta_activities' can't have a default value`, disabling the DB layer. Workaround: run with `MORF_DISABLE_AUTO_MIGRATE=true` and `./morf migrate`, or fix the GORM model tag.
+> - **Apple Silicon:** build the backend image for arm64 (`--build-arg TARGETARCH=arm64` / `--platform linux/arm64`); the default amd64 binary crashes under emulation.
+
 <p align="center">
   <img src="https://github.com/amrudesh1/MORF/assets/20198748/1fec6d18-e279-4a8a-b63c-01a1d66c20a2" width="800" alt="MORF Demo"/>
 </p>
@@ -110,10 +116,31 @@ MORF combines a Go backend with an Angular frontend for powerful analysis with a
 
 ### Method 1: Docker (Recommended)
 
+**For macOS users**, see [README-LOCAL.md](README-LOCAL.md) for detailed local development guide.
+
 ```bash
+# Clone the repository
 git clone https://github.com/amrudesh1/morf
-cd morf
-docker-compose up --build
+cd MORF
+
+# Start all services (MySQL, Redis, Backend, Frontend)
+./run-local.sh start
+
+# Or using docker-compose directly
+docker-compose up -d
+```
+
+**Services will be available at:**
+- Frontend: http://localhost
+- Backend API: http://localhost:9092/api
+- Health Check: http://localhost:9092/api/health
+
+**Common commands:**
+```bash
+./run-local.sh start    # Start all services
+./run-local.sh stop     # Stop all services
+./run-local.sh status   # Check service status
+./run-local.sh logs     # View logs
 ```
 
 ### Method 2: Run Script
