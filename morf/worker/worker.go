@@ -131,6 +131,24 @@ func deleteUploadedArtifact(job *models.ScanJob) {
 	}).Info("Deleted uploaded APK from storage")
 }
 
+// jobLogFields builds the base structured-log field set for a loaded job. It
+// carries worker_id + job_id and, crucially, re-attaches the originating
+// request_id captured at enqueue (models.ScanJob.RequestID) so a scan's async
+// log lines can be correlated back to the HTTP upload that produced them
+// across the queue boundary. request_id is omitted when the job carries none
+// (e.g. legacy jobs enqueued before this field existed) to avoid noisy empty
+// fields.
+func jobLogFields(workerID string, job *models.ScanJob) log.Fields {
+	f := log.Fields{
+		"worker_id": workerID,
+		"job_id":    job.ID,
+	}
+	if job.RequestID != "" {
+		f["request_id"] = job.RequestID
+	}
+	return f
+}
+
 // isRetryable classifies a scan error as transient (worth retrying) or
 // deterministic (will fail identically on every attempt, so retrying only wastes
 // work and delays the inevitable DLQ). CONC-4.
@@ -339,12 +357,18 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 	// Ack defer removes the processing entry.
 	defer func() {
 		if r := recover(); r != nil {
-			log.WithFields(log.Fields{
+			// Include request_id when the job was already loaded (job != nil) so
+			// even a panic is traceable back to the originating upload.
+			fields := log.Fields{
 				"worker_id": workerID,
 				"job_id":    jobID,
 				"panic":     fmt.Sprintf("%v", r),
 				"stack":     string(debug.Stack()),
-			}).Error("Recovered from panic while processing job")
+			}
+			if job != nil && job.RequestID != "" {
+				fields["request_id"] = job.RequestID
+			}
+			log.WithFields(fields).Error("Recovered from panic while processing job")
 			if job != nil {
 				ackJob = w.handleJobFailure(ctx, workerID, job, fmt.Errorf("panic in scan: %v", r))
 			}
@@ -407,11 +431,9 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 	// return immediately rather than reprocessing. Cancelled is handled just below
 	// (it additionally drops the uploaded artifact).
 	if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusFailed {
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    jobID,
-			"status":    string(job.Status),
-		}).Info("Job already terminal on redelivery; acking without reprocessing (idempotency)")
+		fields := jobLogFields(workerID, job)
+		fields["status"] = string(job.Status)
+		log.WithFields(fields).Info("Job already terminal on redelivery; acking without reprocessing (idempotency)")
 		// ackJob is already true (the deferred Ack will remove it from the
 		// processing list). Nothing else to do.
 		return
@@ -419,10 +441,7 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 
 	// Check if job is cancelled
 	if job.Status == models.JobStatusCancelled {
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    jobID,
-		}).Info("Job was cancelled, skipping")
+		log.WithFields(jobLogFields(workerID, job)).Info("Job was cancelled, skipping")
 		// DISK-1: a cancelled job is terminal; drop its uploaded artifact.
 		deleteUploadedArtifact(job)
 		return
@@ -434,11 +453,9 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 	job.StartedAt = &now
 	job.WorkerID = workerID
 	if err := w.queue.UpdateJob(job); err != nil {
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    jobID,
-			"error":     err.Error(),
-		}).Error("Failed to update job status")
+		fields := jobLogFields(workerID, job)
+		fields["error"] = err.Error()
+		log.WithFields(fields).Error("Failed to update job status")
 		return
 	}
 
@@ -447,11 +464,9 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 	// terminal write is fenced off (see handleJobSuccess). Best-effort: a lease
 	// error does not abort the scan.
 	if err := w.queue.SetJobLease(jobID, workerID); err != nil {
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    jobID,
-			"error":     err.Error(),
-		}).Warn("Failed to set job lease (continuing; fencing degraded)")
+		fields := jobLogFields(workerID, job)
+		fields["error"] = err.Error()
+		log.WithFields(fields).Warn("Failed to set job lease (continuing; fencing degraded)")
 	}
 
 	// Create timeout context for scan (default 30 minutes, configurable per job)
@@ -487,10 +502,7 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 				return
 			case <-ticker.C:
 				if j, gerr := w.queue.GetJob(jobID); gerr == nil && j.Status == models.JobStatusCancelled {
-					log.WithFields(log.Fields{
-						"worker_id": workerID,
-						"job_id":    jobID,
-					}).Info("Job cancelled by user; aborting scan")
+					log.WithFields(jobLogFields(workerID, job)).Info("Job cancelled by user; aborting scan")
 					scanCancel()
 					return
 				}
@@ -506,10 +518,7 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 	// Ack out cleanly. Fail-open: a missing/unreadable lease (err != nil) does NOT
 	// abort the scan, so a transient lease-read blip never drops legitimate work.
 	if owns, lerr := w.queue.CheckJobLease(jobID, workerID); lerr == nil && !owns {
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    jobID,
-		}).Warn("Job lease taken over by another worker before scan; abandoning without reprocessing")
+		log.WithFields(jobLogFields(workerID, job)).Warn("Job lease taken over by another worker before scan; abandoning without reprocessing")
 		// ackJob remains true: remove this stale delivery from our processing list.
 		return
 	}
@@ -524,10 +533,7 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 		// Check if job was cancelled (terminal — do not treat as a failure to retry).
 		updatedJob, getErr := w.queue.GetJob(jobID)
 		if getErr == nil && updatedJob.Status == models.JobStatusCancelled {
-			log.WithFields(log.Fields{
-				"worker_id": workerID,
-				"job_id":    jobID,
-			}).Info("Job was cancelled, skipping failure handling")
+			log.WithFields(jobLogFields(workerID, job)).Info("Job was cancelled, skipping failure handling")
 			// DISK-1: cancelled is terminal; remove its uploaded artifact.
 			deleteUploadedArtifact(job)
 			return
@@ -548,7 +554,12 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 // can break down per-phase latency without parsing free-form messages.
 func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error) {
 	scanStart := time.Now()
+	// Seed the timings field set with job_id and the originating request_id (when
+	// present) so every per-phase timing line is correlated to the upload.
 	timings := log.Fields{"job_id": job.ID}
+	if job.RequestID != "" {
+		timings["request_id"] = job.RequestID
+	}
 
 	// Create job context. MED-ioFactor(2): key the on-disk workspace directory on
 	// the job ID (deterministic) rather than a random UUID, so a stray workspace
@@ -627,10 +638,9 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 			}
 			// Parse failed: fall through to a full metadata+secret scan WITHOUT
 			// recording a duplicate metric or timings line (Row 030).
-			log.WithFields(log.Fields{
-				"job_id": job.ID,
-				"error":  err.Error(),
-			}).Warn("Failed to parse existing duplicate secret; falling through to full scan")
+			dupFields := jobLogFields(job.WorkerID, job)
+			dupFields["error"] = err.Error()
+			log.WithFields(dupFields).Warn("Failed to parse existing duplicate secret; falling through to full scan")
 		}
 	}
 
@@ -818,10 +828,7 @@ func (w *Worker) handleJobSuccess(ctx context.Context, workerID string, job *mod
 	// current owner's outcome; ack out so this worker stops cleanly. Fail-open: a
 	// missing/unreadable lease (err != nil) does NOT block the write.
 	if owns, err := w.queue.CheckJobLease(job.ID, workerID); err == nil && !owns {
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    job.ID,
-		}).Warn("Job lease taken over by another worker (false-reap); abandoning stale success write")
+		log.WithFields(jobLogFields(workerID, job)).Warn("Job lease taken over by another worker (false-reap); abandoning stale success write")
 		return true
 	}
 
@@ -839,11 +846,9 @@ func (w *Worker) handleJobSuccess(ctx context.Context, workerID string, job *mod
 		// success one) is dispatched — instead of falling through the success tail
 		// (which would record a "success" metric and fire a success webhook for a
 		// job that actually failed).
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    job.ID,
-			"error":     err.Error(),
-		}).Error("Failed to marshal result")
+		mf := jobLogFields(workerID, job)
+		mf["error"] = err.Error()
+		log.WithFields(mf).Error("Failed to marshal result")
 		return w.handleJobFailure(ctx, workerID, job, fmt.Errorf("failed to marshal result: %w", err))
 	}
 
@@ -858,21 +863,16 @@ func (w *Worker) handleJobSuccess(ctx context.Context, workerID string, job *mod
 		// Ack would drop the job from the processing list while Redis still shows
 		// it as in-flight, silently losing it. Returning false leaves it for the
 		// reaper to recover and re-run (at-least-once).
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    job.ID,
-			"error":     err.Error(),
-		}).Error("Failed to persist completed job in Redis; not acking so reaper recovers it")
+		pf := jobLogFields(workerID, job)
+		pf["error"] = err.Error()
+		log.WithFields(pf).Error("Failed to persist completed job in Redis; not acking so reaper recovers it")
 		return false
 	}
 
 	// MED-reaper-fp: terminal success persisted — release the lease.
 	w.queue.ClearJobLease(job.ID)
 
-	log.WithFields(log.Fields{
-		"worker_id": workerID,
-		"job_id":    job.ID,
-	}).Info("Job completed successfully")
+	log.WithFields(jobLogFields(workerID, job)).Info("Job completed successfully")
 
 	metrics.RecordScan("success")
 
@@ -927,11 +927,15 @@ func (w *Worker) deliverWebhook(job *models.ScanJob, result gin.H, isFailure boo
 
 	// Deliver webhook with retry
 	if err := utils.DeliverWebhookWithRetry(job.WebhookURL, job.WebhookSecret, payload); err != nil {
-		log.WithFields(log.Fields{
+		wf := log.Fields{
 			"job_id":      job.ID,
 			"webhook_url": utils.MaskURLForLogging(job.WebhookURL),
 			"error":       err.Error(),
-		}).Error("Failed to deliver webhook after retries")
+		}
+		if job.RequestID != "" {
+			wf["request_id"] = job.RequestID
+		}
+		log.WithFields(wf).Error("Failed to deliver webhook after retries")
 		// MED-webhook-dlq: persist the exhausted delivery to a durable DLQ so it
 		// is not silently lost; an operator can inspect (and later replay) it.
 		if rerr := w.queue.RecordFailedWebhook(queue.FailedWebhook{
@@ -947,10 +951,14 @@ func (w *Worker) deliverWebhook(job *models.ScanJob, result gin.H, isFailure boo
 			}).Warn("Failed to record webhook delivery in webhook DLQ")
 		}
 	} else {
-		log.WithFields(log.Fields{
+		wf := log.Fields{
 			"job_id":      job.ID,
 			"webhook_url": utils.MaskURLForLogging(job.WebhookURL),
-		}).Info("Webhook delivered successfully")
+		}
+		if job.RequestID != "" {
+			wf["request_id"] = job.RequestID
+		}
+		log.WithFields(wf).Info("Webhook delivered successfully")
 	}
 }
 
@@ -970,10 +978,7 @@ func (w *Worker) handleJobFailure(ctx context.Context, workerID string, job *mod
 	// and the job re-delivered elsewhere. Abandon this stale failure transition so
 	// we never overwrite (or wrongly DLQ) a job another worker now owns. Fail-open.
 	if owns, lerr := w.queue.CheckJobLease(job.ID, workerID); lerr == nil && !owns {
-		log.WithFields(log.Fields{
-			"worker_id": workerID,
-			"job_id":    job.ID,
-		}).Warn("Job lease taken over by another worker (false-reap); abandoning stale failure write")
+		log.WithFields(jobLogFields(workerID, job)).Warn("Job lease taken over by another worker (false-reap); abandoning stale failure write")
 		return true
 	}
 
@@ -991,12 +996,10 @@ func (w *Worker) handleJobFailure(ctx context.Context, workerID string, job *mod
 		// CONC-4: sleep an exponential backoff before requeueing so transient
 		// failures are not retried in a tight loop.
 		backoff := retryBackoff(job.RetryCount)
-		log.WithFields(log.Fields{
-			"worker_id":   workerID,
-			"job_id":      job.ID,
-			"retry_count": job.RetryCount,
-			"backoff":     backoff.String(),
-		}).Info("Requeuing failed job for retry after backoff")
+		bf := jobLogFields(workerID, job)
+		bf["retry_count"] = job.RetryCount
+		bf["backoff"] = backoff.String()
+		log.WithFields(bf).Info("Requeuing failed job for retry after backoff")
 		// Row 033: wait the backoff in a context-aware way instead of a blocking
 		// time.Sleep. A bare sleep ran on the Start-loop goroutine, so during it the
 		// worker could not observe ctx cancellation (graceful shutdown) nor exit
@@ -1005,10 +1008,7 @@ func (w *Worker) handleJobFailure(ctx context.Context, workerID string, job *mod
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
-			log.WithFields(log.Fields{
-				"worker_id": workerID,
-				"job_id":    job.ID,
-			}).Info("Shutdown during retry backoff; requeuing immediately")
+			log.WithFields(jobLogFields(workerID, job)).Info("Shutdown during retry backoff; requeuing immediately")
 		}
 
 		job.Status = models.JobStatusQueued
@@ -1022,27 +1022,20 @@ func (w *Worker) handleJobFailure(ctx context.Context, workerID string, job *mod
 			// R-2: the requeue transition did not persist. Do NOT push (the job
 			// state in Redis is inconsistent) and do NOT ack — leave the job in
 			// the processing list so the reaper recovers it instead of dropping it.
-			log.WithFields(log.Fields{
-				"worker_id": workerID,
-				"job_id":    job.ID,
-				"error":     uerr.Error(),
-			}).Error("Failed to persist requeued job in Redis; not acking so reaper recovers it")
+			rf := jobLogFields(workerID, job)
+			rf["error"] = uerr.Error()
+			log.WithFields(rf).Error("Failed to persist requeued job in Redis; not acking so reaper recovers it")
 			ackJob = false
 		}
 		// DISK-1: do NOT delete the uploaded artifact here — the retry needs it.
 	} else {
 		// Non-retryable, or retries exhausted -> dead letter queue.
 		if retryable {
-			log.WithFields(log.Fields{
-				"worker_id": workerID,
-				"job_id":    job.ID,
-			}).Warn("Job failed after max retries, moving to DLQ")
+			log.WithFields(jobLogFields(workerID, job)).Warn("Job failed after max retries, moving to DLQ")
 		} else {
-			log.WithFields(log.Fields{
-				"worker_id": workerID,
-				"job_id":    job.ID,
-				"error":     err.Error(),
-			}).Warn("Job failed with non-retryable error, moving to DLQ")
+			nf := jobLogFields(workerID, job)
+			nf["error"] = err.Error()
+			log.WithFields(nf).Warn("Job failed with non-retryable error, moving to DLQ")
 		}
 
 		if uerr := w.queue.UpdateJob(job); uerr == nil {
@@ -1053,11 +1046,9 @@ func (w *Worker) handleJobFailure(ctx context.Context, workerID string, job *mod
 			// R-2: the DLQ transition did not persist. Do NOT move to DLQ, do NOT
 			// delete the artifact, and do NOT ack — leave the job in the processing
 			// list so the reaper recovers it instead of silently dropping it.
-			log.WithFields(log.Fields{
-				"worker_id": workerID,
-				"job_id":    job.ID,
-				"error":     uerr.Error(),
-			}).Error("Failed to persist DLQ transition in Redis; not acking so reaper recovers it")
+			df := jobLogFields(workerID, job)
+			df["error"] = uerr.Error()
+			log.WithFields(df).Error("Failed to persist DLQ transition in Redis; not acking so reaper recovers it")
 			ackJob = false
 		}
 	}

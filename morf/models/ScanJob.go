@@ -50,6 +50,7 @@ type ScanJob struct {
 	WebhookSecret    string     `json:"webhook_secret,omitempty"` // Secret for webhook signature
 	ScanTimeout      int        `json:"scan_timeout,omitempty"`   // Timeout in seconds (0 = use default)
 	StorageKey       string     `json:"storage_key,omitempty"`    // Object key in the storage backend for the uploaded APK
+	RequestID        string     `json:"request_id,omitempty"`     // Originating HTTP request/correlation ID (X-Request-ID) captured at enqueue, so an upload can be traced to its async scan logs across the queue boundary
 }
 
 // formatTimePtr formats a *time.Time for Redis: RFC3339 when set, empty string when nil.
@@ -99,6 +100,11 @@ func (j *ScanJob) ToMap() map[string]interface{} {
 	}
 	if j.ScanTimeout > 0 {
 		m["scan_timeout"] = j.ScanTimeout
+	}
+	// Correlation ID captured at enqueue; immutable once set, so it is
+	// omitted-when-empty like the other creation-time fields.
+	if j.RequestID != "" {
+		m["request_id"] = j.RequestID
 	}
 	return m
 }
@@ -170,6 +176,9 @@ func (j *ScanJob) FromMap(m map[string]interface{}) error {
 	}
 	if webhookSecret, ok := m["webhook_secret"].(string); ok {
 		j.WebhookSecret = webhookSecret
+	}
+	if requestID, ok := m["request_id"].(string); ok {
+		j.RequestID = requestID
 	}
 	if scanTimeout, ok := m["scan_timeout"].(int); ok {
 		j.ScanTimeout = scanTimeout

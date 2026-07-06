@@ -179,3 +179,48 @@ func TestScanJobStorageKeyRoundTrip(t *testing.T) {
 		t.Errorf("FromMap: StorageKey = %q after clearing, want empty string", restored2.StorageKey)
 	}
 }
+
+// TestScanJobRequestIDRoundTrip verifies the correlation ID (captured at
+// enqueue) survives the ToMap→FromMap Redis round-trip so the worker can
+// re-attach it to scan logs. RequestID is a creation-time immutable field, so
+// unlike StorageKey it is omitted from the map when empty.
+func TestScanJobRequestIDRoundTrip(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+
+	job := &ScanJob{
+		ID:        "job-req-1",
+		Status:    JobStatusQueued,
+		APKPath:   "/tmp/app.apk",
+		CreatedAt: now,
+		RequestID: "req-abc-123",
+	}
+
+	m := job.ToMap()
+	if v, ok := m["request_id"]; !ok {
+		t.Error("ToMap: 'request_id' key missing")
+	} else if v != job.RequestID {
+		t.Errorf("ToMap: 'request_id' = %q, want %q", v, job.RequestID)
+	}
+
+	restored := &ScanJob{}
+	if err := restored.FromMap(m); err != nil {
+		t.Fatalf("FromMap returned error: %v", err)
+	}
+	if restored.RequestID != job.RequestID {
+		t.Errorf("FromMap: RequestID = %q, want %q", restored.RequestID, job.RequestID)
+	}
+
+	// Empty RequestID (legacy jobs) is omitted from the map entirely.
+	job.RequestID = ""
+	m2 := job.ToMap()
+	if _, ok := m2["request_id"]; ok {
+		t.Error("ToMap: 'request_id' key present for empty RequestID; want omitted")
+	}
+	restored2 := &ScanJob{}
+	if err := restored2.FromMap(m2); err != nil {
+		t.Fatalf("FromMap returned error: %v", err)
+	}
+	if restored2.RequestID != "" {
+		t.Errorf("FromMap: RequestID = %q, want empty string", restored2.RequestID)
+	}
+}
