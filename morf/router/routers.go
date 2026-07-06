@@ -976,6 +976,9 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			ScanTimeout:      scanTimeout,
 			WebhookURL:       webhookURL,
 			WebhookSecret:    webhookSecret,
+			// Persist the correlation ID so the async worker can re-attach it to
+			// its scan logs, tracing this upload across the queue boundary.
+			RequestID: requestID,
 		}
 
 		// R-3 + fail-closed admission: publish the job atomically with an ATOMIC
@@ -1197,6 +1200,9 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 				RetryCount:       0,
 				WebhookURL:       webhookURL,
 				WebhookSecret:    webhookSecret,
+				// Persist the correlation ID so the async worker can re-attach it
+				// to its scan logs, tracing this upload across the queue boundary.
+				RequestID: requestID,
 			}
 
 			// R-3 + fail-closed admission: atomic publish with an atomic depth

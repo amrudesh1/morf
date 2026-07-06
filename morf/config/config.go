@@ -311,6 +311,20 @@ func DurationPositive(name string, def time.Duration) time.Duration {
 	return def
 }
 
+// LogFormat returns the desired logrus output format, read from MORF_LOG_FORMAT
+// and normalized (trimmed + lowercased). It returns def when the var is unset or
+// blank. Callers (main.go) map "json" to a JSONFormatter and anything else to the
+// default text formatter, so structured JSON logging can be turned on in
+// production (log aggregators) without a code change while local runs stay text.
+func LogFormat(def string) string {
+	if s, ok := os.LookupEnv("MORF_LOG_FORMAT"); ok {
+		if v := strings.ToLower(strings.TrimSpace(s)); v != "" {
+			return v
+		}
+	}
+	return def
+}
+
 // Bool parses a boolean from env, returning def when unset/blank/invalid.
 func Bool(name string, def bool) bool {
 	if s, ok := os.LookupEnv(name); ok {

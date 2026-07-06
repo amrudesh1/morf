@@ -205,13 +205,30 @@ var migrateCmd = &cobra.Command{
 }
 
 func init() {
-	// Configure logging
-	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp:   true,
-		TimestampFormat: "2006-01-02 15:04:05",
-	})
+	// Configure logging. The formatter is env-gated via MORF_LOG_FORMAT (wired
+	// through the config package): "json" selects logrus' JSONFormatter so log
+	// aggregators can ingest structured lines (and correlation fields like
+	// request_id/job_id become first-class JSON keys), while any other/unset
+	// value keeps the human-readable text formatter for local runs.
+	if config.LogFormat("text") == "json" {
+		log.SetFormatter(&log.JSONFormatter{
+			TimestampFormat: "2006-01-02 15:04:05",
+		})
+	} else {
+		log.SetFormatter(&log.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02 15:04:05",
+		})
+	}
 	log.SetOutput(os.Stdout)
 	log.SetLevel(log.InfoLevel)
+
+	// TODO(observability): wire full OpenTelemetry tracing (spans across the
+	// HTTP upload -> queue -> worker scan boundary, exported via OTLP). For now
+	// correlation is carried by the request_id field: it is captured by
+	// router.CorrelationIDMiddleware, persisted on models.ScanJob at enqueue, and
+	// re-attached to the worker's structured scan logs, so an upload can already
+	// be traced to its scan logs by request_id without a tracing backend.
 
 	rootCmd.AddCommand(cmd.GetCliCmd())
 	rootCmd.AddCommand(cmd.GetAPIKeyCmd())
