@@ -1,0 +1,24 @@
+# Local development override for macOS
+# This file extends docker-compose.yml with macOS-specific optimizations
+services:
+  morf-backend:
+    # macOS-specific volume mounts for better performance
+    volumes:
+      - ./morf/uploads:/app/uploads:cached
+      - ./morf/log:/app/log:cached
+      - ./morf/patterns:/app/patterns:cached
+      - ./morf/db/migrations:/app/db/migrations:cached
+    # Enable hot reload for development (if using air or similar)
+    # environment:
+    #   - AIR_WORKSPACE=/app
+
+  mysql:
+    # macOS-specific MySQL configuration
+    platform: linux/amd64  # Use x86_64 for better compatibility
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_allowed_packet=256M
+      --innodb_buffer_pool_size=512M
+
