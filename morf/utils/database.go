@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"morf/models"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +35,54 @@ import (
 	"github.com/slack-go/slack"
 	"gorm.io/gorm"
 )
+
+// isAllowedJiraHost reports whether host is exactly the approved Jira Cloud
+// domain or a true dotted subdomain of it. Jira Cloud tenants live under
+// *.atlassian.net (NOT atlassian.com). This is stricter than a bare HasSuffix
+// check, which "evilatlassian.net" would wrongly pass.
+func isAllowedJiraHost(host string) bool {
+	h := strings.ToLower(host)
+	return h == "atlassian.net" || strings.HasSuffix(h, ".atlassian.net")
+}
+
+// validateJiraURL parses jiraURL, enforces an https-only scheme, requires the
+// host to be an approved Jira Cloud domain (exact/dotted-suffix match), and
+// resolves the host to reject any private/loopback/link-local/metadata
+// destination so a leaked token cannot be used to reach internal hosts
+// (SSRF / DNS-rebinding defence). It reuses isDisallowedIP from webhook.go.
+func validateJiraURL(jiraURL string) error {
+	parsedURL, err := url.Parse(jiraURL)
+	if err != nil {
+		return fmt.Errorf("invalid JIRA URL: %w", err)
+	}
+	if parsedURL.Scheme != "https" {
+		return fmt.Errorf("JIRA URL must use https scheme")
+	}
+	host := parsedURL.Hostname()
+	if !isAllowedJiraHost(host) {
+		return fmt.Errorf("JIRA URL is not from an approved atlassian.net domain")
+	}
+	// Resolve and reject internal addresses (SSRF protection).
+	if ip := net.ParseIP(host); ip != nil {
+		if isDisallowedIP(ip) {
+			return fmt.Errorf("JIRA URL resolves to a disallowed IP (SSRF protection)")
+		}
+		return nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve JIRA host: %w", err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("JIRA host did not resolve to any address")
+	}
+	for _, ip := range ips {
+		if isDisallowedIP(ip) {
+			return fmt.Errorf("JIRA URL resolves to a disallowed IP (SSRF protection)")
+		}
+	}
+	return nil
+}
 
 // CheckDuplicateInDB checks if an APK has already been scanned using normalized schema.
 // All associations (PackageData + SecretFindings + Activities + Services +
@@ -297,30 +346,14 @@ func commentToJira(jiraModel models.JiraModel, message string) string {
 	// Construct JIRA API URL
 	jiraURL := fmt.Sprintf("%s/rest/api/2/issue/%s/comment", jiraBaseURL, ticketID)
 
-	// Validate final URL is still from allowed domain
-	parsedURL, err := url.Parse(jiraURL)
-	if err != nil {
+	// Validate the final URL: https-only scheme, strict atlassian.net allowlist,
+	// and reject hosts that resolve to private/loopback/link-local/metadata IPs
+	// (SSRF / DNS-rebinding protection). Reuses isDisallowedIP from webhook.go.
+	if err := validateJiraURL(jiraURL); err != nil {
 		log.WithFields(log.Fields{
 			"error": err.Error(),
-		}).Error("Invalid JIRA URL")
-		return "Invalid JIRA URL"
-	}
-
-	// Check if URL is from allowed domain (prevent SSRF)
-	allowedDomains := []string{"atlassian.com", "jira.com"}
-	hostname := strings.ToLower(parsedURL.Hostname())
-	allowed := false
-	for _, domain := range allowedDomains {
-		if strings.HasSuffix(hostname, domain) {
-			allowed = true
-			break
-		}
-	}
-
-	if !allowed {
-		log.WithFields(log.Fields{
-			"hostname": hostname,
-		}).Error("JIRA URL is not from allowed domain (SSRF protection)")
+			"url":   maskURLForLogging(jiraURL),
+		}).Error("JIRA URL failed SSRF validation")
 		return "JIRA URL not from allowed domain"
 	}
 

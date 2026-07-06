@@ -252,6 +252,19 @@ func GetPatternFileContent(filename string) ([]byte, error) {
 	return ReadFile(GetAppFS(), fullPath)
 }
 
+// LoadPatternsByFilename loads patterns given a user-supplied filename, routing
+// it through resolvePatternPath first so the same .yaml/.yml extension +
+// traversal allowlist enforced on the mutation routes also applies to reads.
+// Callers with an untrusted filename (e.g. HTTP route params) must use this
+// instead of LoadPatternsFromFile with a hand-joined path.
+func LoadPatternsByFilename(filename string) ([]Pattern, error) {
+	fullPath, err := resolvePatternPath(filename)
+	if err != nil {
+		return nil, err
+	}
+	return LoadPatternsFromFile(fullPath)
+}
+
 // UpdatePatternFile updates a pattern file
 func UpdatePatternFile(filename string, patterns []Pattern) error {
 	// Validate all patterns
