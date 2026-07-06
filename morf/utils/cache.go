@@ -57,15 +57,37 @@ const (
 // pick up the new version without scanning. Atomic for concurrent access.
 var patternVersion atomic.Int64
 
+// redisDo runs a non-blocking Redis operation through the "redis" circuit
+// breaker (SC-1). fn must return the operation's error verbatim EXCEPT that a
+// redis.Nil (cache miss / key absent) is NOT a breaker failure and must be
+// mapped to nil by the caller before returning it from fn; redisDo itself does
+// not know about redis.Nil, so callers that treat Nil specially should capture
+// it in a closure variable rather than returning it. Do is fail-open, so before
+// InitCircuitBreakers runs (or if the "redis" breaker is unregistered) fn is
+// invoked directly.
+func redisDo(fn func() error) error {
+	return Do("redis", fn)
+}
+
 func loadPatternVersion(ctx context.Context) int64 {
 	client := getRedisClient()
 	if client == nil {
 		return 0
 	}
-	v, err := client.Get(ctx, patternVersionKey).Int64()
-	if err == redis.Nil {
-		return 0
-	}
+	var v int64
+	err := redisDo(func() error {
+		got, gerr := client.Get(ctx, patternVersionKey).Int64()
+		if gerr == redis.Nil {
+			// Absent key is not a breaker failure; report success with v==0.
+			v = 0
+			return nil
+		}
+		if gerr != nil {
+			return gerr
+		}
+		v = got
+		return nil
+	})
 	if err != nil {
 		log.WithFields(log.Fields{"error": err.Error()}).Debug("Failed to load pattern version")
 		return patternVersion.Load()
@@ -204,8 +226,21 @@ func GetMetadataFromCache(apkHash string) (models.MetaDataModel, bool) {
 	defer cancel()
 
 	key := metadataKey(apkHash)
-	data, err := client.Get(ctx, key).Result()
-	if err == redis.Nil {
+	var data string
+	miss := false
+	err := redisDo(func() error {
+		got, gerr := client.Get(ctx, key).Result()
+		if gerr == redis.Nil {
+			miss = true
+			return nil
+		}
+		if gerr != nil {
+			return gerr
+		}
+		data = got
+		return nil
+	})
+	if miss {
 		// On a miss, refresh the local patternVersion from Redis before
 		// reporting a miss. A pod that dropped a pub/sub invalidation may be
 		// reading from a stale (lower) version prefix; re-syncing here makes
@@ -252,7 +287,9 @@ func SetMetadataInCache(apkHash string, metadata models.MetaDataModel) error {
 	}
 
 	key := metadataKey(apkHash)
-	if err := client.Set(ctx, key, data, metadataCacheTTL).Err(); err != nil {
+	if err := redisDo(func() error {
+		return client.Set(ctx, key, data, metadataCacheTTL).Err()
+	}); err != nil {
 		log.WithFields(log.Fields{
 			"apk_hash": apkHash,
 			"error":    err.Error(),
@@ -278,8 +315,21 @@ func GetPackageDataFromCache(apkHash string) (models.PackageDataModel, bool) {
 	defer cancel()
 
 	key := packageDataKey(apkHash)
-	data, err := client.Get(ctx, key).Result()
-	if err == redis.Nil {
+	var data string
+	miss := false
+	err := redisDo(func() error {
+		got, gerr := client.Get(ctx, key).Result()
+		if gerr == redis.Nil {
+			miss = true
+			return nil
+		}
+		if gerr != nil {
+			return gerr
+		}
+		data = got
+		return nil
+	})
+	if miss {
 		return models.PackageDataModel{}, false
 	}
 	if err != nil {
@@ -321,7 +371,9 @@ func SetPackageDataInCache(apkHash string, packageData models.PackageDataModel) 
 	}
 
 	key := packageDataKey(apkHash)
-	if err := client.Set(ctx, key, data, metadataCacheTTL).Err(); err != nil {
+	if err := redisDo(func() error {
+		return client.Set(ctx, key, data, metadataCacheTTL).Err()
+	}); err != nil {
 		log.WithFields(log.Fields{
 			"apk_hash": apkHash,
 			"error":    err.Error(),
@@ -349,8 +401,15 @@ func InvalidateAllMetadataCache() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	v, err := client.Incr(ctx, patternVersionKey).Result()
-	if err != nil {
+	var v int64
+	if err := redisDo(func() error {
+		got, ierr := client.Incr(ctx, patternVersionKey).Result()
+		if ierr != nil {
+			return ierr
+		}
+		v = got
+		return nil
+	}); err != nil {
 		log.WithFields(log.Fields{"error": err.Error()}).Warn("Failed to bump pattern version")
 		return err
 	}
@@ -377,7 +436,9 @@ func publishInvalidation(ctx context.Context, key string) {
 	if client == nil {
 		return
 	}
-	if err := client.Publish(ctx, cacheInvalidateChannel, key).Err(); err != nil {
+	if err := redisDo(func() error {
+		return client.Publish(ctx, cacheInvalidateChannel, key).Err()
+	}); err != nil {
 		log.WithFields(log.Fields{
 			"channel": cacheInvalidateChannel,
 			"key":     key,

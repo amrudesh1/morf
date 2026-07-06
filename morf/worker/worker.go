@@ -19,6 +19,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"morf/apk"
@@ -142,10 +143,26 @@ func deleteUploadedArtifact(job *models.ScanJob) {
 // Everything else (subprocess timeouts that did not originate in decompilation,
 // transient I/O, Redis/storage hiccups, a momentarily-missing artifact) is treated
 // as retryable and requeued with backoff.
+//
+// Classification is now typed-error-first: deterministic producers wrap their
+// error with utils.ErrNonRetryable, so this checks errors.Is BEFORE falling back
+// to the legacy substring heuristics. The substring fallback is retained only so
+// errors constructed elsewhere (or in older tests) without the sentinel still
+// classify correctly; new code should wrap with utils.ErrNonRetryable rather than
+// relying on the message text.
 func isRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Typed sentinel takes precedence over any string heuristic.
+	if errors.Is(err, utils.ErrNonRetryable) {
+		return false
+	}
+	if errors.Is(err, utils.ErrRetryable) {
+		return true
+	}
+	// Legacy fallback: substring match for deterministic failures produced
+	// without the sentinel.
 	msg := strings.ToLower(err.Error())
 	nonRetryable := []string{
 		"safety check failed",  // CheckAPKSafe / zip-bomb rejection (deterministic)
@@ -160,12 +177,30 @@ func isRetryable(err error) bool {
 	return true
 }
 
+// retryTuning holds the config-driven retry knobs for the worker's failure
+// handling. Read once at package init so a hot loop does not re-parse env on
+// every failure. Overridable via:
+//   - MORF_WORKER_MAX_RETRIES     (int,      default 3)
+//   - MORF_WORKER_RETRY_BASE      (duration, default 2s)
+//   - MORF_WORKER_RETRY_MAX       (duration, default 30s)
+var (
+	workerMaxRetries  = envInt("MORF_WORKER_MAX_RETRIES", 3)
+	workerRetryBase   = envDuration("MORF_WORKER_RETRY_BASE", 2*time.Second)
+	workerRetryMaxDur = envDuration("MORF_WORKER_RETRY_MAX", 30*time.Second)
+)
+
 // retryBackoff returns an exponential delay keyed on the (1-based) retry count so
-// transient failures are not requeued in a tight loop. Capped to keep a worker
-// from sleeping for an unbounded time.
+// transient failures are not requeued in a tight loop. Capped (workerRetryMaxDur)
+// to keep a worker from sleeping for an unbounded time.
 func retryBackoff(retryCount int) time.Duration {
-	const base = 2 * time.Second
-	const max = 30 * time.Second
+	base := workerRetryBase
+	max := workerRetryMaxDur
+	if base <= 0 {
+		base = 2 * time.Second
+	}
+	if max <= 0 {
+		max = 30 * time.Second
+	}
 	d := base
 	for i := 1; i < retryCount; i++ {
 		d *= 2
@@ -362,6 +397,26 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 		return
 	}
 
+	// IDEMPOTENCY SHORT-CIRCUIT (at-least-once redelivery): the reliable queue
+	// guarantees at-least-once delivery, so a job that already reached a terminal
+	// state (completed or failed) can be re-delivered — e.g. a worker finished the
+	// work and persisted the result but crashed BEFORE Ack, leaving the job in its
+	// processing list for the reaper to requeue. Re-running it would duplicate all
+	// the work (decompile + scan + DB writes) and overwrite a good result. If the
+	// job is already terminal, Ack it (remove it from the processing list) and
+	// return immediately rather than reprocessing. Cancelled is handled just below
+	// (it additionally drops the uploaded artifact).
+	if job.Status == models.JobStatusCompleted || job.Status == models.JobStatusFailed {
+		log.WithFields(log.Fields{
+			"worker_id": workerID,
+			"job_id":    jobID,
+			"status":    string(job.Status),
+		}).Info("Job already terminal on redelivery; acking without reprocessing (idempotency)")
+		// ackJob is already true (the deferred Ack will remove it from the
+		// processing list). Nothing else to do.
+		return
+	}
+
 	// Check if job is cancelled
 	if job.Status == models.JobStatusCancelled {
 		log.WithFields(log.Fields{
@@ -443,6 +498,22 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 		}
 	}()
 
+	// MED-reaper-fp: verify we still OWN the lease BEFORE the expensive
+	// decompile/scan, not only before the terminal write. If this worker was
+	// falsely reaped and the job re-delivered to another worker that has since
+	// taken the lease, there is no point spending a full decompile + scan whose
+	// result would be fenced off at the terminal write anyway — abandon early and
+	// Ack out cleanly. Fail-open: a missing/unreadable lease (err != nil) does NOT
+	// abort the scan, so a transient lease-read blip never drops legitimate work.
+	if owns, lerr := w.queue.CheckJobLease(jobID, workerID); lerr == nil && !owns {
+		log.WithFields(log.Fields{
+			"worker_id": workerID,
+			"job_id":    jobID,
+		}).Warn("Job lease taken over by another worker before scan; abandoning without reprocessing")
+		// ackJob remains true: remove this stale delivery from our processing list.
+		return
+	}
+
 	// Process the APK with timeout
 	result, err := w.scanAPK(scanCtx, job)
 	if err != nil {
@@ -519,9 +590,11 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 
 	// S-5: gate every job on the zip-bomb / zip-slip check at the EARLIEST per-job
 	// entry — before the duplicate lookup, metadata extraction, or any JVM/tool
-	// runs on the bytes. A failure here fails the job deterministically.
+	// runs on the bytes. A failure here fails the job deterministically. Tag it
+	// with ErrNonRetryable so isRetryable classifies it via errors.Is (typed),
+	// not the message text.
 	if err := utils.CheckAPKSafe(localPath); err != nil {
-		return nil, fmt.Errorf("safety check failed: %w", err)
+		return nil, fmt.Errorf("safety check failed: %w: %w", utils.ErrNonRetryable, err)
 	}
 
 	// Check for duplicate (hash is computed from the resolved local file).
@@ -910,7 +983,7 @@ func (w *Worker) handleJobFailure(ctx context.Context, workerID string, job *mod
 	job.Error = err.Error()
 	job.RetryCount++
 
-	maxRetries := 3
+	maxRetries := workerMaxRetries
 	retryable := isRetryable(err)
 	ackJob := true
 

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"morf/models"
+	"morf/utils"
 	"os"
 	"time"
 
@@ -32,15 +33,28 @@ import (
 // SC-1 (single-Redis SPOF): this queue is backed by ONE Redis client. Redis is
 // therefore a single point of failure and a single point of contention for the
 // whole job pipeline — if it is down, slow, or partitioned, every producer and
-// worker stalls. There is no replica failover or local fallback here. To keep a
-// hung Redis from wedging goroutines indefinitely, every NON-blocking Redis call
-// is bounded by a per-op timeout (see opCtx / MORF_REDIS_OP_TIMEOUT) so the op
-// is sheddable. The intentionally-blocking BLMOVE dequeue in PopJobReliable is
-// the one exception: it keeps its own (caller-supplied) block timeout.
+// worker stalls. There is no replica failover or local fallback here. Two
+// mitigations bound the blast radius:
+//   - every NON-blocking Redis call is bounded by a per-op timeout (see opCtx /
+//     MORF_REDIS_OP_TIMEOUT) so a hung op is sheddable; and
+//   - every NON-blocking Redis call is routed through the shared "redis" circuit
+//     breaker via redisDo (utils.Do): when Redis is repeatedly failing the
+//     breaker opens and sheds those ops immediately (fast-fail) instead of every
+//     goroutine piling onto a hung Redis, and the breaker's open state is
+//     surfaced in GET /ready so K8s stops routing to a pod whose Redis is down.
+// The intentionally-blocking BLMOVE dequeue in PopJobReliable is exempt from
+// both: it keeps its own (caller-supplied) block timeout and is not run through
+// the breaker (a normal empty-queue wait must not count as a failure).
 
 var (
 	// ErrNoJob is returned when no job is available
 	ErrNoJob = errors.New("no job available")
+
+	// ErrQueueFull is returned by EnqueueJobAtomicWithLimit when admitting the
+	// job would push the main queue past the caller-supplied depth limit. It lets
+	// upload admission fail-closed (reject with 429) using the queue's OWN atomic
+	// depth check, closing the check-then-enqueue race.
+	ErrQueueFull = errors.New("queue is full")
 )
 
 // defaultOpTimeout bounds a single non-blocking Redis operation. Overridable via
@@ -67,17 +81,132 @@ func (q *JobQueue) opCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(q.ctx, redisOpTimeout())
 }
 
+// redisDo runs a NON-blocking Redis op through the shared "redis" circuit
+// breaker (SC-1). When Redis is repeatedly failing the breaker opens and sheds
+// these ops immediately (fast-fail) rather than every producer/worker piling
+// onto a hung Redis; the breaker's open state is also surfaced in GET /ready.
+// utils.Do is fail-open, so before InitCircuitBreakers runs (or if the breaker
+// is unregistered) fn executes unchanged.
+//
+// A redis.Nil (key-absent / miss) is a normal outcome, NOT a downstream
+// failure, so callers whose op can return redis.Nil must swallow it inside fn
+// (return nil) and surface the miss via a captured variable — otherwise a burst
+// of legitimate cache misses would wrongly trip the breaker. The
+// intentionally-blocking BLMOVE dequeue in PopJobReliable is exempt (it must
+// not be counted as a failure while it is simply waiting for work).
+func redisDo(fn func() error) error {
+	return utils.Do("redis", fn)
+}
+
 // enqueueScript atomically publishes a job (R-3). It performs, as one unit:
-//   HSET job hash, SADD status:queued, EXPIRE the hash, RPUSH onto job_queue.
+//
+//	HSET job hash, SADD status:queued, EXPIRE the hash, RPUSH onto job_queue.
+//
 // Running these together means a crash can never leave a job in status:queued
 // without it also being on job_queue (or vice versa).
-//   KEYS[1] = job hash key, KEYS[2] = status set key, KEYS[3] = job_queue list
-//   ARGV[1] = jobID, ARGV[2] = ttl seconds, ARGV[3..] = flattened hash field/value pairs
+//
+//	KEYS[1] = job hash key, KEYS[2] = status set key, KEYS[3] = job_queue list
+//	ARGV[1] = jobID, ARGV[2] = ttl seconds, ARGV[3..] = flattened hash field/value pairs
 var enqueueScript = redis.NewScript(`
 redis.call('HSET', KEYS[1], unpack(ARGV, 3))
 redis.call('SADD', KEYS[2], ARGV[1])
 redis.call('EXPIRE', KEYS[1], ARGV[2])
 redis.call('RPUSH', KEYS[3], ARGV[1])
+return 1
+`)
+
+// enqueueWithLimitScript is enqueueScript guarded by an ATOMIC queue-depth
+// admission check. It reads the CURRENT length of job_queue and only publishes
+// the job if admitting `count` more jobs would not exceed `limit`; otherwise it
+// makes NO writes and returns 0. Performing the LLEN check and the RPUSH in one
+// Lua unit closes the check-then-enqueue race (two producers can no longer both
+// observe "room for one" and both enqueue past the limit). A limit <= 0 disables
+// the check (always admits).
+//
+//	KEYS[1] = job hash, KEYS[2] = status set, KEYS[3] = job_queue list
+//	ARGV[1] = jobID, ARGV[2] = ttl seconds, ARGV[3] = limit, ARGV[4] = count,
+//	ARGV[5..] = flattened hash field/value pairs
+//
+// Returns 1 when the job was enqueued, 0 when rejected for being over the limit.
+var enqueueWithLimitScript = redis.NewScript(`
+local limit = tonumber(ARGV[3])
+local count = tonumber(ARGV[4])
+if limit > 0 then
+  local depth = redis.call('LLEN', KEYS[3])
+  if depth + count > limit then
+    return 0
+  end
+end
+redis.call('HSET', KEYS[1], unpack(ARGV, 5))
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+redis.call('RPUSH', KEYS[3], ARGV[1])
+return 1
+`)
+
+// moveToDLQScript atomically moves a job to the DLQ (R-3, mirrors enqueueScript):
+// LPUSH the job onto the DLQ list and SREM it from the queued/processing/failed
+// status sets as ONE unit. Running these together means a crash can never leave
+// a job on the DLQ while still lingering in a status set (or the reverse).
+//
+//	KEYS[1] = DLQ list
+//	KEYS[2] = status:queued set, KEYS[3] = status:processing set, KEYS[4] = status:failed set
+//	ARGV[1] = jobID
+var moveToDLQScript = redis.NewScript(`
+redis.call('LPUSH', KEYS[1], ARGV[1])
+redis.call('SREM', KEYS[2], ARGV[1])
+redis.call('SREM', KEYS[3], ARGV[1])
+redis.call('SREM', KEYS[4], ARGV[1])
+return 1
+`)
+
+// retryDLQRemoveScript atomically removes a job from the DLQ and reports whether
+// it was actually present. This is the first (Redis-only) half of RetryDLQJob;
+// resetting the job hash + re-enqueue reuse the existing atomic UpdateJob/
+// EnqueueJobAtomic paths. Making the DLQ removal + presence check one unit means
+// two concurrent retriers cannot both re-enqueue the same job: only the caller
+// whose LREM removed an element (return 1) proceeds; the loser gets 0.
+//
+//	KEYS[1] = DLQ list
+//	ARGV[1] = jobID
+var retryDLQRemoveScript = redis.NewScript(`
+local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])
+if removed == 0 then
+  return 0
+end
+return 1
+`)
+
+// cancelJobScript atomically transitions a queued/processing job to cancelled:
+// it re-reads the CURRENT status inside Redis (so it cannot act on a stale
+// caller read), rejects the cancel if the job is not queued/processing, writes
+// the cancelled fields onto the hash, fixes the status sets, and LREMs the job
+// from the main queue when it was queued — all as ONE unit. This removes the
+// read-modify-write race in the previous multi-step CancelJob (a job could be
+// picked up by a worker between the caller's GetJob and the LREM).
+//
+//	KEYS[1] = job hash, KEYS[2] = job_queue list
+//	KEYS[3] = status:queued, KEYS[4] = status:processing, KEYS[5] = status:cancelled
+//	ARGV[1] = jobID, ARGV[2] = cancelled-status string,
+//	ARGV[3] = failed_at (RFC3339), ARGV[4] = error message
+//
+// Returns: 1 on success, 0 if the job hash is missing, -1 if the status is not
+// cancellable (queued/processing).
+var cancelJobScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+local status = redis.call('HGET', KEYS[1], 'status')
+if status ~= 'queued' and status ~= 'processing' then
+  return -1
+end
+redis.call('HSET', KEYS[1], 'status', ARGV[2], 'failed_at', ARGV[3], 'error', ARGV[4])
+redis.call('SREM', KEYS[3], ARGV[1])
+redis.call('SREM', KEYS[4], ARGV[1])
+redis.call('SADD', KEYS[5], ARGV[1])
+if status == 'queued' then
+  redis.call('LREM', KEYS[2], 1, ARGV[1])
+end
 return 1
 `)
 
@@ -167,8 +296,58 @@ func (q *JobQueue) EnqueueJobAtomic(job *models.ScanJob) error {
 
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	if err := enqueueScript.Run(ctx, q.client, []string{jobKey, statusKey, jobQueueKey}, args...).Err(); err != nil {
+	if err := redisDo(func() error {
+		return enqueueScript.Run(ctx, q.client, []string{jobKey, statusKey, jobQueueKey}, args...).Err()
+	}); err != nil {
 		return fmt.Errorf("failed to atomically enqueue job: %v", err)
+	}
+	return nil
+}
+
+// EnqueueJobAtomicWithLimit publishes a job exactly like EnqueueJobAtomic but
+// FAIL-CLOSED under backpressure: it performs the queue-depth admission check
+// and the publish as ONE atomic Lua unit (enqueueWithLimitScript).
+//
+//   - If admitting `count` more jobs would push the main queue past `limit`, the
+//     job is NOT written and ErrQueueFull is returned.
+//   - If Redis itself errors (or the "redis" breaker is open), the error is
+//     returned and the caller must reject the request — there is no silent admit.
+//   - A limit <= 0 disables the depth check (always admits).
+//
+// `count` is the number of jobs this admission represents against the limit
+// (1 for a single upload; the batch size for a bulk upload) so a whole batch is
+// admitted-or-rejected against the same atomic snapshot of the queue depth.
+//
+// This closes the check-then-enqueue race in the previous router flow, where
+// GetQueueDepth + EnqueueJobAtomic were two separate round-trips and a depth
+// error was (wrongly) treated as "admit".
+func (q *JobQueue) EnqueueJobAtomicWithLimit(job *models.ScanJob, limit, count int) error {
+	jobKey := fmt.Sprintf("morf:jobs:%s", job.ID)
+	statusKey := fmt.Sprintf("morf:jobs:status:%s", job.Status)
+	ttlSeconds := int(7 * 24 * time.Hour / time.Second)
+
+	hash := job.ToMap()
+	args := make([]interface{}, 0, 4+2*len(hash))
+	args = append(args, job.ID, ttlSeconds, limit, count)
+	for k, v := range hash {
+		args = append(args, k, v)
+	}
+
+	ctx, cancel := q.opCtx()
+	defer cancel()
+	var admitted int64
+	if err := redisDo(func() error {
+		got, rerr := enqueueWithLimitScript.Run(ctx, q.client, []string{jobKey, statusKey, jobQueueKey}, args...).Int64()
+		if rerr != nil {
+			return rerr
+		}
+		admitted = got
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to atomically enqueue job: %v", err)
+	}
+	if admitted == 0 {
+		return ErrQueueFull
 	}
 	return nil
 }
@@ -277,7 +456,9 @@ func jobLeaseKey(jobID string) string { return fmt.Sprintf("morf:jobs:lease:%s",
 func (q *JobQueue) SetJobLease(jobID, workerID string) error {
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	return q.client.Set(ctx, jobLeaseKey(jobID), workerID, jobLeaseTTL).Err()
+	return redisDo(func() error {
+		return q.client.Set(ctx, jobLeaseKey(jobID), workerID, jobLeaseTTL).Err()
+	})
 }
 
 // CheckJobLease reports whether workerID still owns jobID's lease. A missing
@@ -287,12 +468,25 @@ func (q *JobQueue) SetJobLease(jobID, workerID string) error {
 func (q *JobQueue) CheckJobLease(jobID, workerID string) (bool, error) {
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	owner, err := q.client.Get(ctx, jobLeaseKey(jobID)).Result()
-	if err == redis.Nil {
-		return true, nil
-	}
+	var owner string
+	err := redisDo(func() error {
+		got, gerr := q.client.Get(ctx, jobLeaseKey(jobID)).Result()
+		if gerr == redis.Nil {
+			// Absent lease is a normal fail-open case, not a breaker failure.
+			return nil
+		}
+		if gerr != nil {
+			return gerr
+		}
+		owner = got
+		return nil
+	})
 	if err != nil {
 		return true, err
+	}
+	// owner == "" means the lease was absent (redis.Nil) -> fail-open (true).
+	if owner == "" {
+		return true, nil
 	}
 	return owner == workerID, nil
 }
@@ -307,11 +501,16 @@ func (q *JobQueue) ClearJobLease(jobID string) {
 func (q *JobQueue) PushJob(jobID string) error {
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	return q.client.RPush(ctx, jobQueueKey, jobID).Err()
+	return redisDo(func() error {
+		return q.client.RPush(ctx, jobQueueKey, jobID).Err()
+	})
 }
 
 // jobQueueKey is the main FIFO queue list key.
 const jobQueueKey = "morf:job_queue"
+
+// dlqKey is the dead-letter-queue list key.
+const dlqKey = "morf:dlq"
 
 // processingKey returns the per-worker in-flight ("processing") list key.
 // Pure helper, unit-tested in queue_test.go.
@@ -354,7 +553,9 @@ func (q *JobQueue) PopJobReliable(timeout time.Duration, workerID string) (strin
 func (q *JobQueue) AckJob(workerID, jobID string) error {
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	return q.client.LRem(ctx, processingKey(workerID), 1, jobID).Err()
+	return redisDo(func() error {
+		return q.client.LRem(ctx, processingKey(workerID), 1, jobID).Err()
+	})
 }
 
 // RequeueProcessing moves a job from a worker's processing list back onto the
@@ -364,24 +565,26 @@ func (q *JobQueue) AckJob(workerID, jobID string) error {
 func (q *JobQueue) RequeueProcessing(workerID, jobID string) error {
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	n, err := q.client.LRem(ctx, processingKey(workerID), 1, jobID).Result()
-	if err != nil {
-		return fmt.Errorf("failed to remove from processing list: %v", err)
-	}
-	// SCALE-1: only requeue when this call actually removed the job. In a
-	// horizontally scaled fleet every pod runs StartReaper, so two reapers can
-	// sweep the same stale worker concurrently: the first LREM removes the entry
-	// and RPushes, while the second LREM removes 0 elements and must NOT RPush —
-	// otherwise it injects a duplicate jobID into the main queue, breaking the
-	// reliable-queue invariant (a job is in the main queue or exactly one
-	// processing list). Capturing the count makes requeue idempotent.
-	if n == 0 {
+	return redisDo(func() error {
+		n, err := q.client.LRem(ctx, processingKey(workerID), 1, jobID).Result()
+		if err != nil {
+			return fmt.Errorf("failed to remove from processing list: %v", err)
+		}
+		// SCALE-1: only requeue when this call actually removed the job. In a
+		// horizontally scaled fleet every pod runs StartReaper, so two reapers can
+		// sweep the same stale worker concurrently: the first LREM removes the entry
+		// and RPushes, while the second LREM removes 0 elements and must NOT RPush —
+		// otherwise it injects a duplicate jobID into the main queue, breaking the
+		// reliable-queue invariant (a job is in the main queue or exactly one
+		// processing list). Capturing the count makes requeue idempotent.
+		if n == 0 {
+			return nil
+		}
+		if err := q.client.RPush(ctx, jobQueueKey, jobID).Err(); err != nil {
+			return fmt.Errorf("failed to requeue job: %v", err)
+		}
 		return nil
-	}
-	if err := q.client.RPush(ctx, jobQueueKey, jobID).Err(); err != nil {
-		return fmt.Errorf("failed to requeue job: %v", err)
-	}
-	return nil
+	})
 }
 
 // GetJob retrieves a job by ID
@@ -389,8 +592,15 @@ func (q *JobQueue) GetJob(jobID string) (*models.ScanJob, error) {
 	ctx, cancel := q.opCtx()
 	defer cancel()
 	key := fmt.Sprintf("morf:jobs:%s", jobID)
-	result, err := q.client.HGetAll(ctx, key).Result()
-	if err != nil {
+	var result map[string]string
+	if err := redisDo(func() error {
+		got, gerr := q.client.HGetAll(ctx, key).Result()
+		if gerr != nil {
+			return gerr
+		}
+		result = got
+		return nil
+	}); err != nil {
 		return nil, fmt.Errorf("failed to get job: %v", err)
 	}
 	if len(result) == 0 {
@@ -432,8 +642,13 @@ func (q *JobQueue) UpdateJob(job *models.ScanJob) error {
 	// accumulated in their original status set forever).
 	oldStatus, _ := q.client.HGet(ctx, key, "status").Result()
 
-	// Update hash
-	if err := q.client.HSet(ctx, key, job.ToMap()).Err(); err != nil {
+	// Update hash. This is the authoritative write, so it runs through the
+	// "redis" breaker (SC-1); the TTL-refresh + status-set bookkeeping below are
+	// best-effort and already swallow their errors, so they stay outside the
+	// breaker to avoid double-counting a single Redis outage.
+	if err := redisDo(func() error {
+		return q.client.HSet(ctx, key, job.ToMap()).Err()
+	}); err != nil {
 		return fmt.Errorf("failed to update job: %v", err)
 	}
 
@@ -472,23 +687,27 @@ func (q *JobQueue) UpdateJob(job *models.ScanJob) error {
 	return nil
 }
 
-// MoveToDLQ moves a job to the dead letter queue
+// MoveToDLQ moves a job to the dead letter queue.
+//
+// R-3: the LPUSH onto the DLQ and the SREMs from the queued/processing/failed
+// status sets run as ONE atomic Lua unit (moveToDLQScript), so a crash can never
+// leave the job half-moved (on the DLQ but still in a status set, or removed
+// from its status set but never landed on the DLQ).
 func (q *JobQueue) MoveToDLQ(jobID string) error {
 	ctx, cancel := q.opCtx()
 	defer cancel()
 
-	// Add to DLQ
-	if err := q.client.LPush(ctx, "morf:dlq", jobID).Err(); err != nil {
+	keys := []string{
+		dlqKey,
+		fmt.Sprintf("morf:jobs:status:%s", "queued"),
+		fmt.Sprintf("morf:jobs:status:%s", "processing"),
+		fmt.Sprintf("morf:jobs:status:%s", "failed"),
+	}
+	if err := redisDo(func() error {
+		return moveToDLQScript.Run(ctx, q.client, keys, jobID).Err()
+	}); err != nil {
 		return fmt.Errorf("failed to move to DLQ: %v", err)
 	}
-
-	// Remove from status sets
-	statuses := []string{"queued", "processing", "failed"}
-	for _, status := range statuses {
-		statusKey := fmt.Sprintf("morf:jobs:status:%s", status)
-		q.client.SRem(ctx, statusKey, jobID)
-	}
-
 	return nil
 }
 
@@ -525,14 +744,32 @@ func (q *JobQueue) UpdateWorkerHeartbeat(workerID string) error {
 func (q *JobQueue) GetQueueDepth() (int64, error) {
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	return q.client.LLen(ctx, jobQueueKey).Result()
+	var n int64
+	err := redisDo(func() error {
+		got, gerr := q.client.LLen(ctx, jobQueueKey).Result()
+		if gerr != nil {
+			return gerr
+		}
+		n = got
+		return nil
+	})
+	return n, err
 }
 
 // GetDLQDepth returns the current dead letter queue depth
 func (q *JobQueue) GetDLQDepth() (int64, error) {
 	ctx, cancel := q.opCtx()
 	defer cancel()
-	return q.client.LLen(ctx, "morf:dlq").Result()
+	var n int64
+	err := redisDo(func() error {
+		got, gerr := q.client.LLen(ctx, dlqKey).Result()
+		if gerr != nil {
+			return gerr
+		}
+		n = got
+		return nil
+	})
+	return n, err
 }
 
 // GetDLQJobsPage returns a paginated slice of DLQ job IDs.
@@ -547,17 +784,44 @@ func (q *JobQueue) GetDLQJobsPage(offset, limit int) ([]string, error) {
 	ctx, cancel := q.opCtx()
 	defer cancel()
 	end := int64(offset + limit - 1)
-	return q.client.LRange(ctx, "morf:dlq", int64(offset), end).Result()
+	var ids []string
+	err := redisDo(func() error {
+		got, gerr := q.client.LRange(ctx, dlqKey, int64(offset), end).Result()
+		if gerr != nil {
+			return gerr
+		}
+		ids = got
+		return nil
+	})
+	return ids, err
 }
 
-// RetryDLQJob moves a job from DLQ back to the main queue
+// RetryDLQJob moves a job from the DLQ back to the main queue.
+//
+// R-3: the DLQ removal is done by an atomic Lua script (retryDLQRemoveScript)
+// that also reports whether the job was actually on the DLQ, so two concurrent
+// retriers cannot both re-enqueue the same job — only the one whose LREM removed
+// an element proceeds. The subsequent hash reset + re-enqueue reuse the existing
+// atomic UpdateJob / EnqueueJobAtomic paths.
 func (q *JobQueue) RetryDLQJob(jobID string) error {
-	// Remove from DLQ
 	rmCtx, rmCancel := q.opCtx()
-	err := q.client.LRem(rmCtx, "morf:dlq", 1, jobID).Err()
+	var removed int64
+	err := redisDo(func() error {
+		got, rerr := retryDLQRemoveScript.Run(rmCtx, q.client, []string{dlqKey}, jobID).Int64()
+		if rerr != nil {
+			return rerr
+		}
+		removed = got
+		return nil
+	})
 	rmCancel()
 	if err != nil {
 		return fmt.Errorf("failed to remove from DLQ: %v", err)
+	}
+	if removed == 0 {
+		// Job was not on the DLQ (already retried by a concurrent caller, or
+		// never there). Nothing to do — avoid a spurious re-enqueue.
+		return fmt.Errorf("job not found in DLQ: %s", jobID)
 	}
 
 	// Get job and reset its status
@@ -574,52 +838,57 @@ func (q *JobQueue) RetryDLQJob(jobID string) error {
 	job.FailedAt = nil
 	job.WorkerID = ""
 
-	// Update job
-	if err := q.UpdateJob(job); err != nil {
-		return fmt.Errorf("failed to update job: %v", err)
-	}
-
-	// Push back to queue
-	if err := q.PushJob(jobID); err != nil {
-		return fmt.Errorf("failed to push job: %v", err)
+	// R-3: re-publish atomically (hash + status:queued + TTL + RPush as one unit)
+	// rather than the old UpdateJob-then-PushJob pair, so a crash cannot leave the
+	// job registered-but-unqueued.
+	if err := q.EnqueueJobAtomic(job); err != nil {
+		return fmt.Errorf("failed to re-enqueue job: %v", err)
 	}
 
 	return nil
 }
 
-// CancelJob cancels a job
+// CancelJob cancels a queued or processing job.
+//
+// R-3: the whole transition is a single atomic Lua unit (cancelJobScript) that
+// re-reads the CURRENT status inside Redis, so it cannot act on a stale caller
+// read, and it removes the job from the main queue (when it was queued) in the
+// same unit. This closes the read-modify-write race in the previous multi-step
+// implementation (a worker could pick up the job between the caller's GetJob and
+// the queue LREM). The 7-day TTL is left untouched (cancelled jobs age out).
 func (q *JobQueue) CancelJob(jobID string) error {
-	job, err := q.GetJob(jobID)
+	ctx, cancel := q.opCtx()
+	defer cancel()
+
+	jobKey := fmt.Sprintf("morf:jobs:%s", jobID)
+	keys := []string{
+		jobKey,
+		jobQueueKey,
+		fmt.Sprintf("morf:jobs:status:%s", "queued"),
+		fmt.Sprintf("morf:jobs:status:%s", "processing"),
+		fmt.Sprintf("morf:jobs:status:%s", "cancelled"),
+	}
+	now := time.Now().Format(time.RFC3339)
+
+	var res int64
+	err := redisDo(func() error {
+		got, rerr := cancelJobScript.Run(ctx, q.client, keys,
+			jobID, string(models.JobStatusCancelled), now, "Job cancelled by user").Int64()
+		if rerr != nil {
+			return rerr
+		}
+		res = got
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to get job: %v", err)
+		return fmt.Errorf("failed to cancel job: %v", err)
 	}
-
-	// Only cancel queued or processing jobs
-	if job.Status != models.JobStatusQueued && job.Status != models.JobStatusProcessing {
-		return fmt.Errorf("cannot cancel job with status: %s", job.Status)
+	switch res {
+	case 0:
+		return fmt.Errorf("job not found: %s", jobID)
+	case -1:
+		return fmt.Errorf("cannot cancel job: not in a queued or processing state")
 	}
-
-	// Store original status before updating
-	originalStatus := job.Status
-
-	// Update job status to cancelled
-	now := time.Now()
-	job.Status = models.JobStatusCancelled
-	job.FailedAt = &now
-	job.Error = "Job cancelled by user"
-
-	// Update job in Redis
-	if err := q.UpdateJob(job); err != nil {
-		return fmt.Errorf("failed to update job: %v", err)
-	}
-
-	// Remove from queue if it was queued
-	if originalStatus == models.JobStatusQueued {
-		rmCtx, rmCancel := q.opCtx()
-		q.client.LRem(rmCtx, jobQueueKey, 1, jobID)
-		rmCancel()
-	}
-
 	return nil
 }
 

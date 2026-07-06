@@ -12,6 +12,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"morf/models"
 	"testing"
 
@@ -154,5 +155,152 @@ func TestLeaseFencing(t *testing.T) {
 	}
 	if ok, _ := q.CheckJobLease("job-9", "worker-B"); !ok {
 		t.Error("CheckJobLease(B) = false, want true (current owner)")
+	}
+}
+
+// TestMoveToDLQAtomic verifies the Lua MoveToDLQ atomically LPUSHes the job onto
+// the DLQ and removes it from the queued/processing/failed status sets.
+func TestMoveToDLQAtomic(t *testing.T) {
+	q, mr := newMiniQueue(t)
+
+	// Seed the job into the failed + processing status sets.
+	if _, err := mr.SetAdd("morf:jobs:status:failed", "job-dlq"); err != nil {
+		t.Fatalf("seed failed set: %v", err)
+	}
+	if _, err := mr.SetAdd("morf:jobs:status:processing", "job-dlq"); err != nil {
+		t.Fatalf("seed processing set: %v", err)
+	}
+
+	if err := q.MoveToDLQ("job-dlq"); err != nil {
+		t.Fatalf("MoveToDLQ: %v", err)
+	}
+
+	dlq, _ := mr.List("morf:dlq")
+	if len(dlq) != 1 || dlq[0] != "job-dlq" {
+		t.Errorf("morf:dlq = %v, want [job-dlq]", dlq)
+	}
+	for _, st := range []string{"failed", "processing", "queued"} {
+		members, _ := mr.SMembers("morf:jobs:status:" + st)
+		if contains(members, "job-dlq") {
+			t.Errorf("job-dlq should have been removed from status:%s: %v", st, members)
+		}
+	}
+}
+
+// TestRetryDLQJobAtomic verifies RetryDLQJob removes the job from the DLQ, resets
+// its status, and re-enqueues it; and that a job NOT on the DLQ is rejected (so a
+// concurrent double-retry cannot double-enqueue).
+func TestRetryDLQJobAtomic(t *testing.T) {
+	q, mr := newMiniQueue(t)
+
+	// A job on the DLQ with a persisted hash (failed, with retry count).
+	job := &models.ScanJob{ID: "job-r", Status: models.JobStatusFailed, RetryCount: 2, Error: "boom"}
+	if err := q.CreateJob(job); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if _, err := mr.Push("morf:dlq", "job-r"); err != nil {
+		t.Fatalf("seed dlq: %v", err)
+	}
+
+	if err := q.RetryDLQJob("job-r"); err != nil {
+		t.Fatalf("RetryDLQJob: %v", err)
+	}
+
+	// Removed from DLQ.
+	if dlq, _ := mr.List("morf:dlq"); contains(dlq, "job-r") {
+		t.Errorf("job-r still on DLQ after retry: %v", dlq)
+	}
+	// Re-enqueued onto the main queue and reset to queued.
+	if list, _ := mr.List("morf:job_queue"); len(list) != 1 || list[0] != "job-r" {
+		t.Errorf("job_queue = %v, want [job-r]", list)
+	}
+	got, err := q.GetJob("job-r")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != models.JobStatusQueued {
+		t.Errorf("status = %s, want queued", got.Status)
+	}
+	if got.RetryCount != 0 {
+		t.Errorf("retry_count = %d, want 0 (reset)", got.RetryCount)
+	}
+
+	// Retrying a job that is not on the DLQ is rejected (no double-enqueue).
+	if err := q.RetryDLQJob("job-r"); err == nil {
+		t.Error("RetryDLQJob for a job not on the DLQ should error, got nil")
+	}
+	if list, _ := mr.List("morf:job_queue"); len(list) != 1 {
+		t.Errorf("job_queue grew on a rejected retry: %v", list)
+	}
+}
+
+// TestCancelJobAtomic verifies the Lua CancelJob transitions a queued job to
+// cancelled, removes it from the main queue, and rejects a terminal job.
+func TestCancelJobAtomic(t *testing.T) {
+	q, mr := newMiniQueue(t)
+
+	// Queued job present both in the hash + the main queue.
+	job := &models.ScanJob{ID: "job-c", Status: models.JobStatusQueued}
+	if err := q.EnqueueJobAtomic(job); err != nil {
+		t.Fatalf("EnqueueJobAtomic: %v", err)
+	}
+
+	if err := q.CancelJob("job-c"); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	got, err := q.GetJob("job-c")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != models.JobStatusCancelled {
+		t.Errorf("status = %s, want cancelled", got.Status)
+	}
+	if list, _ := mr.List("morf:job_queue"); contains(list, "job-c") {
+		t.Errorf("job-c still on main queue after cancel: %v", list)
+	}
+	members, _ := mr.SMembers("morf:jobs:status:cancelled")
+	if !contains(members, "job-c") {
+		t.Errorf("job-c not in status:cancelled: %v", members)
+	}
+
+	// A second cancel is rejected (no longer queued/processing).
+	if err := q.CancelJob("job-c"); err == nil {
+		t.Error("CancelJob on an already-cancelled job should error, got nil")
+	}
+	// A missing job is rejected.
+	if err := q.CancelJob("does-not-exist"); err == nil {
+		t.Error("CancelJob on a missing job should error, got nil")
+	}
+}
+
+// TestEnqueueJobAtomicWithLimit verifies fail-closed admission: a job is admitted
+// while under the limit and rejected (ErrQueueFull, with no writes) once the
+// limit would be exceeded.
+func TestEnqueueJobAtomicWithLimit(t *testing.T) {
+	q, mr := newMiniQueue(t)
+
+	// Limit of 2: first two admits succeed, the third is rejected.
+	for i, id := range []string{"a", "b"} {
+		job := &models.ScanJob{ID: id, Status: models.JobStatusQueued}
+		if err := q.EnqueueJobAtomicWithLimit(job, 2, 1); err != nil {
+			t.Fatalf("admit[%d] %s: %v", i, id, err)
+		}
+	}
+	job := &models.ScanJob{ID: "c", Status: models.JobStatusQueued}
+	err := q.EnqueueJobAtomicWithLimit(job, 2, 1)
+	if !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("third admit err = %v, want ErrQueueFull", err)
+	}
+	// The rejected job made NO writes.
+	if mr.Exists("morf:jobs:c") {
+		t.Error("rejected job hash was written; admission was not fail-closed/atomic")
+	}
+	if list, _ := mr.List("morf:job_queue"); len(list) != 2 {
+		t.Errorf("job_queue len = %d, want 2 (rejected job not enqueued)", len(list))
+	}
+
+	// limit <= 0 disables the check (always admits).
+	if err := q.EnqueueJobAtomicWithLimit(&models.ScanJob{ID: "d", Status: models.JobStatusQueued}, 0, 1); err != nil {
+		t.Fatalf("admit with limit=0 should always succeed: %v", err)
 	}
 }

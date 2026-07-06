@@ -32,14 +32,55 @@ func TestDo_Success(t *testing.T) {
 	}
 }
 
-// TestDo_DBBreaker_Registered verifies the "db" breaker is registered after init.
-// (The redis/slack/jira breakers were removed as unrouted — only "db" has call sites.)
+// TestDo_DBBreaker_Registered verifies the "db" and "redis" breakers are
+// registered after init. (The slack/jira breakers remain removed as unrouted;
+// "db" and "redis" both have call sites — db/db.go and queue/ + utils/cache.go.)
 func TestDo_DBBreaker_Registered(t *testing.T) {
 	InitCircuitBreakers()
 
 	if breakerRegistry["db"] == nil {
 		t.Fatal("breakerRegistry[\"db\"] is nil after InitCircuitBreakers")
 	}
+	if breakerRegistry["redis"] == nil {
+		t.Fatal("breakerRegistry[\"redis\"] is nil after InitCircuitBreakers")
+	}
+}
+
+// TestBreakerState_Redis verifies BreakerState/IsBreakerOpen report the "redis"
+// breaker (used by GET /ready to shed a pod whose Redis is down). After init it
+// is registered and closed; tripping it open flips IsBreakerOpen to true.
+func TestBreakerState_Redis(t *testing.T) {
+	InitCircuitBreakers()
+
+	state, ok := BreakerState("redis")
+	if !ok {
+		t.Fatal("BreakerState(\"redis\") not registered after InitCircuitBreakers")
+	}
+	if state != StateClosed {
+		t.Fatalf("initial redis breaker state = %v, want closed", state)
+	}
+	if IsBreakerOpen("redis") {
+		t.Fatal("IsBreakerOpen(\"redis\") = true initially, want false")
+	}
+
+	// An unregistered breaker fails-open (not reported open).
+	if _, ok := BreakerState("nope"); ok {
+		t.Fatal("BreakerState(\"nope\") ok = true, want false for unregistered breaker")
+	}
+	if IsBreakerOpen("nope") {
+		t.Fatal("IsBreakerOpen(\"nope\") = true, want false for unregistered breaker")
+	}
+
+	// Trip the redis breaker open (5 failures) and confirm it is reported open.
+	callErr := errors.New("redis down")
+	for i := 0; i < 5; i++ {
+		_ = Do("redis", func() error { return callErr })
+	}
+	if !IsBreakerOpen("redis") {
+		t.Fatal("IsBreakerOpen(\"redis\") = false after 5 failures, want true")
+	}
+	// Reset so the shared breaker does not leak an open state into other tests.
+	redisCircuitBreaker.Reset()
 }
 
 // TestDo_TripsToOpen verifies that repeated errors trip the breaker open and
