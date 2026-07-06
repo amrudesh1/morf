@@ -65,21 +65,37 @@ import { PatternManagementComponent } from './components/pattern-management/patt
 })
 export class AppComponent implements OnInit, OnDestroy {
   currentScreen: 'splash' | 'upload' | 'processing' | 'results' | 'patterns' = 'splash';
+  // Latest scan error surfaced by ScanService (null when there is none). Rendered
+  // as a dismissible banner instead of the old blocking alert() dialogs.
+  scanError: string | null = null;
   private screenSubscription: Subscription | undefined;
-  
+  private errorSubscription: Subscription | undefined;
+
   constructor(private scanService: ScanService) {}
-  
+
   ngOnInit() {
     // Subscribe to the current screen from the scan service
     this.screenSubscription = this.scanService.currentScreen$.subscribe(screen => {
       this.currentScreen = screen;
     });
+
+    // Surface scan errors inline via a top-level banner.
+    this.errorSubscription = this.scanService.scanError$.subscribe(error => {
+      this.scanError = error;
+    });
   }
-  
+
+  dismissError() {
+    this.scanService.clearError();
+  }
+
   ngOnDestroy() {
-    // Clean up subscription
+    // Clean up subscriptions
     if (this.screenSubscription) {
       this.screenSubscription.unsubscribe();
+    }
+    if (this.errorSubscription) {
+      this.errorSubscription.unsubscribe();
     }
   }
 }
