@@ -79,9 +79,14 @@ services:
         reservations:
           cpus: '1.0'
           memory: 2G
-    # Security options (seccomp profile)
+    # Security options (seccomp profile + no privilege escalation)
     security_opt:
       - seccomp:./morf/seccomp/seccomp-apktool.json
+      - no-new-privileges:true
+    # Drop all Linux capabilities for the untrusted-APK sandbox. If the
+    # container fails to start, add back only the specific caps it needs.
+    cap_drop:
+      - ALL
     # Resource limits per container
     mem_limit: 8g
     mem_reservation: 2g
