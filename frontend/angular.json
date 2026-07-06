@@ -23,7 +23,6 @@
             "polyfills": ["zone.js"],
             "tsConfig": "tsconfig.app.json",
             "assets": [
-              "src/favicon.ico",
               "src/assets"
             ],
             "styles": [
@@ -46,12 +45,14 @@
                 }
               ],
               "outputHashing": "all",
+              "buildOptimizer": true,
               "optimization": {
                 "styles": {
-                  "minify": false,
-                  "inlineCritical": false
+                  "minify": true,
+                  "inlineCritical": true
                 },
-                "scripts": true
+                "scripts": true,
+                "fonts": true
               }
             },
             "development": {
@@ -89,7 +90,6 @@
             "polyfills": ["zone.js", "zone.js/testing"],
             "tsConfig": "tsconfig.spec.json",
             "assets": [
-              "src/favicon.ico",
               "src/assets"
             ],
             "styles": [
