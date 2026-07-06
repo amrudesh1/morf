@@ -1,10 +1,112 @@
-version: '3.8'
-
 services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: morf-mysql
+    environment:
+      # NOTE: The credentials below are LOCAL-DEVELOPMENT defaults only.
+      # Do NOT use them in any real deployment — override via a non-committed
+      # .env file or Docker secrets (e.g. ${MYSQL_ROOT_PASSWORD}).
+      MYSQL_ROOT_PASSWORD: morf_root_password
+      MYSQL_DATABASE: morf
+      MYSQL_USER: morf
+      MYSQL_PASSWORD: morf_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # NOTE: migrations are applied by the app at runtime (morf/db/db.go),
+      # so they must NOT also be fed to MySQL's initdb.d (which would run an
+      # incomplete set against an empty schema in the wrong phase).
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmorf_root_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - morf-network
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  # Redis for Job Queue
+  redis:
+    image: redis:7-alpine
+    container_name: morf-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - morf-network
+
+  # MORF Backend
+  morf-backend:
+    build:
+      context: ./morf
+      dockerfile: Dockerfile
+    container_name: morf-backend
+    ports:
+      - "9092:9092"
+    environment:
+      # NOTE: DATABASE_URL embeds LOCAL-DEVELOPMENT-only credentials (see the
+      # mysql service above); override via .env / Docker secrets in real use.
+      - DATABASE_URL=morf:morf_password@tcp(mysql:3306)/morf?charset=utf8mb4&parseTime=True&loc=Local
+      - REDIS_URL=redis://redis:6379
+      - MORF_GIN_MODE=debug
+    volumes:
+      - ./morf/uploads:/app/uploads
+      - ./morf/log:/app/log
+      - ./morf/patterns:/app/patterns
+      - ./morf/db/migrations:/app/db/migrations
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - morf-network
+    # Resource limits for macOS compatibility
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    # Security options (seccomp profile)
+    security_opt:
+      - seccomp:./morf/seccomp/seccomp-apktool.json
+    # Resource limits per container
+    mem_limit: 8g
+    mem_reservation: 2g
+    cpus: 4.0
+    # File descriptor and process limits
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+      nproc:
+        soft: 512
+        hard: 1024
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Frontend (Angular)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    container_name: morf-frontend
     ports:
       - "80:80"
     depends_on:
@@ -16,29 +118,31 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  morf-backend:
-    build:
-      context: ./morf
-      dockerfile: Dockerfile
-    ports:
-      - "9092:9092"
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - GIN_MODE=debug
-    volumes:
-      - ./uploads:/app/uploads
-    networks:
-      - morf-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    # Bound resources so a runaway nginx can't starve the host.
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
 
 networks:
   morf-network:
     driver: bridge
 
 volumes:
-  uploads:
+  mysql-data:
+    driver: local
+  redis-data:
+    driver: local
