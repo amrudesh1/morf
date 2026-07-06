@@ -19,46 +19,31 @@ package worker
 import (
 	"context"
 	"math"
+	"morf/config"
 	"morf/queue"
 	"morf/utils"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 )
 
-// envInt reads an int from env, falling back to def when unset/invalid.
+// envInt reads a positive int from env, falling back to def when unset/invalid.
+// It delegates to the shared config helper so parsing lives in one place.
 func envInt(name string, def int) int {
-	if v, ok := os.LookupEnv(name); ok {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
-		}
-	}
-	return def
+	return config.IntPositive(name, def)
 }
 
-// envDuration reads a time.Duration from env (e.g. "5m", "30s"), falling back
-// to def when the variable is unset or cannot be parsed.
+// envDuration reads a positive time.Duration from env (e.g. "5m", "30s"),
+// falling back to def when the variable is unset or cannot be parsed.
 func envDuration(name string, def time.Duration) time.Duration {
-	if v, ok := os.LookupEnv(name); ok {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-	}
-	return def
+	return config.DurationPositive(name, def)
 }
 
 // envFloat reads a positive float from env, falling back to def when the
 // variable is unset, unparseable, or non-positive.
 func envFloat(name string, def float64) float64 {
-	if v, ok := os.LookupEnv(name); ok {
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
-			return f
-		}
-	}
-	return def
+	return config.FloatPositive(name, def)
 }
 
 // WorkerPool manages a pool of workers that process jobs from Redis queue

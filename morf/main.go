@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"morf/auth"
 	"morf/cmd"
+	"morf/config"
 	"morf/db"
 	"morf/db/migrations"
 	"morf/metrics"
@@ -256,11 +257,20 @@ func runServer(cmd *cobra.Command, args []string) {
 		os.Setenv("DATABASE_URL", dbURL)
 	}
 
+	// Load effective configuration once and log a masked summary. In full-node
+	// mode the DB and queue both degrade gracefully, so validation is advisory
+	// (requireDB/requireQueue=false) and does not fail fast here.
+	cfg := config.Load()
+	if err := cfg.Validate(false, false); err != nil {
+		log.Warnf("Configuration warning: %v", err)
+	}
+	cfg.LogSummary()
+
 	// Initialize database (will be disabled if DATABASE_URL is not set)
 	db.InitDB()
 
 	// Initialize Redis cache (will use same Redis client as queue after queue init)
-	redisURL := os.Getenv("REDIS_URL")
+	redisURL := cfg.RedisURL
 	if redisURL == "" {
 		redisURL = "redis://localhost:6379"
 	}
@@ -455,11 +465,21 @@ func runAPIOnly(cmd *cobra.Command, args []string) {
 		os.Setenv("DATABASE_URL", dbURL)
 	}
 
+	// Load effective configuration once and log a masked summary. API-only mode
+	// hard-requires the Redis queue (it Fatals below if the queue cannot init),
+	// so fail fast now on a missing REDIS_URL with a clear message. The DB still
+	// degrades gracefully, so it is not required here.
+	cfg := config.Load()
+	if err := cfg.Validate(false, true); err != nil {
+		log.Fatalf("Invalid configuration: %v", err)
+	}
+	cfg.LogSummary()
+
 	// Initialize database (will be disabled if DATABASE_URL is not set)
 	db.InitDB()
 
 	// Initialize Redis cache (will use same Redis client as queue after queue init)
-	redisURL := os.Getenv("REDIS_URL")
+	redisURL := cfg.RedisURL
 	if redisURL == "" {
 		redisURL = "redis://localhost:6379"
 	}
@@ -617,11 +637,21 @@ func runWorkerOnly(cmd *cobra.Command, args []string) {
 		os.Setenv("DATABASE_URL", dbURL)
 	}
 
+	// Load effective configuration once and log a masked summary. Worker-only
+	// mode hard-requires the Redis queue (it Fatals below if the queue cannot
+	// init), so fail fast now on a missing REDIS_URL. The DB degrades
+	// gracefully, so it is not required here.
+	cfg := config.Load()
+	if err := cfg.Validate(false, true); err != nil {
+		log.Fatalf("Invalid configuration: %v", err)
+	}
+	cfg.LogSummary()
+
 	// Initialize database (will be disabled if DATABASE_URL is not set)
 	db.InitDB()
 
 	// Initialize Redis cache (will use same Redis client as queue after queue init)
-	redisURL := os.Getenv("REDIS_URL")
+	redisURL := cfg.RedisURL
 	if redisURL == "" {
 		redisURL = "redis://localhost:6379"
 	}
