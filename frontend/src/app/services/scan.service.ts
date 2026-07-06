@@ -12,6 +12,15 @@ import {
   takeWhile,
   timer,
 } from 'rxjs';
+import { environment } from '../../environments/environment';
+
+// TODO(codegen): the request/response DTOs below (BackendSecret, ScanResponse,
+// JobStatusResponse, etc.) are hand-maintained mirrors of the schemas in
+// morf/docs/api/openapi.yaml. They should ideally be generated from that spec
+// (e.g. openapi-typescript / @openapitools/openapi-generator-cli) so they can't
+// drift. A generator is intentionally NOT wired in here to avoid adding heavy
+// build tooling; keep these types in sync with the OpenAPI spec by hand until
+// codegen is added as a separate change.
 
 // Backend secret format
 interface BackendSecret {
@@ -106,8 +115,16 @@ interface JobStatusResponse {
   providedIn: 'root'
 })
 export class ScanService {
-  // API URL - use relative URL to go through nginx proxy
-  private apiUrl = '/api';
+  // API base URL. Sourced from the environment (default '/api', a relative path
+  // that goes through the nginx reverse proxy). See src/environments/.
+  private apiUrl = environment.apiBaseUrl;
+
+  // Error surfacing. Instead of blocking alert() dialogs, scan errors are pushed
+  // onto this observable so components (e.g. the processing screen) can render
+  // them inline. null means "no error". Callers should reset it to null before
+  // starting a new scan; clearError() does that.
+  private scanErrorSubject = new BehaviorSubject<string | null>(null);
+  scanError$ = this.scanErrorSubject.asObservable();
 
   // Platform selection
   private selectedPlatformSubject = new BehaviorSubject<'android' | 'ios'>('android');
@@ -199,6 +216,20 @@ export class ScanService {
     this.cancelPolling$.next();
   }
 
+  // Push an error message onto scanError$ so subscribed components can render it
+  // inline. Replaces the old blocking alert() calls.
+  private emitError(message: string) {
+    this.scanErrorSubject.next(message);
+  }
+
+  // Clear any surfaced scan error. Components may call this (e.g. when the user
+  // dismisses a banner); it is also called at the start of every new scan.
+  clearError() {
+    if (this.scanErrorSubject.getValue() !== null) {
+      this.scanErrorSubject.next(null);
+    }
+  }
+
   // Public cancel entry point for the processing screen's Cancel button. Stops
   // the in-flight poll loop and returns the user to the upload screen.
   cancelScan() {
@@ -237,6 +268,8 @@ export class ScanService {
 
   processFile(file: File) {
     console.log('Processing file:', file.name);
+    // Clear any error left over from a previous scan before starting a new one.
+    this.clearError();
     this.currentFileSubject.next(file);
     this.setCurrentScreen('processing');
     
@@ -263,7 +296,7 @@ export class ScanService {
                   console.error('Error parsing error response:', e);
                 }
                 this.resetScan();
-                alert(errorMessage);
+                this.emitError(errorMessage);
                 observer.error(error);
               };
               reader.readAsText(error.error);
@@ -271,9 +304,9 @@ export class ScanService {
           } else if (error.error?.error) {
             errorMessage = error.error.error;
           }
-          
+
           this.resetScan();
-          alert(errorMessage);
+          this.emitError(errorMessage);
           return of({ message: errorMessage, job_id: '' }); // Return an Observable
         })
       )
@@ -286,7 +319,7 @@ export class ScanService {
           } else {
             console.error('No job_id in response');
             this.resetScan();
-            alert('Failed to start scan. Please try again.');
+            this.emitError('Failed to start scan. Please try again.');
           }
         },
         error: (error) => {
@@ -427,10 +460,10 @@ export class ScanService {
             this.setCurrentScreen('results');
           } else if (response.status === 'failed') {
             this.resetScan();
-            alert(`Scan failed: ${response.error || 'Unknown error'}`);
+            this.emitError(`Scan failed: ${response.error || 'Unknown error'}`);
           } else if (response.status === 'cancelled') {
             this.resetScan();
-            alert('Scan was cancelled.');
+            this.emitError('Scan was cancelled.');
           }
         },
         complete: () => {
@@ -442,7 +475,7 @@ export class ScanService {
           }
           if (!done) {
             this.resetScan();
-            alert('Scan is taking longer than expected. Please check back later.');
+            this.emitError('Scan is taking longer than expected. Please check back later.');
           }
         },
       });

@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, catchError, throwError } from 'rxjs';
+import { environment } from '../../environments/environment';
 
 export interface Pattern {
   name: string;
@@ -29,7 +30,7 @@ export interface PatternTestResponse {
   providedIn: 'root'
 })
 export class PatternService {
-  private apiUrl = '/api';
+  private apiUrl = environment.apiBaseUrl;
 
   constructor(private http: HttpClient) {}
 

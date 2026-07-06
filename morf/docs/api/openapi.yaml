@@ -454,6 +454,55 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /webhook-dlq:
+    get:
+      tags:
+        - Jobs
+      summary: List webhook dead letter queue records
+      description: >
+        Returns webhook delivery attempts that exhausted their retries. Records
+        are stored durably in a capped Redis list so failed callbacks are not
+        lost. Mirrors /dlq but for webhook (callback) delivery failures rather
+        than scan jobs.
+      operationId: getWebhookDLQ
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          description: Number of records to skip (defaults to 0)
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of records to return (1-500, defaults to 50)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        '200':
+          description: Webhook DLQ records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDLQResponse'
+        '500':
+          description: Failed to read webhook DLQ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /dlq/{jobID}/retry:
     post:
       tags:
@@ -1198,6 +1247,28 @@ components:
                 type: string
                 format: date-time
                 nullable: true
+
+    WebhookDLQResponse:
+      type: object
+      properties:
+        depth:
+          type: integer
+          description: Total number of records currently held in the webhook DLQ
+          example: 3
+        offset:
+          type: integer
+          example: 0
+        limit:
+          type: integer
+          example: 50
+        records:
+          type: array
+          description: >
+            Raw webhook delivery records (opaque JSON objects capturing the
+            failed delivery, e.g. target URL, job ID, attempts, and last error).
+          items:
+            type: object
+            additionalProperties: true
 
     Pattern:
       type: object
