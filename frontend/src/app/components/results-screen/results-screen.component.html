@@ -3,7 +3,7 @@
   <div class="absolute inset-0 bg-gradient-to-br from-blue-900 to-black parallax-bg">
     <div class="particles-container">
       <div
-        *ngFor="let particle of particlePositions"
+        *ngFor="let particle of particlePositions; trackBy: trackByIndex"
         class="particle"
         [ngStyle]="{
           top: particle.top,
@@ -131,7 +131,7 @@
               </button>
               <div class="section-content" [class.expanded]="showDeeplinks">
                 <div class="space-y-4" *ngIf="metadata?.activities?.length">
-                  <ng-container *ngFor="let activity of getActivitiesWithDeeplinks()">
+                  <ng-container *ngFor="let activity of getActivitiesWithDeeplinks(); trackBy: trackByName">
                     <div *ngIf="activity?.name" 
                          class="rounded-lg overflow-hidden bg-blue-900/30 backdrop-blur-sm border border-blue-500/20">
                       <div class="p-3 bg-blue-900/40 border-b border-blue-500/20 flex items-center justify-between">
@@ -162,9 +162,9 @@
                       </div>
                       <div class="p-3 space-y-2">
                         <ng-container *ngIf="activity?.intentFilters?.length">
-                          <div *ngFor="let filter of activity.intentFilters">
+                          <div *ngFor="let filter of activity.intentFilters; trackBy: trackByIndex">
                             <ng-container *ngIf="filter?.data?.length">
-                              <div *ngFor="let data of filter.data" class="group">
+                              <div *ngFor="let data of filter.data; trackBy: trackByIndex" class="group">
                                 <div *ngIf="data?.scheme" 
                                      class="flex items-center space-x-2 p-2 rounded bg-blue-900/20 hover:bg-blue-900/30 transition-colors">
                                   <svg class="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -226,7 +226,7 @@
                   *ngIf="metadata?.activities?.length"
                 >
                     <div
-                    *ngFor="let activity of metadata.activities"
+                    *ngFor="let activity of metadata.activities; trackBy: trackByName"
                     class="text-xs rounded p-2 permission-scroll bg-blue-900/30"
                     [attr.data-content]="activity?.name || ''"
                     (mouseenter)="onItemHover($event)"
@@ -288,7 +288,7 @@
                 </div>
                 <div class="grid-container" *ngIf="metadata?.services?.length">
                   <div
-                    *ngFor="let service of metadata.services"
+                    *ngFor="let service of metadata.services; trackBy: trackByName"
                     class="text-xs rounded p-2 permission-scroll bg-blue-900/30"
                     [attr.data-content]="service?.name || ''"
                     (mouseenter)="onItemHover($event)"
@@ -362,7 +362,7 @@
                   *ngIf="metadata?.contentProviders?.length"
                 >
                   <div
-                    *ngFor="let provider of metadata.contentProviders"
+                    *ngFor="let provider of metadata.contentProviders; trackBy: trackByName"
                     class="text-xs rounded p-2 permission-scroll bg-blue-900/30"
                     [attr.data-content]="provider?.name || ''"
                     (mouseenter)="onItemHover($event)"
@@ -436,7 +436,7 @@
                   *ngIf="metadata?.broadcastReceivers?.length"
                 >
                   <div
-                    *ngFor="let receiver of metadata.broadcastReceivers"
+                    *ngFor="let receiver of metadata.broadcastReceivers; trackBy: trackByName"
                     class="text-xs rounded p-2 permission-scroll bg-blue-900/30"
                     [attr.data-content]="receiver?.name || ''"
                     (mouseenter)="onItemHover($event)"
@@ -486,7 +486,7 @@
                   *ngIf="metadata?.usesLibrary?.length"
                 >
                   <div
-                    *ngFor="let library of metadata.usesLibrary"
+                    *ngFor="let library of metadata.usesLibrary; trackBy: trackByValue"
                     class="text-xs rounded p-2 permission-scroll"
                     [attr.data-content]="library || ''"
                     (mouseenter)="onItemHover($event)"
@@ -527,7 +527,7 @@
                   *ngIf="metadata?.permissions?.length"
                 >
                   <div
-                    *ngFor="let permission of metadata.permissions"
+                    *ngFor="let permission of metadata.permissions; trackBy: trackByValue"
                     class="text-xs rounded p-2 permission-scroll"
                     [attr.data-content]="permission || ''"
                     (mouseenter)="onItemHover($event)"
@@ -576,7 +576,7 @@
                   *ngIf="metadata?.customPermissions?.length"
                 >
                   <div
-                    *ngFor="let permission of metadata.customPermissions"
+                    *ngFor="let permission of metadata.customPermissions; trackBy: trackByValue"
                     class="text-xs rounded p-2 permission-scroll"
                     [attr.data-content]="permission || ''"
                     (mouseenter)="onItemHover($event)"
@@ -614,7 +614,7 @@
                   *ngIf="metadata?.usesFeatures?.length"
                 >
                   <div
-                    *ngFor="let feature of metadata.usesFeatures"
+                    *ngFor="let feature of metadata.usesFeatures; trackBy: trackByValue"
                     class="text-xs rounded p-2 permission-scroll"
                     [attr.data-content]="feature || ''"
                     (mouseenter)="onItemHover($event)"
@@ -775,7 +775,7 @@
 
         <div class="space-y-4">
           <div
-            *ngFor="let secret of secrets; let i = index"
+            *ngFor="let secret of secrets; let i = index; trackBy: trackBySecret"
             class="border border-blue-500/30 rounded-lg overflow-hidden bg-blue-900/30 backdrop-blur-sm fade-in scroll-scale"
             [style.animation-delay]="i * 0.2 + 's'"
             [class.delay-100]="i % 5 === 0"

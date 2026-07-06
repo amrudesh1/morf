@@ -69,4 +69,8 @@ export class ProcessingScreenComponent implements OnInit, OnDestroy {
     if (!this.currentFile) return 'Unknown size';
     return (this.currentFile.size / 1024 / 1024).toFixed(2) + ' MB';
   }
+
+  cancelScan(): void {
+    this.scanService.cancelScan();
+  }
 }

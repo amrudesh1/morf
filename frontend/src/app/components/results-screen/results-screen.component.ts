@@ -98,6 +98,10 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
   private readonly SCROLL_THRESHOLD = 100;
   private readonly DEBOUNCE_TIME = 100;
   private lastScrollTime = 0;
+  // Held so they can be torn down in ngOnDestroy — otherwise the observer and
+  // the window scroll listener outlive the component and leak.
+  private scrollObserver?: IntersectionObserver;
+  private parallaxScrollHandler?: () => void;
 
   constructor(private scanService: ScanService) {}
 
@@ -107,6 +111,10 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
 
   ngOnDestroy() {
     this.cleanupSubscriptions();
+    this.scrollObserver?.disconnect();
+    if (this.parallaxScrollHandler) {
+      window.removeEventListener('scroll', this.parallaxScrollHandler);
+    }
   }
 
   private setupSubscriptions() {
@@ -155,6 +163,7 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
       threshold: 0.1, // Trigger when 10% of the element is visible
       rootMargin: '0px' // Start animation as soon as element enters viewport
     });
+    this.scrollObserver = observer;
 
     // Observe all elements with animation classes
     document.querySelectorAll('.scroll-reveal, .scroll-reveal-left, .scroll-reveal-right, .scroll-scale, .text-reveal')
@@ -163,10 +172,12 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
     // Parallax effect for background
     const parallaxBg = document.querySelector('.parallax-bg') as HTMLElement;
     if (parallaxBg) {
-      window.addEventListener('scroll', () => {
+      const handler = () => {
         const scrolled = window.pageYOffset;
         parallaxBg.style.transform = `translateY(${scrolled * 0.1}px)`;
-      });
+      };
+      this.parallaxScrollHandler = handler;
+      window.addEventListener('scroll', handler);
     }
   }
 
@@ -231,13 +242,25 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
   getDeeplinksCount = () => this.getActivitiesWithDeeplinks().length;
 
   formatDeeplink(data: { scheme: string; host?: string; path?: string; pathPrefix?: string[]; pathPattern?: string; port?: string; }) {
-    const url = new URL(`${data.scheme}://`);
-    if (data.host) {
-      url.host = data.host;
-      if (data.port) url.port = data.port;
+    const path = data.path ?? data.pathPattern ?? data.pathPrefix?.[0] ?? '';
+    const scheme = data.scheme?.trim();
+    // An empty or malformed scheme makes `new URL(scheme + '://')` throw a
+    // TypeError, which would otherwise propagate out of the template binding and
+    // blank the deeplink section. Guard with a plain-string fallback.
+    if (!scheme) {
+      return `${data.host ?? ''}${path}`;
     }
-    url.pathname = data.path ?? data.pathPattern ?? data.pathPrefix?.[0] ?? '';
-    return url.toString();
+    try {
+      const url = new URL(`${scheme}://`);
+      if (data.host) {
+        url.host = data.host;
+        if (data.port) url.port = data.port;
+      }
+      url.pathname = path;
+      return url.toString();
+    } catch {
+      return `${scheme}://${data.host ?? ''}${path}`;
+    }
   }
 
   isExported = (component: { exported: boolean }) => component.exported;
@@ -264,9 +287,25 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
     this.scanService.getSecretCountBySeverity(confidence);
 
   cleanFilePath(path: string): string {
-    return path.replace('/tmp/morf/output/apk/source/', '');
+    // Show only the in-APK relative path. Match on the structural
+    // `output/apk/source/` segment rather than the full hardcoded temp root, so
+    // a reconfigured backend output dir (env/volume root) no longer leaks raw
+    // server filesystem paths into the UI. NOTE: the robust fix is for the
+    // backend to return paths relative to the scan root (or expose the
+    // strip-prefix via a shared config/response field); this is the client-side
+    // mitigation achievable within the frontend.
+    const marker = 'output/apk/source/';
+    const idx = path.indexOf(marker);
+    return idx >= 0 ? path.slice(idx + marker.length) : path;
   }
 
+  // trackBy fns prevent the entire list from being re-rendered when the
+  // underlying data is replaced/reordered. Used by *ngFor in the template.
+  trackByIndex = (i: number) => i;
+  trackByValue = (_: number, v: string) => v;
+  trackByName = (_: number, item: { name?: string }) => item?.name ?? '';
+  trackBySecret = (_: number, s: Secret) =>
+    `${s.fileLocation}:${s.lineNo}:${s.secretType}:${s.secretString}`;
 
   resetScan = () => this.scanService.resetScan();
 }

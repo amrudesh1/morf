@@ -166,4 +166,8 @@ export class UploadScreenComponent implements OnInit, OnDestroy {
       }
     }, 300);
   }
+
+  openPatternManagement() {
+    this.scanService.setCurrentScreen('patterns');
+  }
 }

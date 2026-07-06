@@ -10,6 +10,7 @@ import { SplashScreenComponent } from './components/splash-screen/splash-screen.
 import { UploadScreenComponent } from './components/upload-screen/upload-screen.component';
 import { ProcessingScreenComponent } from './components/processing-screen/processing-screen.component';
 import { ResultsScreenComponent } from './components/results-screen/results-screen.component';
+import { PatternManagementComponent } from './components/pattern-management/pattern-management.component';
 
 @Component({
   selector: 'app-root',
@@ -20,7 +21,8 @@ import { ResultsScreenComponent } from './components/results-screen/results-scre
     SplashScreenComponent,
     UploadScreenComponent,
     ProcessingScreenComponent,
-    ResultsScreenComponent
+    ResultsScreenComponent,
+    PatternManagementComponent
   ],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.css'],
@@ -62,7 +64,7 @@ import { ResultsScreenComponent } from './components/results-screen/results-scre
   ]
 })
 export class AppComponent implements OnInit, OnDestroy {
-  currentScreen: 'splash' | 'upload' | 'processing' | 'results' = 'splash';
+  currentScreen: 'splash' | 'upload' | 'processing' | 'results' | 'patterns' = 'splash';
   private screenSubscription: Subscription | undefined;
   
   constructor(private scanService: ScanService) {}
