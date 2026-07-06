@@ -24,7 +24,7 @@ import (
 type BroadcastReceiver struct {
 	gorm.Model
 	SecretID      uint   `json:"secretId" gorm:"column:secret_id;index:idx_secret_id;not null"`
-	Name          string `json:"name" gorm:"column:name;size:255;index:idx_name;not null"`
+	Name          string `json:"name" gorm:"column:name;size:500;index:idx_name;not null"`
 	Exported      bool   `json:"exported" gorm:"column:exported;index:idx_exported;default:false"`
 	IntentFilters string `json:"intentFilters" gorm:"type:json;column:intent_filters"`
 
