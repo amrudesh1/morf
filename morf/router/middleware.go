@@ -2,11 +2,9 @@ package router
 
 import (
 	"fmt"
+	"morf/config"
 	"morf/metrics"
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -184,34 +182,20 @@ func (rl *RateLimiter) Middleware() gin.HandlerFunc {
 	}
 }
 
-// envFloat reads a float from env with default fallback.
+// envFloat reads a float from env with default fallback. It delegates to the
+// shared config helper so parsing lives in one place.
 func envFloat(name string, def float64) float64 {
-	if s, ok := os.LookupEnv(name); ok {
-		if v, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
-			return v
-		}
-	}
-	return def
+	return config.Float(name, def)
 }
 
 // envIntDefault reads an int from env with default fallback.
 func envIntDefault(name string, def int) int {
-	if s, ok := os.LookupEnv(name); ok {
-		if v, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-			return v
-		}
-	}
-	return def
+	return config.Int(name, def)
 }
 
 // envDuration reads a Go duration from env with default fallback.
 func envDuration(name string, def time.Duration) time.Duration {
-	if s, ok := os.LookupEnv(name); ok {
-		if v, err := time.ParseDuration(strings.TrimSpace(s)); err == nil {
-			return v
-		}
-	}
-	return def
+	return config.Duration(name, def)
 }
 
 // MetricsMiddleware records HTTP request metrics

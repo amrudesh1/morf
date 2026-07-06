@@ -25,11 +25,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"morf/config"
 	"morf/utils"
 )
 
@@ -181,30 +181,14 @@ func NewS3StorageFromEnv() (*S3Storage, error) {
 }
 
 // envInt64Default parses an int64 env var, returning def when unset/blank/invalid
-// or non-positive.
+// or non-positive. It delegates to the shared config helper.
 func envInt64Default(name string, def int64) int64 {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return def
-	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n <= 0 {
-		return def
-	}
-	return n
+	return config.Int64Positive(name, def)
 }
 
-// envBoolDefault parses a boolean env var, returning def when unset/blank.
+// envBoolDefault parses a boolean env var, returning def when unset/blank/invalid.
 func envBoolDefault(name string, def bool) bool {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return def
-	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return def
-	}
-	return b
+	return config.Bool(name, def)
 }
 
 // NewS3Storage validates cfg and constructs an S3Storage.
