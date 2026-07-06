@@ -2,8 +2,10 @@
 -- This migration creates normalized tables and migrates data from the flat secrets table
 
 -- Step 1: Create package_data table
+-- id is BIGINT UNSIGNED to match models.PackageData (embeds gorm.Model, uint id)
+-- and so a future FK from secrets_new.package_data_id can reference it.
 CREATE TABLE IF NOT EXISTS package_data (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     apk_hash VARCHAR(64) UNIQUE NOT NULL,
     package_name VARCHAR(255) NOT NULL,
     version_code VARCHAR(50),
@@ -28,7 +30,7 @@ CREATE TABLE IF NOT EXISTS package_data (
 -- and AutoMigrate reconciliation do not diverge from this DDL.
 CREATE TABLE IF NOT EXISTS secrets_new (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    package_data_id INT NOT NULL,
+    package_data_id BIGINT UNSIGNED NOT NULL,
     file_name VARCHAR(255) NOT NULL,
     apk_hash VARCHAR(64) UNIQUE NOT NULL,
     apk_version VARCHAR(50),
@@ -46,8 +48,8 @@ CREATE TABLE IF NOT EXISTS secrets_new (
 
 -- Step 3: Create secret_findings table
 CREATE TABLE IF NOT EXISTS secret_findings (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    secret_id INT NOT NULL,
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    secret_id BIGINT UNSIGNED NOT NULL,
     type VARCHAR(100) NOT NULL,
     line_no INT NOT NULL,
     file_location VARCHAR(500) NOT NULL,
@@ -63,8 +65,8 @@ CREATE TABLE IF NOT EXISTS secret_findings (
 
 -- Step 4: Create activities table
 CREATE TABLE IF NOT EXISTS activities (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    secret_id INT NOT NULL,
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    secret_id BIGINT UNSIGNED NOT NULL,
     name VARCHAR(500) NOT NULL,
     exported BOOLEAN DEFAULT FALSE,
     intent_filters JSON,
@@ -76,8 +78,8 @@ CREATE TABLE IF NOT EXISTS activities (
 
 -- Step 5: Create services table
 CREATE TABLE IF NOT EXISTS services (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    secret_id INT NOT NULL,
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    secret_id BIGINT UNSIGNED NOT NULL,
     name VARCHAR(500) NOT NULL,
     exported BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -88,8 +90,8 @@ CREATE TABLE IF NOT EXISTS services (
 
 -- Step 6: Create content_providers table
 CREATE TABLE IF NOT EXISTS content_providers (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    secret_id INT NOT NULL,
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    secret_id BIGINT UNSIGNED NOT NULL,
     name VARCHAR(500) NOT NULL,
     exported BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -100,8 +102,8 @@ CREATE TABLE IF NOT EXISTS content_providers (
 
 -- Step 7: Create broadcast_receivers table
 CREATE TABLE IF NOT EXISTS broadcast_receivers (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    secret_id INT NOT NULL,
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    secret_id BIGINT UNSIGNED NOT NULL,
     name VARCHAR(500) NOT NULL,
     exported BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

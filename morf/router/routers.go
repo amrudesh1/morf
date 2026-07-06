@@ -699,6 +699,54 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
+	// Secrets read endpoint (normalized schema). Paginated via ?limit=&offset=.
+	// db.GetSecretsPage clamps limit to [1, 1000] (default 100) and floors offset
+	// at 0, so the query can never load an unbounded number of rows. This is the
+	// live reader over the normalized tables written by insertSecretsSync, making
+	// write-correctness observable. Registered behind the same auth/rate-limit
+	// stack as the other data routes above.
+	router.GET("/secrets", func(c *gin.Context) {
+		requestID := c.GetString("request_id")
+
+		// Only genuinely-parseable numbers override the defaults; anything else
+		// falls through to GetSecretsPage's own clamping (limit<=0 -> default).
+		limit := 0
+		if v := c.Query("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		offset := 0
+		if v := c.Query("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				offset = n
+			}
+		}
+
+		log.WithFields(log.Fields{
+			"request_id": requestID,
+			"limit":      limit,
+			"offset":     offset,
+		}).Info("Listing secrets from normalized schema")
+
+		if err := checkDatabaseStatus(); err != nil {
+			metrics.RecordError("database")
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		secrets := db.GetSecretsPage(limit, offset)
+
+		c.JSON(http.StatusOK, gin.H{
+			"secrets": secrets,
+			"count":   len(secrets),
+			"limit":   limit,
+			"offset":  offset,
+		})
+	})
+
 	router.POST("/upload", func(c *gin.Context) {
 		requestID := c.GetString("request_id")
 

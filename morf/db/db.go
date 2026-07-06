@@ -247,17 +247,20 @@ func runMigrations() error {
 			// Continue with migrations even if repair fails
 		}
 
-		// Run auto migrations first - include both old and new models for migration period
+		// DB-schema-fork: the normalized child tables (package_data, secrets_new,
+		// secret_findings, activities, services, content_providers,
+		// broadcast_receivers) are created and owned by the SQL migrations
+		// (004_normalize_schema.sql + 006_component_security_fields.sql), which are
+		// the authoritative DDL for their types (BIGINT UNSIGNED ids/foreign keys).
+		// They are deliberately NOT listed here: letting GORM AutoMigrate them too
+		// forks the schema, because gorm.Model emits BIGINT UNSIGNED while the SQL
+		// used INT, and AutoMigrate would silently reconcile column types on every
+		// boot. AutoMigrate is kept only for the legacy wide Secrets table (still
+		// read during the migration period) and the APIKey table, which have no SQL
+		// migration of their own.
 		if err := GormDB.AutoMigrate(
-			&models.Secrets{},           // Old table (for migration period)
-			&models.APIKey{},            // API keys
-			&models.PackageData{},       // New normalized table
-			&models.Secret{},            // New normalized secrets table
-			&models.SecretFinding{},     // New normalized secret findings
-			&models.Activity{},          // New normalized activities
-			&models.Service{},           // New normalized services
-			&models.ContentProvider{},   // New normalized content providers
-			&models.BroadcastReceiver{}, // New normalized broadcast receivers
+			&models.Secrets{}, // Legacy wide table (no SQL migration; still read during migration period)
+			&models.APIKey{},  // API keys (no SQL migration owns this table)
 		); err != nil {
 			// DB-2: a JSON error from AutoMigrate must NOT short-circuit the SQL
 			// migrations below (the old early `return nil` reported success while
@@ -751,12 +754,11 @@ func insertSecretsSync(secret models.Secrets) {
 	log.Info("Secret inserted successfully into normalized schema")
 }
 
-// TODO(DB-042): the normalized read path below — querySecrets,
-// convertSecretToOldFormat, and the exported GetSecrets / GetSecretsPage /
-// GetLastSecret — is fully implemented but NOT wired into any HTTP handler,
-// command, or test (repo-wide grep finds only definitions). It is kept rather
-// than deleted pending wire-up into the frontend secrets/results views.
-// NEEDS-REVIEW: wire these into the read API, or remove the whole read path.
+// The normalized read path below — querySecrets, convertSecretToOldFormat, and
+// the exported GetSecrets / GetSecretsPage / GetLastSecret — backs the live
+// GET /api/secrets reader (router.InitRouters) over the normalized tables, so
+// write-correctness of insertSecretsSync is observable. GetSecrets/GetLastSecret
+// remain available for callers needing the full cap / most-recent row.
 //
 // querySecrets runs the 6-Preload secret query with the given Limit/Offset.
 // All relationships (PackageData + 5 child tables) are eager-loaded in a bounded
