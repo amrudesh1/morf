@@ -1,44 +1,34 @@
-import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Check, Loader2, X } from 'lucide-react'
 import { useScan } from '@/store/scanStore'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
 
-// The four honest phases of a static scan. The backend drives real progress via
-// polling with no per-phase events, so we cycle the active step on a timer purely
-// to reassure the user that work is happening — never claiming an exact percentage.
+// The four stages of a static scan. The active step is driven by the REAL backend
+// phase (polled via scanPhase), not a timer — so the user sees which stage is
+// actually running. `key` matches the phase string the worker reports.
 const PHASES = [
-  { label: 'Unpack', detail: 'Decompile the package' },
-  { label: 'Parse', detail: 'Read manifest & binary' },
-  { label: 'Match rules', detail: 'Run every detection rule' },
-  { label: 'Compile dossier', detail: 'Assemble the findings' },
+  { key: 'unpacking', label: 'Unpack', detail: 'Decompile the package' },
+  { key: 'parsing', label: 'Parse', detail: 'Read manifest & binary' },
+  { key: 'scanning', label: 'Match rules', detail: 'Run every detection rule' },
+  { key: 'compiling', label: 'Compile dossier', detail: 'Assemble the findings' },
 ]
+const PHASE_INDEX: Record<string, number> = { unpacking: 0, parsing: 1, scanning: 2, compiling: 3 }
 
 // Widths for the shimmering placeholder document "lines" under the scan-sweep.
 const DOC_BARS = [92, 74, 84, 58, 78, 66]
 
 export function Processing() {
-  const { currentFile, selectedPlatform, cancelScan } = useScan()
+  const { currentFile, selectedPlatform, cancelScan, scanPhase } = useScan()
   const reduce = useReducedMotion()
-  const [active, setActive] = useState(0)
 
   const kind = selectedPlatform === 'ios' ? 'IPA' : 'APK'
   const name = currentFile?.name ?? `your ${kind}`
   const size = currentFile ? `${(currentFile.size / 1_048_576).toFixed(2)} MB` : '—'
 
-  // Reassurance loop: advance the highlighted phase, then hold on the final
-  // "Compile dossier" step (real completion is signalled by the polling flow, not us).
-  useEffect(() => {
-    if (reduce) {
-      setActive(PHASES.length - 1)
-      return
-    }
-    const id = setInterval(() => {
-      setActive((i) => (i < PHASES.length - 1 ? i + 1 : i))
-    }, 2600)
-    return () => clearInterval(id)
-  }, [reduce])
+  // The active step reflects the REAL backend stage. Before the first phase
+  // lands (job still queued) we sit on step 0 with its spinner.
+  const active = scanPhase && scanPhase in PHASE_INDEX ? PHASE_INDEX[scanPhase] : 0
 
   const ease = [0.2, 0.8, 0.2, 1] as const
   const rise = (delay: number) =>
@@ -141,8 +131,7 @@ export function Processing() {
       </motion.ol>
 
       <motion.p className="font-mono text-xs text-txt-dim" {...rise(0.24)}>
-        Large apps can take a minute. We don&apos;t report an exact percentage — the phases above
-        show roughly where we are.
+        Large apps can take a minute. The highlighted step above is the stage MORF is running right now.
       </motion.p>
 
       {/* File under scan. */}

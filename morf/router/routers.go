@@ -406,6 +406,12 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			response["error"] = job.Error
 		}
 
+		// Surface the coarse in-progress stage so the client can drive a real
+		// step indicator instead of a timer, while the job is still running.
+		if (job.Status == models.JobStatusQueued || job.Status == models.JobStatusProcessing) && job.Phase != "" {
+			response["phase"] = job.Phase
+		}
+
 		// RESP-1: embed the stored result JSON verbatim via json.RawMessage so it
 		// is serialized without an unmarshal-into-map then re-marshal round-trip,
 		// while preserving the {job_id,status,...,result} envelope clients expect.

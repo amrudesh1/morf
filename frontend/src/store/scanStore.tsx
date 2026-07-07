@@ -41,6 +41,7 @@ interface ScanState {
   metadata: Metadata | null
   iosMetadata: IosMetadata | null
   resultPlatform: Platform // resolved from the backend result
+  scanPhase: string | null // live backend stage while processing (drives the stepper)
 }
 
 interface ScanContextValue extends ScanState {
@@ -101,6 +102,7 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
     metadata: null,
     iosMetadata: null,
     resultPlatform: 'android',
+    scanPhase: null,
   })
   const patch = useCallback((p: Partial<ScanState>) => setState((s) => ({ ...s, ...p })), [])
 
@@ -129,6 +131,7 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
       metadata: null,
       iosMetadata: null,
       resultPlatform: 'android',
+      scanPhase: null,
     }))
   }, [cancelPolling])
 
@@ -205,6 +208,8 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
             resetScan()
             return
           }
+          // Non-terminal: surface the live backend stage for the stepper.
+          if (resp.phase) patch({ scanPhase: resp.phase })
           delay = Math.min(delay * 2, MAX_DELAY_MS)
         }
       } catch (err) {
@@ -213,7 +218,7 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
         resetScan()
       }
     },
-    [completeWith, emitError, resetScan],
+    [completeWith, emitError, resetScan, patch],
   )
 
   const processFile = useCallback(
@@ -221,7 +226,7 @@ export function ScanStoreProvider({ children }: { children: ReactNode }) {
       cancelledRef.current = false
       clearError()
       cancelPolling()
-      patch({ currentFile: file, currentScreen: 'processing', secrets: [], metadata: null, iosMetadata: null })
+      patch({ currentFile: file, currentScreen: 'processing', secrets: [], metadata: null, iosMetadata: null, scanPhase: null })
       const ctrl = new AbortController()
       abortRef.current = ctrl
       uploadFile(file, ctrl.signal)
