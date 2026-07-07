@@ -1,7 +1,8 @@
-/* Global styles */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Roboto+Mono:wght@300;400;500&display=swap');
+/* App shell — "Forensic Dossier" outer container.
+   The ink field + paper grain live on <body> (styles.css); the shell stays
+   transparent so that document surface shows through. Type + color come from
+   the design tokens (ink/bone/signal/oxblood, Anton/Archivo/Space Mono). */
 
-/* Base styles */
 :host {
   display: block;
   height: 100%;

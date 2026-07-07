@@ -1,15 +1,19 @@
-<div class="min-h-screen bg-gradient-to-br from-blue-900 to-black relative overflow-hidden">
+<div class="relative min-h-screen overflow-hidden bg-ink text-bone">
   <!-- Global scan error banner. Replaces blocking alert() dialogs; driven by
-       ScanService.scanError$ and dismissible by the user. -->
+       ScanService.scanError$ and dismissible by the user. Styled as a struck
+       oxblood classification bar in the dossier voice. -->
   <div
     *ngIf="scanError"
     role="alert"
-    class="fixed top-0 left-0 right-0 z-50 flex items-start justify-between gap-4 bg-red-600 text-white px-4 py-3 shadow-lg"
+    class="fixed top-0 left-0 right-0 z-50 flex items-start justify-between gap-4 border-b border-oxblood bg-ink-900 px-4 py-3 shadow-lg"
   >
-    <span class="text-sm">{{ scanError }}</span>
+    <div class="flex flex-col gap-1">
+      <span class="eyebrow text-oxblood">Scan interrupted</span>
+      <span class="font-mono text-sm text-bone">{{ scanError }}</span>
+    </div>
     <button
       type="button"
-      class="text-white/80 hover:text-white font-bold leading-none"
+      class="font-mono text-lg leading-none text-bone-dim transition-colors hover:text-signal"
       aria-label="Dismiss error"
       (click)="dismissError()"
     >

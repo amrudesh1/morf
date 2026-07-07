@@ -1,60 +1,91 @@
-<div class="fixed inset-0 overflow-hidden" [@fadeInOut]>
-  <!-- Animated Background -->
-  <div class="absolute inset-0 bg-gradient-to-br from-blue-900 to-black">
-    <div class="particles-container">
-      <div *ngFor="let particle of particlePositions" 
-           class="particle" 
-           [ngStyle]="{
-             'top': particle.top,
-             'left': particle.left,
-             '--size': particle.size,
-             '--delay': particle.delay
-           }">
-      </div>
-    </div>
+<div class="fixed inset-0 overflow-hidden bg-ink text-bone" [@fadeInOut]>
+
+  <!-- Ambient dossier grain / index ticks (retains particle bindings, kept quiet) -->
+  <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
+    <span *ngFor="let particle of particlePositions"
+          class="index-tick"
+          [ngStyle]="{
+            'top': particle.top,
+            'left': particle.left,
+            '--delay': particle.delay
+          }">
+    </span>
   </div>
-  
-  <!-- Centered Content -->
-  <div class="absolute inset-0 flex flex-col items-center justify-center z-10">
-    <div class="text-center">
-      <div class="w-24 h-24 mb-6 mx-auto">
-        <img src="assets/morf.png" alt="MORF" class="spin drop-shadow-glow">
-      </div>
-      
-      <h2 class="text-2xl font-semibold text-white mb-4 splash-font">
-        Analyzing {{ selectedPlatform === 'android' ? 'APK' : 'IPA' }}
-      </h2>
-      
-      <!-- Animated Scanner Line -->
-      <div class="scanner-container mx-auto mb-6">
-        <div class="scanner-line"></div>
-      </div>
-      
-      <div class="space-y-2 text-blue-300">
-        <p class="splash-font-secondary text-lg">Scanning for sensitive information</p>
-        <div class="flex justify-center space-x-2">
-          <div class="loading-dot"></div>
-          <div class="loading-dot"></div>
-          <div class="loading-dot"></div>
-        </div>
-      </div>
-      
-      <!-- File Info -->
-      <div class="mt-8 inline-block px-6 py-3 rounded-lg bg-blue-900/20 backdrop-blur-sm border border-blue-500/30">
-        <p class="text-blue-300 splash-font-secondary">
-          <span class="text-blue-200">{{currentFile?.name}}</span><br>
-          {{getFileSize()}}
-        </p>
+
+  <!-- Centered case in progress -->
+  <div class="absolute inset-0 flex flex-col items-center justify-center px-6 z-10">
+    <div class="w-full max-w-lg">
+
+      <!-- Section eyebrow + control code -->
+      <div class="flex items-center justify-between gap-4 mb-4">
+        <span class="eyebrow">Reconnaissance in progress</span>
+        <span class="eyebrow" aria-hidden="true">{{ selectedPlatform === 'android' ? 'APK' : 'IPA' }}</span>
       </div>
 
-      <!-- Cancel Button -->
-      <div class="mt-6">
-        <button type="button"
-                (click)="cancelScan()"
-                class="px-6 py-2 rounded-lg bg-red-900/30 hover:bg-red-800/40 text-red-200 border border-red-500/40 transition-colors splash-font-secondary">
-          Cancel
-        </button>
+      <hr class="case-rule mb-6">
+
+      <!-- Screen title -->
+      <h2 class="font-display text-4xl sm:text-5xl leading-none mb-6">
+        Scanning {{ selectedPlatform === 'android' ? 'APK' : 'IPA' }}
+      </h2>
+
+      <!-- The one orchestrated moment: an amber sweep over a redacted document -->
+      <div class="dossier scan-doc relative overflow-hidden p-6 mb-6" role="img"
+           aria-label="Scanning a redacted document for exposed secrets">
+        <!-- redacted document motif: struck-out lines of "evidence" -->
+        <div class="space-y-3" aria-hidden="true">
+          <div class="redaction-line" style="width: 82%"></div>
+          <div class="redaction-line" style="width: 64%"></div>
+          <div class="redaction-line" style="width: 91%"></div>
+          <div class="redaction-line" style="width: 47%"></div>
+          <div class="redaction-line" style="width: 73%"></div>
+          <div class="redaction-line" style="width: 58%"></div>
+        </div>
+        <!-- amber scan sweep -->
+        <div class="scan-sweep-bar animate-scan-sweep" aria-hidden="true"></div>
       </div>
+
+      <!-- Status / progress lines: mono, bone-dim resolving to bone as each completes -->
+      <div class="font-mono text-sm space-y-2 mb-6" aria-live="polite">
+        <div class="status-line status-line--done flex items-center gap-3">
+          <span class="status-mark">[ok]</span>
+          <span class="status-text">Package unpacked</span>
+        </div>
+        <div class="status-line status-line--done flex items-center gap-3">
+          <span class="status-mark">[ok]</span>
+          <span class="status-text">Manifest &amp; components parsed</span>
+        </div>
+        <div class="status-line status-line--active flex items-center gap-3">
+          <span class="status-mark">[..]</span>
+          <span class="status-text">Matching detection rules</span>
+        </div>
+        <div class="status-line flex items-center gap-3">
+          <span class="status-mark">[  ]</span>
+          <span class="status-text">Compiling dossier</span>
+        </div>
+      </div>
+
+      <!-- Evidence: the file under examination -->
+      <div class="evidence mb-1">
+        <span class="k">Evidence</span>
+        <span class="lead"></span>
+        <span class="v">{{ currentFile?.name || 'unknown' }}</span>
+      </div>
+      <div class="evidence mb-6">
+        <span class="k">Size</span>
+        <span class="lead"></span>
+        <span class="v">{{ getFileSize() }}</span>
+      </div>
+
+      <hr class="case-rule mb-6">
+
+      <!-- Abort -->
+      <button type="button"
+              (click)="cancelScan()"
+              class="w-full font-mono text-sm uppercase tracking-widest text-oxblood border border-oxblood/60 rounded px-6 py-3 transition-colors hover:bg-oxblood/10 focus-visible:bg-oxblood/10">
+        Cancel scan
+      </button>
+
     </div>
   </div>
 </div>

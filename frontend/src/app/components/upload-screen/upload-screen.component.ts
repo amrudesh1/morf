@@ -26,6 +26,7 @@ export class UploadScreenComponent implements OnInit, OnDestroy {
   selectedPlatform: 'android' | 'ios' = 'android';
   particlePositions: Array<{top: string, left: string, size: string, delay: string}> = [];
   matrixChars: string[] = [];
+  isDragging = false;
   
   private platformSubscription: Subscription | undefined;
   private particleSubscription: Subscription | undefined;
@@ -70,11 +71,19 @@ export class UploadScreenComponent implements OnInit, OnDestroy {
   onDragOver(event: DragEvent) {
     event.preventDefault();
     event.stopPropagation();
+    this.isDragging = true;
+  }
+
+  onDragLeave(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDragging = false;
   }
 
   onDrop(event: DragEvent) {
     event.preventDefault();
     event.stopPropagation();
+    this.isDragging = false;
     const files = event.dataTransfer?.files;
     if (files?.length) {
       this.handleFile(files[0]);

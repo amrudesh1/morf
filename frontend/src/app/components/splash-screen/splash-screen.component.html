@@ -1,58 +1,51 @@
-<div class="fixed inset-0 overflow-hidden" [@fadeInOut]>
-  <!-- Animated Background -->
-  <div class="absolute inset-0 bg-gradient-to-br from-blue-900 to-black">
-    <div class="particles-container">
-      <div *ngFor="let particle of particlePositions" 
-           class="particle" 
-           [ngStyle]="{
-             'top': particle.top,
-             'left': particle.left,
-             '--size': particle.size,
-             '--delay': particle.delay
-           }">
+<div class="fixed inset-0 overflow-hidden bg-ink text-bone" [@fadeInOut]>
+  <!-- Case-file title card -->
+  <div class="absolute inset-0 flex items-center justify-center px-6 z-10">
+    <div class="title-card w-full max-w-2xl">
+
+      <!-- Top classification header: eyebrow + document control code -->
+      <div class="flex items-center justify-between gap-4 mb-6">
+        <span class="eyebrow">Case file</span>
+        <!-- decoded control code (matrix effect, mono) -->
+        <span class="matrix-code font-mono text-xs text-bone-dim" aria-hidden="true">
+          <span *ngFor="let char of matrixChars">{{char}}</span>
+        </span>
+      </div>
+
+      <hr class="case-rule mb-8">
+
+      <!-- Wordmark -->
+      <h1 class="wordmark font-display uppercase leading-none">MORF</h1>
+
+      <!-- Eyebrow: the framework name, decoded in mono (matrix effect) -->
+      <p class="eyebrow framework-text mt-4" aria-label="Mobile Reconnaissance Framework">
+        <span *ngFor="let char of frameworkMatrixChars">{{char}}</span>
+      </p>
+
+      <!-- The signature: a struck classification bar -->
+      <div class="mt-10">
+        <span class="stamp stamp--muted classification-bar">Classified · Reconnaissance</span>
+      </div>
+
+      <hr class="case-rule mt-10 mb-4">
+
+      <!-- Footer control line -->
+      <div class="flex items-center justify-between font-mono text-xs text-bone-dim">
+        <span>MORF - Mobile Reconnaissance Framework</span>
+        <span>v1.0.0</span>
       </div>
     </div>
   </div>
-  
-  <!-- Centered Content -->
-  <div class="absolute inset-0 flex flex-col items-center justify-center z-10">
-    <!-- Logo with Breathing Glow Animation -->
-    <div class="logo-container mb-8">
-      <img src="assets/morf.png" alt="MORF" class="logo-reveal">
-    </div>
-    
-    <!-- Tagline with Matrix Effect -->
-    <p class="text-2xl text-blue-200 text-center mb-16 splash-font matrix-text framework-text">
-      <span *ngFor="let char of frameworkMatrixChars">{{char}}</span>
-    </p>
-    
-    <!-- Animated Scanner Line -->
-    <div class="scanner-container">
-      <div class="scanner-line"></div>
-    </div>
-  </div>
-  
-  <!-- Loading Indicator -->
-  <div class="absolute bottom-12 left-0 right-0 flex flex-col items-center">
-    <div class="w-64 h-1.5 bg-blue-900/50 rounded-full overflow-hidden backdrop-blur-sm">
-      <div class="loading-bar h-full"></div>
-    </div>
-    <div class="mt-4 flex items-center space-x-2">
-      <div class="loading-dot"></div>
-      <div class="loading-dot"></div>
-      <div class="loading-dot"></div>
-      <p class="text-blue-300 text-sm ml-2 splash-font-secondary">Initializing Security Scanner</p>
-    </div>
-  </div>
-  
-  <!-- Corner Elements -->
-  <div class="absolute top-8 left-8 border border-blue-500/30 p-3 rounded-lg bg-blue-900/10 backdrop-blur-sm">
-    <div class="text-xs text-blue-300 matrix-text">
-      <span *ngFor="let char of matrixChars">{{char}}</span>
-    </div>
-  </div>
-  
-  <div class="absolute bottom-8 right-8 border border-blue-500/30 p-3 rounded-lg bg-blue-900/10 backdrop-blur-sm">
-    <div class="text-xs text-blue-300 splash-font">v1.0.0</div>
+
+  <!-- Ambient dossier grain / index ticks (retains particle bindings, kept quiet) -->
+  <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
+    <span *ngFor="let particle of particlePositions"
+          class="index-tick"
+          [ngStyle]="{
+            'top': particle.top,
+            'left': particle.left,
+            '--delay': particle.delay
+          }">
+    </span>
   </div>
 </div>

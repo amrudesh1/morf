@@ -1,9 +1,9 @@
-<div class="fixed inset-0 overflow-hidden" [@fadeInOut]>
-  <!-- Animated Background -->
-  <div class="absolute inset-0 bg-gradient-to-br from-blue-900 to-black">
+<div class="fixed inset-0 overflow-hidden bg-ink text-bone" [@fadeInOut]>
+  <!-- Ambient field: faint drifting motes over the ink surface -->
+  <div class="absolute inset-0">
     <div class="particles-container">
-      <div *ngFor="let particle of particlePositions" 
-           class="particle" 
+      <div *ngFor="let particle of particlePositions"
+           class="particle"
            [ngStyle]="{
              'top': particle.top,
              'left': particle.left,
@@ -13,190 +13,213 @@
       </div>
     </div>
   </div>
-  
+
   <!-- Header -->
-  <div class="absolute top-0 left-0 right-0 p-6 flex items-center justify-between z-10">
-    <div class="flex items-center">
-      <img src="assets/morf.png" alt="MORF" class="w-10 h-10 mr-3 drop-shadow-glow">
-      <h1 class="text-2xl font-bold text-white splash-font">Pattern Management</h1>
+  <div class="absolute top-0 left-0 right-0 px-6 py-5 flex items-center justify-between z-10 border-b border-ink-700 bg-ink/80 backdrop-blur-sm">
+    <div class="flex items-center gap-3">
+      <img src="assets/morf.png" alt="MORF - Mobile Reconnaissance Framework" class="w-9 h-9">
+      <div>
+        <p class="eyebrow">MORF · MOBILE RECONNAISSANCE FRAMEWORK</p>
+        <h1 class="font-display text-2xl text-bone tracking-wide">Detection rules ledger</h1>
+      </div>
     </div>
     <button
       (click)="goBack()"
-      class="px-4 py-2 bg-blue-600/80 text-white rounded-lg hover:bg-blue-500/80 transition-colors splash-font-secondary backdrop-blur-sm"
+      class="px-4 py-2 border border-ink-700 text-bone-dim rounded-sm font-mono text-xs uppercase tracking-widest hover:text-signal hover:border-signal transition-colors"
     >
-      Back to Upload
+      Back to upload
     </button>
   </div>
-  
+
   <!-- Main Content -->
   <div class="absolute inset-0 pt-24 pb-16 px-6 overflow-auto z-10">
-    <div class="max-w-7xl mx-auto">
+    <div class="max-w-7xl mx-auto animate-file-in">
       <!-- Alerts -->
-      <div *ngIf="error" class="mb-4 p-4 bg-red-900/50 border border-red-500/50 rounded-lg text-red-200 backdrop-blur-sm">
-        {{ error }}
+      <div *ngIf="error" class="mb-4 p-4 dossier border-l-2 border-l-oxblood text-bone font-mono text-sm">
+        <span class="stamp mr-2">FAILED</span>{{ error }}
       </div>
-      <div *ngIf="success" class="mb-4 p-4 bg-green-900/50 border border-green-500/50 rounded-lg text-green-200 backdrop-blur-sm">
-        {{ success }}
+      <div *ngIf="success" class="mb-4 p-4 dossier border-l-2 border-l-signal text-bone font-mono text-sm">
+        <span class="stamp stamp--signal mr-2">DONE</span>{{ success }}
       </div>
 
       <!-- Actions Bar -->
-      <div class="mb-6 flex justify-between items-center">
+      <div class="mb-6 flex flex-wrap gap-3 justify-between items-center">
         <button
           (click)="openAddFileModal()"
-          class="px-4 py-2 bg-blue-600/80 text-white rounded-lg hover:bg-blue-500/80 transition-colors splash-font-secondary backdrop-blur-sm"
+          class="px-4 py-2 bg-signal text-ink rounded-sm font-sans font-bold text-sm uppercase tracking-widest hover:bg-signal-hi transition-colors"
         >
-          + New Pattern File
+          New rule file
         </button>
         <button
           (click)="loadPatterns()"
-          class="px-4 py-2 bg-blue-900/50 text-blue-200 rounded-lg hover:bg-blue-800/50 transition-colors splash-font-secondary backdrop-blur-sm"
+          class="px-4 py-2 border border-ink-700 text-bone-dim rounded-sm font-mono text-xs uppercase tracking-widest hover:text-signal hover:border-signal transition-colors disabled:opacity-40"
           [disabled]="isLoading"
         >
-          {{ isLoading ? 'Loading...' : 'Refresh' }}
+          {{ isLoading ? 'Reloading…' : 'Reload ledger' }}
         </button>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Pattern Files List -->
-        <div class="bg-blue-900/20 backdrop-blur-sm rounded-lg border border-blue-500/30 p-6">
-          <h2 class="text-xl font-semibold text-white mb-4 splash-font">Pattern Files</h2>
-          <div class="space-y-2 max-h-96 overflow-y-auto">
+        <div class="dossier p-6">
+          <p class="eyebrow mb-1">RULE FILES</p>
+          <h2 class="font-display text-lg text-bone mb-4">Case folders</h2>
+          <div class="space-y-2 max-h-96 overflow-y-auto pr-1">
             <div
               *ngFor="let file of patternFiles; trackBy: trackByFilename"
               (click)="selectFile(file)"
-              [ngClass]="{ 'bg-blue-600/30': selectedFile?.filename === file.filename }"
-              class="p-3 rounded-lg cursor-pointer hover:bg-blue-800/30 transition-colors border border-blue-500/20"
+              [ngClass]="{ 'border-signal bg-signal/5': selectedFile?.filename === file.filename }"
+              class="p-3 rounded-sm cursor-pointer border border-ink-700 hover:border-bone-dim transition-colors"
             >
-              <div class="flex justify-between items-start">
-                <div>
-                  <p class="text-white font-medium splash-font-secondary">{{ file.filename }}</p>
-                  <p class="text-blue-300 text-sm mt-1">{{ file.patterns.length }} patterns</p>
+              <div class="flex justify-between items-start gap-2">
+                <div class="min-w-0">
+                  <p class="font-mono text-sm text-bone truncate">{{ file.filename }}</p>
+                  <p class="font-mono text-xs text-bone-dim mt-1">{{ file.patterns.length }} rules on file</p>
                 </div>
                 <button
                   (click)="deleteFile(file); $event.stopPropagation()"
-                  class="text-red-400 hover:text-red-300 text-sm"
+                  class="shrink-0 font-mono text-xs uppercase tracking-wider text-bone-dim hover:text-oxblood transition-colors"
+                  title="Delete this rule file"
                 >
                   Delete
                 </button>
               </div>
             </div>
-            <div *ngIf="patternFiles.length === 0" class="text-blue-300 text-center py-8">
-              No pattern files found
+            <div *ngIf="patternFiles.length === 0" class="text-bone-dim font-mono text-sm text-center py-8">
+              No rule files yet — create one to start.
             </div>
           </div>
         </div>
 
         <!-- Patterns List -->
-        <div class="bg-blue-900/20 backdrop-blur-sm rounded-lg border border-blue-500/30 p-6">
-          <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-semibold text-white splash-font">Patterns</h2>
+        <div class="dossier p-6">
+          <div class="flex justify-between items-start mb-4">
+            <div>
+              <p class="eyebrow mb-1">DETECTION RULES</p>
+              <h2 class="font-display text-lg text-bone">Ledger entries</h2>
+            </div>
             <button
               *ngIf="selectedFile"
               (click)="openAddPatternModal()"
-              class="px-3 py-1 bg-blue-600/80 text-white rounded text-sm hover:bg-blue-500/80 transition-colors splash-font-secondary"
+              class="shrink-0 px-3 py-1 bg-signal text-ink rounded-sm font-sans font-bold text-xs uppercase tracking-widest hover:bg-signal-hi transition-colors"
             >
-              + Add
+              Add rule
             </button>
           </div>
-          <div *ngIf="selectedFile" class="space-y-2 max-h-96 overflow-y-auto">
+          <div *ngIf="selectedFile" class="space-y-2 max-h-96 overflow-y-auto pr-1">
             <div
               *ngFor="let pattern of selectedFile.patterns; trackBy: trackByPatternName"
               (click)="selectPattern(pattern)"
-              [ngClass]="{ 'bg-blue-600/30': selectedPattern?.name === pattern.name }"
-              class="p-3 rounded-lg cursor-pointer hover:bg-blue-800/30 transition-colors border border-blue-500/20"
+              [ngClass]="{ 'border-signal bg-signal/5': selectedPattern?.name === pattern.name }"
+              class="p-3 rounded-sm cursor-pointer border border-ink-700 hover:border-bone-dim transition-colors"
             >
-              <div class="flex justify-between items-start">
-                <div class="flex-1">
-                  <div class="flex items-center gap-2">
-                    <p class="text-white font-medium splash-font-secondary">{{ pattern.name }}</p>
+              <div class="flex justify-between items-start gap-2">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center flex-wrap gap-2">
                     <span
+                      class="sev"
                       [ngClass]="{
-                        'bg-green-500/30': pattern.enabled,
-                        'bg-red-500/30': !pattern.enabled
+                        'sev--high': pattern.confidence === 'high',
+                        'sev--medium': pattern.confidence === 'medium',
+                        'sev--low': pattern.confidence === 'low'
                       }"
-                      class="px-2 py-0.5 rounded text-xs text-white"
+                      [attr.aria-label]="pattern.confidence + ' confidence'"
+                    ></span>
+                    <p class="font-sans font-semibold text-sm text-bone">{{ pattern.name }}</p>
+                    <span
+                      class="stamp"
+                      [ngClass]="pattern.enabled ? 'stamp--signal' : 'stamp--muted'"
                     >
                       {{ pattern.enabled ? 'Enabled' : 'Disabled' }}
                     </span>
-                    <span
-                      [ngClass]="{
-                        'bg-red-500/30': pattern.confidence === 'high',
-                        'bg-yellow-500/30': pattern.confidence === 'medium',
-                        'bg-blue-500/30': pattern.confidence === 'low'
-                      }"
-                      class="px-2 py-0.5 rounded text-xs text-white"
-                    >
-                      {{ pattern.confidence }}
-                    </span>
                   </div>
-                  <p class="text-blue-300 text-xs mt-1 font-mono truncate">{{ pattern.regex }}</p>
+                  <p class="text-bone-dim text-xs mt-2 font-mono truncate">{{ pattern.regex }}</p>
                 </div>
-                <div class="flex gap-1 ml-2">
+                <div class="flex gap-2 ml-2 shrink-0 font-mono text-xs uppercase tracking-wider">
                   <button
                     (click)="openTestPatternModal(pattern); $event.stopPropagation()"
-                    class="text-blue-400 hover:text-blue-300 text-sm"
-                    title="Test Pattern"
+                    class="text-bone-dim hover:text-signal transition-colors"
+                    title="Test this rule against sample text"
                   >
                     Test
                   </button>
                   <button
                     (click)="openEditPatternModal(pattern); $event.stopPropagation()"
-                    class="text-yellow-400 hover:text-yellow-300 text-sm"
-                    title="Edit Pattern"
+                    class="text-bone-dim hover:text-signal transition-colors"
+                    title="Edit this rule"
                   >
                     Edit
                   </button>
                   <button
                     (click)="togglePattern(pattern); $event.stopPropagation()"
-                    [class.text-green-400]="!pattern.enabled"
-                    [class.text-gray-400]="pattern.enabled"
-                    class="hover:text-green-300 text-sm"
-                    [title]="pattern.enabled ? 'Disable Pattern' : 'Enable Pattern'"
+                    [class.text-signal]="!pattern.enabled"
+                    [class.text-bone-dim]="pattern.enabled"
+                    class="hover:text-signal-hi transition-colors"
+                    [title]="pattern.enabled ? 'Disable this rule' : 'Enable this rule'"
                   >
-                    {{ pattern.enabled ? '✓' : '○' }}
+                    {{ pattern.enabled ? 'On' : 'Off' }}
                   </button>
                   <button
                     (click)="deletePattern(pattern); $event.stopPropagation()"
-                    class="text-red-400 hover:text-red-300 text-sm"
-                    title="Delete Pattern"
+                    class="text-bone-dim hover:text-oxblood transition-colors"
+                    title="Delete this rule"
                   >
-                    ×
+                    Del
                   </button>
                 </div>
               </div>
             </div>
-            <div *ngIf="selectedFile.patterns.length === 0" class="text-blue-300 text-center py-8">
-              No patterns in this file
+            <div *ngIf="selectedFile.patterns.length === 0" class="text-bone-dim font-mono text-sm text-center py-8">
+              This file holds no rules yet — add one.
             </div>
           </div>
-          <div *ngIf="!selectedFile" class="text-blue-300 text-center py-8">
-            Select a file to view patterns
+          <div *ngIf="!selectedFile" class="text-bone-dim font-mono text-sm text-center py-8">
+            Open a case folder to read its rules.
           </div>
         </div>
 
         <!-- Pattern Details -->
-        <div class="bg-blue-900/20 backdrop-blur-sm rounded-lg border border-blue-500/30 p-6">
-          <h2 class="text-xl font-semibold text-white mb-4 splash-font">Pattern Details</h2>
-          <div *ngIf="selectedPattern" class="space-y-4">
-            <div>
-              <label class="text-blue-300 text-sm splash-font-secondary">Name</label>
-              <p class="text-white mt-1 splash-font-secondary">{{ selectedPattern.name }}</p>
+        <div class="dossier p-6">
+          <p class="eyebrow mb-1">RULE DETAIL</p>
+          <h2 class="font-display text-lg text-bone mb-4">Entry record</h2>
+          <div *ngIf="selectedPattern" class="space-y-3">
+            <div class="evidence">
+              <span class="k">name</span>
+              <span class="lead"></span>
+              <span class="v">{{ selectedPattern.name }}</span>
             </div>
-            <div>
-              <label class="text-blue-300 text-sm splash-font-secondary">Regex</label>
-              <p class="text-white mt-1 font-mono text-sm break-all splash-font-secondary">{{ selectedPattern.regex }}</p>
+            <div class="evidence">
+              <span class="k">regex</span>
+              <span class="lead"></span>
+              <span class="v break-all">{{ selectedPattern.regex }}</span>
             </div>
-            <div>
-              <label class="text-blue-300 text-sm splash-font-secondary">Confidence</label>
-              <p class="text-white mt-1 splash-font-secondary capitalize">{{ selectedPattern.confidence }}</p>
+            <div class="evidence">
+              <span class="k">confidence</span>
+              <span class="lead"></span>
+              <span class="v capitalize flex items-center gap-2">
+                <span
+                  class="sev"
+                  [ngClass]="{
+                    'sev--high': selectedPattern.confidence === 'high',
+                    'sev--medium': selectedPattern.confidence === 'medium',
+                    'sev--low': selectedPattern.confidence === 'low'
+                  }"
+                ></span>
+                {{ selectedPattern.confidence }}
+              </span>
             </div>
-            <div>
-              <label class="text-blue-300 text-sm splash-font-secondary">Status</label>
-              <p class="text-white mt-1 splash-font-secondary">{{ selectedPattern.enabled ? 'Enabled' : 'Disabled' }}</p>
+            <div class="evidence">
+              <span class="k">status</span>
+              <span class="lead"></span>
+              <span class="v">
+                <span class="stamp" [ngClass]="selectedPattern.enabled ? 'stamp--signal' : 'stamp--muted'">
+                  {{ selectedPattern.enabled ? 'Enabled' : 'Disabled' }}
+                </span>
+              </span>
             </div>
           </div>
-          <div *ngIf="!selectedPattern" class="text-blue-300 text-center py-8">
-            Select a pattern to view details
+          <div *ngIf="!selectedPattern" class="text-bone-dim font-mono text-sm text-center py-8">
+            Select a rule to read its record.
           </div>
         </div>
       </div>
@@ -205,62 +228,66 @@
 </div>
 
 <!-- Add Pattern Modal -->
-<div *ngIf="showAddPatternModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-  <div class="bg-blue-900/95 backdrop-blur-md rounded-lg border border-blue-500/50 p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-    <h3 class="text-xl font-bold text-white mb-4 splash-font">Add Pattern</h3>
+<div *ngIf="showAddPatternModal" class="fixed inset-0 bg-ink-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+  <div class="dossier p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-file-in">
+    <p class="eyebrow mb-1">NEW ENTRY</p>
+    <h3 class="font-display text-xl text-bone mb-4">Add detection rule</h3>
     <div class="space-y-4">
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">Name</label>
+        <label for="addPatternName" class="eyebrow block mb-2">Rule name</label>
         <input
+          id="addPatternName"
           type="text"
           [(ngModel)]="newPattern.name"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white focus:outline-none focus:border-blue-400"
-          placeholder="Pattern name"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-sans focus:outline-none focus:border-signal transition-colors"
+          placeholder="e.g. aws-access-key"
         />
       </div>
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">Regex</label>
+        <label for="addPatternRegex" class="eyebrow block mb-2">Regex</label>
         <textarea
+          id="addPatternRegex"
           [(ngModel)]="newPattern.regex"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white font-mono text-sm focus:outline-none focus:border-blue-400"
-          placeholder="Regular expression pattern"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-mono text-sm focus:outline-none focus:border-signal transition-colors"
+          placeholder="The regular expression to match"
           rows="3"
         ></textarea>
       </div>
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">Confidence</label>
+        <label for="addPatternConfidence" class="eyebrow block mb-2">Confidence</label>
         <select
+          id="addPatternConfidence"
           [(ngModel)]="newPattern.confidence"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white focus:outline-none focus:border-blue-400"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-sans focus:outline-none focus:border-signal transition-colors"
         >
           <option value="high">High</option>
           <option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
       </div>
-      <div class="flex items-center">
+      <div class="flex items-center gap-2">
         <input
           type="checkbox"
           [(ngModel)]="newPattern.enabled"
           id="enabled"
-          class="mr-2"
+          class="accent-signal w-4 h-4"
         />
-        <label for="enabled" class="text-blue-300 splash-font-secondary">Enabled</label>
+        <label for="enabled" class="font-mono text-sm text-bone-dim">Enable this rule now</label>
       </div>
-      <div *ngIf="error" class="text-red-400 text-sm">{{ error }}</div>
-      <div class="flex gap-4 justify-end">
+      <div *ngIf="error" class="text-oxblood font-mono text-sm">{{ error }}</div>
+      <div class="flex gap-3 justify-end pt-2">
         <button
           (click)="closeAddPatternModal()"
-          class="px-4 py-2 bg-blue-800/50 text-blue-200 rounded hover:bg-blue-700/50 transition-colors splash-font-secondary"
+          class="px-4 py-2 border border-ink-700 text-bone-dim rounded-sm font-mono text-xs uppercase tracking-widest hover:text-bone hover:border-bone-dim transition-colors"
         >
           Cancel
         </button>
         <button
           (click)="addPattern()"
           [disabled]="isLoading"
-          class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors splash-font-secondary"
+          class="px-4 py-2 bg-signal text-ink rounded-sm font-sans font-bold text-sm uppercase tracking-widest hover:bg-signal-hi transition-colors disabled:opacity-40"
         >
-          {{ isLoading ? 'Adding...' : 'Add Pattern' }}
+          {{ isLoading ? 'Adding…' : 'Add rule' }}
         </button>
       </div>
     </div>
@@ -268,62 +295,66 @@
 </div>
 
 <!-- Edit Pattern Modal -->
-<div *ngIf="showEditPatternModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-  <div class="bg-blue-900/95 backdrop-blur-md rounded-lg border border-blue-500/50 p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-    <h3 class="text-xl font-bold text-white mb-4 splash-font">Edit Pattern</h3>
+<div *ngIf="showEditPatternModal" class="fixed inset-0 bg-ink-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+  <div class="dossier p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-file-in">
+    <p class="eyebrow mb-1">AMEND ENTRY</p>
+    <h3 class="font-display text-xl text-bone mb-4">Edit detection rule</h3>
     <div class="space-y-4">
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">Name</label>
+        <label for="editPatternName" class="eyebrow block mb-2">Rule name</label>
         <input
+          id="editPatternName"
           type="text"
           [(ngModel)]="newPattern.name"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white focus:outline-none focus:border-blue-400"
-          placeholder="Pattern name"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-sans focus:outline-none focus:border-signal transition-colors"
+          placeholder="e.g. aws-access-key"
         />
       </div>
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">Regex</label>
+        <label for="editPatternRegex" class="eyebrow block mb-2">Regex</label>
         <textarea
+          id="editPatternRegex"
           [(ngModel)]="newPattern.regex"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white font-mono text-sm focus:outline-none focus:border-blue-400"
-          placeholder="Regular expression pattern"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-mono text-sm focus:outline-none focus:border-signal transition-colors"
+          placeholder="The regular expression to match"
           rows="3"
         ></textarea>
       </div>
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">Confidence</label>
+        <label for="editPatternConfidence" class="eyebrow block mb-2">Confidence</label>
         <select
+          id="editPatternConfidence"
           [(ngModel)]="newPattern.confidence"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white focus:outline-none focus:border-blue-400"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-sans focus:outline-none focus:border-signal transition-colors"
         >
           <option value="high">High</option>
           <option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
       </div>
-      <div class="flex items-center">
+      <div class="flex items-center gap-2">
         <input
           type="checkbox"
           [(ngModel)]="newPattern.enabled"
           id="editEnabled"
-          class="mr-2"
+          class="accent-signal w-4 h-4"
         />
-        <label for="editEnabled" class="text-blue-300 splash-font-secondary">Enabled</label>
+        <label for="editEnabled" class="font-mono text-sm text-bone-dim">Enable this rule</label>
       </div>
-      <div *ngIf="error" class="text-red-400 text-sm">{{ error }}</div>
-      <div class="flex gap-4 justify-end">
+      <div *ngIf="error" class="text-oxblood font-mono text-sm">{{ error }}</div>
+      <div class="flex gap-3 justify-end pt-2">
         <button
           (click)="closeEditPatternModal()"
-          class="px-4 py-2 bg-blue-800/50 text-blue-200 rounded hover:bg-blue-700/50 transition-colors splash-font-secondary"
+          class="px-4 py-2 border border-ink-700 text-bone-dim rounded-sm font-mono text-xs uppercase tracking-widest hover:text-bone hover:border-bone-dim transition-colors"
         >
           Cancel
         </button>
         <button
           (click)="updatePattern()"
           [disabled]="isLoading"
-          class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors splash-font-secondary"
+          class="px-4 py-2 bg-signal text-ink rounded-sm font-sans font-bold text-sm uppercase tracking-widest hover:bg-signal-hi transition-colors disabled:opacity-40"
         >
-          {{ isLoading ? 'Updating...' : 'Update Pattern' }}
+          {{ isLoading ? 'Saving…' : 'Save changes' }}
         </button>
       </div>
     </div>
@@ -331,50 +362,52 @@
 </div>
 
 <!-- Test Pattern Modal -->
-<div *ngIf="showTestPatternModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-  <div class="bg-blue-900/95 backdrop-blur-md rounded-lg border border-blue-500/50 p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-    <h3 class="text-xl font-bold text-white mb-4 splash-font">Test Pattern: {{ selectedPattern?.name }}</h3>
+<div *ngIf="showTestPatternModal" class="fixed inset-0 bg-ink-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+  <div class="dossier p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-file-in">
+    <p class="eyebrow mb-1">DRY RUN</p>
+    <h3 class="font-display text-xl text-bone mb-4">Test rule · {{ selectedPattern?.name }}</h3>
     <div class="space-y-4">
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">Sample Text</label>
+        <label for="testSampleText" class="eyebrow block mb-2">Sample text</label>
         <textarea
+          id="testSampleText"
           [(ngModel)]="testSampleText"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white font-mono text-sm focus:outline-none focus:border-blue-400"
-          placeholder="Enter text to test against the pattern"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-mono text-sm focus:outline-none focus:border-signal transition-colors"
+          placeholder="Paste text to run the rule against"
           rows="5"
         ></textarea>
       </div>
       <button
         (click)="testPattern()"
         [disabled]="isLoading"
-        class="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors splash-font-secondary"
+        class="w-full px-4 py-2 bg-signal text-ink rounded-sm font-sans font-bold text-sm uppercase tracking-widest hover:bg-signal-hi transition-colors disabled:opacity-40"
       >
-        {{ isLoading ? 'Testing...' : 'Test Pattern' }}
+        {{ isLoading ? 'Running…' : 'Run test' }}
       </button>
       <div *ngIf="testResults" class="mt-4">
-        <div class="p-4 bg-blue-800/50 rounded border border-blue-500/50">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-blue-300 splash-font-secondary">Result:</span>
-            <span [class.text-green-400]="testResults.matched" [class.text-red-400]="!testResults.matched" class="font-bold">
-              {{ testResults.matched ? 'MATCHED' : 'NO MATCH' }}
+        <div class="p-4 bg-ink border border-ink-700 rounded-sm">
+          <div class="flex items-center flex-wrap gap-2 mb-2">
+            <span class="eyebrow">VERDICT</span>
+            <span class="stamp" [ngClass]="testResults.matched ? 'stamp--signal' : 'stamp--muted'">
+              {{ testResults.matched ? 'Matched' : 'No match' }}
             </span>
-            <span class="text-blue-300 text-sm">({{ testResults.count }} matches)</span>
+            <span class="text-bone-dim font-mono text-xs">{{ testResults.count }} hits</span>
           </div>
-          <div *ngIf="testResults.matches.length > 0" class="mt-2">
-            <p class="text-blue-300 text-sm mb-2 splash-font-secondary">Matches:</p>
-            <div class="space-y-1 max-h-40 overflow-y-auto">
-              <div *ngFor="let match of testResults.matches" class="p-2 bg-blue-900/50 rounded text-white font-mono text-xs">
+          <div *ngIf="testResults.matches.length > 0" class="mt-3">
+            <p class="eyebrow mb-2">CAPTURED</p>
+            <div class="space-y-1 max-h-40 overflow-y-auto pr-1">
+              <div *ngFor="let match of testResults.matches" class="p-2 bg-ink-900 border border-ink-700 rounded-sm text-bone font-mono text-xs break-all">
                 {{ match }}
               </div>
             </div>
           </div>
         </div>
       </div>
-      <div *ngIf="error" class="text-red-400 text-sm">{{ error }}</div>
-      <div class="flex gap-4 justify-end">
+      <div *ngIf="error" class="text-oxblood font-mono text-sm">{{ error }}</div>
+      <div class="flex gap-3 justify-end pt-2">
         <button
           (click)="closeTestPatternModal()"
-          class="px-4 py-2 bg-blue-800/50 text-blue-200 rounded hover:bg-blue-700/50 transition-colors splash-font-secondary"
+          class="px-4 py-2 border border-ink-700 text-bone-dim rounded-sm font-mono text-xs uppercase tracking-widest hover:text-bone hover:border-bone-dim transition-colors"
         >
           Close
         </button>
@@ -384,37 +417,38 @@
 </div>
 
 <!-- Add File Modal -->
-<div *ngIf="showAddFileModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-  <div class="bg-blue-900/95 backdrop-blur-md rounded-lg border border-blue-500/50 p-6 max-w-md w-full">
-    <h3 class="text-xl font-bold text-white mb-4 splash-font">Create Pattern File</h3>
+<div *ngIf="showAddFileModal" class="fixed inset-0 bg-ink-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+  <div class="dossier p-6 max-w-md w-full animate-file-in">
+    <p class="eyebrow mb-1">NEW FOLDER</p>
+    <h3 class="font-display text-xl text-bone mb-4">Create rule file</h3>
     <div class="space-y-4">
       <div>
-        <label class="block text-blue-300 mb-2 splash-font-secondary">File Name</label>
+        <label for="newFileName" class="eyebrow block mb-2">File name</label>
         <input
+          id="newFileName"
           type="text"
           [(ngModel)]="newFileName"
-          class="w-full px-4 py-2 bg-blue-800/50 border border-blue-500/50 rounded text-white focus:outline-none focus:border-blue-400"
+          class="w-full px-4 py-2 bg-ink border border-ink-700 rounded-sm text-bone font-mono focus:outline-none focus:border-signal transition-colors"
           placeholder="custom-patterns.yaml"
         />
-        <p class="text-blue-400 text-xs mt-1">.yaml or .yml extension will be added automatically</p>
+        <p class="text-bone-dim font-mono text-xs mt-2">A .yaml or .yml extension is added for you.</p>
       </div>
-      <div *ngIf="error" class="text-red-400 text-sm">{{ error }}</div>
-      <div class="flex gap-4 justify-end">
+      <div *ngIf="error" class="text-oxblood font-mono text-sm">{{ error }}</div>
+      <div class="flex gap-3 justify-end pt-2">
         <button
           (click)="closeAddFileModal()"
-          class="px-4 py-2 bg-blue-800/50 text-blue-200 rounded hover:bg-blue-700/50 transition-colors splash-font-secondary"
+          class="px-4 py-2 border border-ink-700 text-bone-dim rounded-sm font-mono text-xs uppercase tracking-widest hover:text-bone hover:border-bone-dim transition-colors"
         >
           Cancel
         </button>
         <button
           (click)="createPatternFile()"
           [disabled]="isLoading"
-          class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors splash-font-secondary"
+          class="px-4 py-2 bg-signal text-ink rounded-sm font-sans font-bold text-sm uppercase tracking-widest hover:bg-signal-hi transition-colors disabled:opacity-40"
         >
-          {{ isLoading ? 'Creating...' : 'Create File' }}
+          {{ isLoading ? 'Creating…' : 'Create file' }}
         </button>
       </div>
     </div>
   </div>
 </div>
-
