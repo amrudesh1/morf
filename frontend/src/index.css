@@ -91,7 +91,11 @@
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 20px 40px -28px rgba(0, 0, 0, 0.9);
   }
   .card-hover { transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; }
-  .card-hover:hover { border-color: var(--line-hi); }
+  .card-hover:hover {
+    border-color: var(--line-hi);
+    transform: translateY(-2px);
+    box-shadow: 0 12px 32px -14px rgba(99, 102, 241, 0.4), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  }
 
   .hairline { border: 0; border-top: 1px solid var(--line); }
 

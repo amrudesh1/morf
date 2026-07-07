@@ -351,10 +351,16 @@ export function PatternManagement() {
             </Button>
           </div>
           <ul className="mt-4 space-y-1.5">
-            {files.map((f) => {
+            {files.map((f, i) => {
               const isActive = selectedName === f.filename
               return (
-                <li key={f.filename} className="group flex items-center gap-1">
+                <motion.li
+                  key={f.filename}
+                  className="group flex items-center gap-1"
+                  initial={reduce ? false : { opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, delay: Math.min(i * 0.03, 0.3), ease: [0.2, 0.8, 0.2, 1] }}
+                >
                   <button
                     onClick={() => setSelectedName(f.filename)}
                     aria-current={isActive}
@@ -382,7 +388,7 @@ export function PatternManagement() {
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
-                </li>
+                </motion.li>
               )
             })}
             {files.length === 0 && !loading && (
@@ -420,10 +426,13 @@ export function PatternManagement() {
               </p>
             )}
 
-            {selected?.patterns.map((p) => (
-              <div
+            {selected?.patterns.map((p, i) => (
+              <motion.div
                 key={p.name}
-                className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line py-3 last:border-b-0"
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border-b border-line px-1 py-3 transition-colors last:border-b-0 hover:bg-surface-hi/40"
+                initial={reduce ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: Math.min(i * 0.03, 0.3), ease: [0.2, 0.8, 0.2, 1] }}
               >
                 <span
                   className={cn('sev-dot', sevDot[p.confidence])}
@@ -463,7 +472,7 @@ export function PatternManagement() {
                     Delete
                   </button>
                 </div>
-              </div>
+              </motion.div>
             ))}
           </div>
         </div>

@@ -87,7 +87,7 @@ export function Processing() {
               key={phase.label}
               aria-current={current ? 'step' : undefined}
               className={cn(
-                'card flex items-start gap-3 p-3 transition-colors',
+                'card relative flex items-start gap-3 overflow-hidden p-3 transition-colors',
                 current
                   ? 'border-indigo/60 shadow-glow'
                   : done
@@ -95,6 +95,16 @@ export function Processing() {
                     : 'border-line opacity-70',
               )}
             >
+              {/* Indeterminate sweep so a long-running step never looks frozen. */}
+              {current && !reduce && (
+                <motion.span
+                  aria-hidden
+                  className="absolute bottom-0 left-0 h-0.5 w-2/5 bg-gradient-to-r from-transparent via-indigo-hi to-transparent"
+                  initial={{ x: '-120%' }}
+                  animate={{ x: '320%' }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              )}
               <span
                 className={cn(
                   'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
