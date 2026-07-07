@@ -17,6 +17,9 @@ limitations under the License.
 package models
 
 import (
+	"encoding/json"
+	"strings"
+
 	"gorm.io/gorm"
 )
 
@@ -55,6 +58,33 @@ type IOSMetadata struct {
 }
 
 // TableName specifies the table name for IOSMetadata
+// BeforeSave guarantees every `type:json` column holds a syntactically valid
+// JSON document before it reaches MySQL. The extraction pipeline may leave a
+// JSON field empty (e.g. no entitlements, no URL schemes), and MySQL rejects an
+// empty string in a JSON column with Error 3140 ("The document is empty"),
+// which would roll back the entire secret-persistence transaction and silently
+// drop ALL findings for the scan. Coercing empty/invalid values to a valid
+// empty container ("[]" for arrays, "{}" for objects) makes persistence robust
+// regardless of what the extractor produced.
+func (m *IOSMetadata) BeforeSave(*gorm.DB) error {
+	m.Architectures = ensureJSON(m.Architectures, "[]")
+	m.URLSchemes = ensureJSON(m.URLSchemes, "[]")
+	m.Frameworks = ensureJSON(m.Frameworks, "[]")
+	m.Entitlements = ensureJSON(m.Entitlements, "{}")
+	m.ATSExceptions = ensureJSON(m.ATSExceptions, "{}")
+	return nil
+}
+
+// ensureJSON returns s if it is non-empty valid JSON, otherwise the fallback
+// (a valid empty JSON container).
+func ensureJSON(s, fallback string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || !json.Valid([]byte(s)) {
+		return fallback
+	}
+	return s
+}
+
 func (IOSMetadata) TableName() string {
 	return "ios_metadata"
 }

@@ -190,6 +190,7 @@ var migrationNames = []string{
 	"005_add_indexes.sql",
 	"006_component_security_fields.sql",
 	"007_ios_support.sql",
+	"008_add_gorm_timestamps.sql",
 }
 
 // connectToDatabase attempts to establish a database connection
