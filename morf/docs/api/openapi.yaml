@@ -1209,12 +1209,17 @@ components:
           example: Success
         data:
           type: object
+          description: >-
+            Result envelope. For iOS scans (`platform` == `ios`) the backend
+            flattens the iOS metadata fields (see IosMetadata) directly onto
+            this object alongside the shared fields below; there is no nested
+            `iosMetadata` object on the wire.
           properties:
             platform:
               type: string
               description: >-
                 Which analyser produced this result. `android` for `.apk`
-                inputs, `ios` for `.ipa` inputs.
+                inputs, `ios` for `.ipa` inputs. Emitted inside `data`.
               enum: [android, ios]
               example: ios
             fileName:
@@ -1232,44 +1237,102 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Secret'
-            iosMetadata:
-              description: >-
-                Present only when `platform` is `ios`. Omitted (or null) for
-                Android scans.
-              allOf:
-                - $ref: '#/components/schemas/IosMetadata'
             createdAt:
               type: string
               format: date-time
+            # --- iOS-only fields, present when platform == ios (flat on data) ---
+            bundleIdentifier:
+              type: string
+              description: CFBundleIdentifier (iOS only).
+              example: com.morf.fixture
+            bundleVersion:
+              type: string
+              description: CFBundleVersion (iOS only).
+              example: "1"
+            deploymentTarget:
+              type: string
+              description: MinimumOSVersion / deployment target (iOS only).
+              example: "15.0"
+            executableName:
+              type: string
+              description: CFBundleExecutable, the Mach-O name in the .app (iOS only).
+              example: Fixture
+            isEncrypted:
+              type: boolean
+              description: >-
+                True when a LC_ENCRYPTION_INFO[_64] load command reports a
+                non-zero cryptid (FairPlay). In-binary secret extraction over
+                the encrypted __TEXT range is not meaningful when true. See
+                docs/IOS_SCANNING.md. (iOS only.)
+              example: false
+            architectures:
+              type: array
+              description: CPU architectures found in the Mach-O, e.g. arm64 (iOS only).
+              items:
+                type: string
+              example: ["arm64"]
+            urlSchemes:
+              type: array
+              description: >-
+                Custom URL schemes declared under
+                CFBundleURLTypes[].CFBundleURLSchemes[] (iOS only).
+              items:
+                type: string
+              example: ["morffixture"]
+            entitlements:
+              type: object
+              description: >-
+                Entitlements decoded from the embedded provisioning profile /
+                code signature. Free-form key/value map (iOS only).
+              additionalProperties: true
+            frameworks:
+              type: array
+              description: Linked / embedded frameworks (iOS only).
+              items:
+                type: string
+            atsExceptions:
+              description: >-
+                App Transport Security exception configuration parsed from
+                NSAppTransportSecurity, or null when absent (iOS only).
+              nullable: true
 
     IosMetadata:
       type: object
       description: |
-        iOS-specific metadata extracted from the `.ipa`'s `Info.plist` and the
-        Mach-O executable. Present only when `platform` is `ios`. Fields are
-        populated from the parsed property list (XML or binary) and the Mach-O
-        load commands.
+        iOS-specific metadata extracted from the `.ipa`'s `Info.plist`, the
+        Mach-O executable, and the embedded provisioning profile. On the wire
+        these fields are flattened onto the ScanResult `data` object (they are
+        NOT nested under an `iosMetadata` key); this schema documents that
+        field set as produced by response.IOSMetadataHandler.
       properties:
         bundleIdentifier:
           type: string
           description: CFBundleIdentifier.
           example: com.morf.fixture
-        bundleExecutable:
-          type: string
-          description: CFBundleExecutable (name of the Mach-O in the .app).
-          example: Fixture
-        shortVersion:
-          type: string
-          description: CFBundleShortVersionString.
-          example: "1.0"
         bundleVersion:
           type: string
           description: CFBundleVersion.
           example: "1"
-        minimumOSVersion:
+        deploymentTarget:
           type: string
-          description: MinimumOSVersion.
+          description: MinimumOSVersion / deployment target.
           example: "15.0"
+        executableName:
+          type: string
+          description: CFBundleExecutable (name of the Mach-O in the .app).
+          example: Fixture
+        isEncrypted:
+          type: boolean
+          description: >-
+            True when a LC_ENCRYPTION_INFO[_64] load command reports a
+            non-zero cryptid (FairPlay).
+          example: false
+        architectures:
+          type: array
+          description: CPU architectures found in the Mach-O (e.g. arm64).
+          items:
+            type: string
+          example: ["arm64"]
         urlSchemes:
           type: array
           description: >-
@@ -1278,26 +1341,18 @@ components:
           items:
             type: string
           example: ["morffixture"]
-        isFairPlayEncrypted:
-          type: boolean
-          description: >-
-            True when a LC_ENCRYPTION_INFO[_64] load command reports a
-            non-zero cryptid. When true, in-binary secret extraction over the
-            encrypted __TEXT range is not meaningful (static analysis cannot
-            decrypt FairPlay). See docs/IOS_SCANNING.md.
-          example: false
-        isFatBinary:
-          type: boolean
-          description: >-
-            True when the executable is a fat/universal Mach-O (opened via
-            macho.OpenFat); each architecture slice is analysed separately.
-          example: false
-        architectures:
+        entitlements:
+          type: object
+          description: Entitlements decoded from the provisioning profile / code signature.
+          additionalProperties: true
+        frameworks:
           type: array
-          description: CPU architectures found in the Mach-O (e.g. arm64).
+          description: Linked / embedded frameworks.
           items:
             type: string
-          example: ["arm64"]
+        atsExceptions:
+          description: App Transport Security exception configuration, or null when absent.
+          nullable: true
 
     Secret:
       type: object
