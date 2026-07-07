@@ -6,6 +6,7 @@ toolchain go1.24.1
 
 require (
 	github.com/alicebob/miniredis/v2 v2.33.0
+	github.com/blacktop/go-macho v1.1.282
 	github.com/gin-contrib/cors v1.4.0
 	github.com/gin-gonic/gin v1.8.1
 	github.com/google/uuid v1.6.0
@@ -22,11 +23,13 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.4
 	gorm.io/gorm v1.25.7
+	howett.net/plist v1.0.1
 )
 
 require (
 	github.com/alicebob/gopher-json v0.0.0-20200520072559-a9ecdc9d1d3a // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/blacktop/go-dwarf v1.0.14 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect

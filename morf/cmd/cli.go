@@ -46,9 +46,11 @@ func GetCliCmd() *cobra.Command {
 				apkPath = args[0]
 			}
 
-			// Validate APK file extension
-			if len(apkPath) < 4 || !strings.HasSuffix(strings.ToLower(apkPath), ".apk") {
-				log.Error("The file must be an APK file")
+			// Validate package file extension. Both Android (.apk) and iOS
+			// (.ipa) packages are accepted.
+			lowerPath := strings.ToLower(apkPath)
+			if len(apkPath) < 4 || (!strings.HasSuffix(lowerPath, ".apk") && !strings.HasSuffix(lowerPath, ".ipa")) {
+				log.Error("The file must be an APK or IPA file")
 				return
 			}
 

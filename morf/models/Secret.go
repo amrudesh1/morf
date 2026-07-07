@@ -28,7 +28,8 @@ type Secret struct {
 	APKHash       string `json:"apkHash" gorm:"column:apk_hash;size:255;uniqueIndex:idx_apk_hash;not null"`
 	APKVersion    string `json:"apkVersion" gorm:"column:apk_version"`
 	SecretCount   int    `json:"secretCount" gorm:"column:secret_count;default:0"`
-	Metadata      string `json:"metadata" gorm:"type:json;column:metadata"` // Full metadata JSON for backward compatibility
+	Platform      string `json:"platform" gorm:"column:platform;size:20;index:idx_platform;default:'android'"` // Platform discriminator: "android" (APK) or "ios" (IPA). Defaults to "android" for backward compatibility.
+	Metadata      string `json:"metadata" gorm:"type:json;column:metadata"`                                    // Full metadata JSON for backward compatibility
 
 	// Relationships
 	PackageData        PackageData         `json:"-" gorm:"foreignKey:PackageDataID"`
@@ -37,6 +38,9 @@ type Secret struct {
 	Services           []Service           `json:"services" gorm:"foreignKey:SecretID"`
 	ContentProviders   []ContentProvider   `json:"contentProviders" gorm:"foreignKey:SecretID"`
 	BroadcastReceivers []BroadcastReceiver `json:"broadcastReceivers" gorm:"foreignKey:SecretID"`
+
+	// iOS-only: populated for IPA scans (Platform == "ios"); nil for Android.
+	IOSMetadata *IOSMetadata `json:"iosMetadata,omitempty" gorm:"foreignKey:SecretID"`
 }
 
 // TableName specifies the table name for Secret
