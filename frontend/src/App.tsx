@@ -10,8 +10,7 @@ import { Results } from '@/screens/Results'
 import { PatternManagement } from '@/screens/PatternManagement'
 import type { Screen } from '@/types'
 
-const SCREENS: Record<Screen, React.ComponentType> = {
-  splash: Splash,
+const SCREENS: Record<Exclude<Screen, 'splash'>, React.ComponentType> = {
   upload: Upload,
   processing: Processing,
   results: Results,
@@ -21,7 +20,8 @@ const SCREENS: Record<Screen, React.ComponentType> = {
 function Shell() {
   const { currentScreen, error, clearError } = useScan()
   const reduce = useReducedMotion()
-  const Current = SCREENS[currentScreen]
+  const isSplash = currentScreen === 'splash'
+  const Current = currentScreen === 'splash' ? Upload : SCREENS[currentScreen]
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-base text-txt">
@@ -54,11 +54,12 @@ function Shell() {
         )}
       </AnimatePresence>
 
-      {currentScreen !== 'splash' && <AppHeader />}
+      {!isSplash && <AppHeader />}
 
+      {/* Main screen router (splash excluded — it's a top-level overlay below). */}
       <AnimatePresence mode="wait">
         <motion.div
-          key={currentScreen}
+          key={isSplash ? 'upload' : currentScreen}
           initial={reduce ? false : { opacity: 0, x: 24 }}
           animate={{ opacity: 1, x: 0 }}
           exit={reduce ? { opacity: 0 } : { opacity: 0, x: -24 }}
@@ -68,6 +69,10 @@ function Shell() {
           <Current />
         </motion.div>
       </AnimatePresence>
+
+      {/* Splash: a true viewport overlay (not inside the transformed router, so
+          it genuinely covers the header). Fades out on exit to reveal the app. */}
+      <AnimatePresence>{isSplash && <Splash key="splash" />}</AnimatePresence>
     </div>
   )
 }
