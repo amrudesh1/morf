@@ -1210,10 +1210,20 @@ components:
         data:
           type: object
           properties:
+            platform:
+              type: string
+              description: >-
+                Which analyser produced this result. `android` for `.apk`
+                inputs, `ios` for `.ipa` inputs.
+              enum: [android, ios]
+              example: ios
             fileName:
               type: string
             packageName:
               type: string
+              description: >-
+                Android package name, or the iOS CFBundleIdentifier when
+                `platform` is `ios`.
             version:
               type: string
             secretCount:
@@ -1222,9 +1232,72 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Secret'
+            iosMetadata:
+              description: >-
+                Present only when `platform` is `ios`. Omitted (or null) for
+                Android scans.
+              allOf:
+                - $ref: '#/components/schemas/IosMetadata'
             createdAt:
               type: string
               format: date-time
+
+    IosMetadata:
+      type: object
+      description: |
+        iOS-specific metadata extracted from the `.ipa`'s `Info.plist` and the
+        Mach-O executable. Present only when `platform` is `ios`. Fields are
+        populated from the parsed property list (XML or binary) and the Mach-O
+        load commands.
+      properties:
+        bundleIdentifier:
+          type: string
+          description: CFBundleIdentifier.
+          example: com.morf.fixture
+        bundleExecutable:
+          type: string
+          description: CFBundleExecutable (name of the Mach-O in the .app).
+          example: Fixture
+        shortVersion:
+          type: string
+          description: CFBundleShortVersionString.
+          example: "1.0"
+        bundleVersion:
+          type: string
+          description: CFBundleVersion.
+          example: "1"
+        minimumOSVersion:
+          type: string
+          description: MinimumOSVersion.
+          example: "15.0"
+        urlSchemes:
+          type: array
+          description: >-
+            Custom URL schemes declared under
+            CFBundleURLTypes[].CFBundleURLSchemes[] (deeplink inventory).
+          items:
+            type: string
+          example: ["morffixture"]
+        isFairPlayEncrypted:
+          type: boolean
+          description: >-
+            True when a LC_ENCRYPTION_INFO[_64] load command reports a
+            non-zero cryptid. When true, in-binary secret extraction over the
+            encrypted __TEXT range is not meaningful (static analysis cannot
+            decrypt FairPlay). See docs/IOS_SCANNING.md.
+          example: false
+        isFatBinary:
+          type: boolean
+          description: >-
+            True when the executable is a fat/universal Mach-O (opened via
+            macho.OpenFat); each architecture slice is analysed separately.
+          example: false
+        architectures:
+          type: array
+          description: CPU architectures found in the Mach-O (e.g. arm64).
+          items:
+            type: string
+          example: ["arm64"]
 
     Secret:
       type: object

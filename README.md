@@ -186,6 +186,18 @@ After starting MORF, access the intuitive web interface at [http://localhost](ht
    - Deeplink mapping
    - Comprehensive metadata
 
+> **📱 iOS (.ipa) uploads:** MORF accepts iOS app archives (`.ipa`) alongside
+> Android `.apk` files at the same upload endpoint. For an `.ipa`, MORF unzips
+> the `Payload/<App>.app/` tree, parses the `Info.plist` (XML or binary) for
+> bundle metadata and URL schemes, and analyses the Mach-O executable with
+> [`go-macho`](https://github.com/blacktop/go-macho) — enumerating sections by
+> name to extract Swift/Objective-C/C strings and running the same secret
+> patterns used for Android. FairPlay-encrypted (App Store) binaries are
+> detected via the Mach-O `cryptid` and flagged; supply a **decrypted** `.ipa`
+> for full binary coverage. See
+> [`morf/docs/IOS_SCANNING.md`](morf/docs/IOS_SCANNING.md) for the architecture
+> and [`morf/ios/testdata/`](morf/ios/testdata/) for the smoke-test fixtures.
+
 ### Command Line Interface
 
 MORF also provides a powerful CLI for automation and integration:
