@@ -1,31 +1,39 @@
 import { useMemo, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import * as Collapsible from '@radix-ui/react-collapsible'
-import { ChevronDown, Copy, Search } from 'lucide-react'
+import {
+  ChevronDown,
+  Copy,
+  Check,
+  Search,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  Plus,
+  RotateCcw,
+} from 'lucide-react'
 import { useScan } from '@/store/scanStore'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
 import type { Confidence, NamedComponent, Activity, Secret } from '@/types'
 
-const sevClass: Record<Confidence, string> = {
-  high: 'sev--high',
-  medium: 'sev--medium',
-  low: 'sev--low',
+const sevDot: Record<Confidence, string> = {
+  high: 'sev-dot--high',
+  medium: 'sev-dot--med',
+  low: 'sev-dot--low',
 }
-const stampClass: Record<Confidence, string> = {
-  high: 'stamp',
-  medium: 'stamp stamp--signal',
-  low: 'stamp stamp--muted',
+const sevBadge: Record<Confidence, string> = {
+  high: 'badge badge--high',
+  medium: 'badge badge--med',
+  low: 'badge badge--low',
 }
-
 const SEVERITIES: Confidence[] = ['high', 'medium', 'low']
 type SevFilter = 'all' | Confidence
 
-// Backend file paths are absolute inside the per-job workspace; trim everything
-// up to the decompiled `output/` root so the user sees a readable relative path.
+// Backend paths are absolute inside the per-job workspace; trim to the readable root.
 function cleanPath(p: string): string {
-  const m = p.indexOf('output/')
-  return m >= 0 ? p.slice(m) : p
+  const i = p.indexOf('output/')
+  return i >= 0 ? p.slice(i) : p
 }
 
 export function Results() {
@@ -38,12 +46,9 @@ export function Results() {
     resetScan,
   } = useScan()
   const reduce = useReducedMotion()
-
   const [query, setQuery] = useState('')
   const [sevFilter, setSevFilter] = useState<SevFilter>('all')
 
-  // Target identity: bundle id for iOS, package name (falling back to a
-  // filename-style label) for Android. Read from `resultPlatform`, never the tab.
   const targetIdentity =
     resultPlatform === 'ios'
       ? iosMetadata?.bundleIdentifier || iosMetadata?.executableName || 'Unknown target'
@@ -54,109 +59,154 @@ export function Results() {
     return secrets.filter((s) => {
       if (sevFilter !== 'all' && s.secretConfidence !== sevFilter) return false
       if (!q) return true
-      const hay = `${s.secretType} ${s.type} ${s.secretString}`.toLowerCase()
-      return hay.includes(q)
+      return `${s.secretType} ${s.type} ${s.secretString}`.toLowerCase().includes(q)
     })
   }, [secrets, query, sevFilter])
 
   const ease = [0.2, 0.8, 0.2, 1] as const
-  // ONE tasteful moment: a staggered reveal of the evidence cards.
-  const cardMotion = (i: number) =>
+  const rise = (i: number) =>
     reduce
       ? {}
       : {
-          initial: { opacity: 0, y: 12 },
+          initial: { opacity: 0, y: 14 },
           animate: { opacity: 1, y: 0 },
-          transition: { duration: 0.4, delay: Math.min(i * 0.05, 0.5), ease },
+          transition: { duration: 0.4, delay: Math.min(i * 0.05, 0.4), ease },
         }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-4xl flex-col gap-8 px-6 py-12">
-      {/* Scannable summary masthead — the headline verdict + severity + target. */}
-      <section className="dossier flex flex-wrap items-end justify-between gap-6 p-6">
-        <div className="space-y-3">
-          <span className="eyebrow">Reconnaissance complete</span>
-          <div className="flex items-baseline gap-3">
-            <span className="font-display text-7xl text-oxblood">{secrets.length}</span>
-            <span className="font-display text-3xl text-bone">Exposed</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            {SEVERITIES.map((sev) => (
-              <span key={sev} className="flex items-center gap-2 font-mono text-xs text-bone-dim">
-                <span className={cn('sev', sevClass[sev])} />
-                <span className="text-bone">{getSecretCountBySeverity(sev)}</span>
-                <span className="uppercase tracking-widest">{sev}</span>
+    <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-10 md:px-6">
+      {/* Summary masthead */}
+      <motion.section className="card overflow-hidden p-6 md:p-8" {...rise(0)}>
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div>
+            <span className="eyebrow text-txt-dim">Reconnaissance complete</span>
+            <div className="mt-3 flex items-end gap-3">
+              <span className="gradient-text font-display text-6xl font-bold leading-none md:text-7xl">
+                {secrets.length}
               </span>
+              <span className="pb-1 font-display text-2xl font-semibold text-txt-muted">
+                {secrets.length === 1 ? 'secret exposed' : 'secrets exposed'}
+              </span>
+            </div>
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              {SEVERITIES.map((sev) => (
+                <span key={sev} className={cn(sevBadge[sev])}>
+                  <span className={cn('sev-dot', sevDot[sev])} />
+                  {getSecretCountBySeverity(sev)} {sev}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-3">
+            <span
+              className={cn('badge', resultPlatform === 'ios' ? 'badge--cyan' : 'badge--indigo')}
+            >
+              {resultPlatform === 'ios' ? 'iOS' : 'Android'}
+            </span>
+            <span className="max-w-[16rem] break-all text-right font-mono text-xs text-txt-muted">
+              {targetIdentity}
+            </span>
+            <Button variant="ghost" size="sm" onClick={resetScan}>
+              <RotateCcw className="h-3.5 w-3.5" /> New scan
+            </Button>
+          </div>
+        </div>
+      </motion.section>
+
+      {/* Findings */}
+      <motion.section className="flex flex-col gap-4" {...rise(1)}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-display text-xl font-semibold text-txt">Discovered secrets</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-txt-dim" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filter by type or value…"
+                aria-label="Filter secrets"
+                className="w-56 rounded-lg border border-line bg-surface py-2 pl-9 pr-3 font-mono text-xs text-txt placeholder:text-txt-dim focus:border-indigo focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-1 rounded-lg border border-line bg-surface p-1">
+              {(['all', ...SEVERITIES] as SevFilter[]).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setSevFilter(f)}
+                  aria-pressed={sevFilter === f}
+                  className={cn(
+                    'rounded-md px-2.5 py-1 font-mono text-[0.68rem] uppercase tracking-wider transition-colors',
+                    sevFilter === f ? 'bg-surface-hi text-txt' : 'text-txt-dim hover:text-txt-muted',
+                  )}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {secrets.length === 0 ? (
+          <div className="card flex flex-col items-center gap-2 px-6 py-14 text-center">
+            <ShieldCheck className="h-8 w-8 text-sev-low" />
+            <p className="font-display text-lg text-txt">No exposed secrets found</p>
+            <p className="max-w-sm text-sm text-txt-muted">
+              MORF ran every detection rule against this build and came up clean.
+            </p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="card px-6 py-10 text-center text-sm text-txt-muted">
+            No secrets match your filter.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {filtered.map((s, i) => (
+              <SecretCard key={`${s.fileLocation}:${s.lineNo}:${i}`} secret={s} index={i} reduce={!!reduce} />
             ))}
           </div>
-        </div>
-        <div className="space-y-2 text-right">
-          <span
-            className={cn(
-              resultPlatform === 'ios' ? 'stamp stamp--signal' : 'stamp stamp--muted',
-            )}
-          >
-            {resultPlatform === 'ios' ? 'iOS' : 'Android'}
-          </span>
-          <p className="max-w-xs break-all font-mono text-xs text-bone-dim">{targetIdentity}</p>
-          <Button variant="ghost" size="sm" onClick={resetScan} className="justify-end">
-            New case →
-          </Button>
-        </div>
-      </section>
+        )}
+      </motion.section>
 
       {/* iOS target panel */}
       {resultPlatform === 'ios' && iosMetadata && (
-        <section className="dossier space-y-4 p-6">
-          <span className="eyebrow">Target · iOS</span>
-          <div className="grid gap-2 md:grid-cols-2">
-            <Ev k="Bundle ID" v={iosMetadata.bundleIdentifier} />
-            <Ev k="Version" v={iosMetadata.bundleVersion} />
-            <Ev k="Deployment target" v={iosMetadata.deploymentTarget} />
-            <Ev k="Executable" v={iosMetadata.executableName} />
-            <Ev k="Architectures" v={iosMetadata.architectures.join(', ')} />
-            <div className="evidence">
+        <motion.section className="card p-6 md:p-8" {...rise(2)}>
+          <SectionTitle>Target · iOS</SectionTitle>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Stat k="Bundle ID" v={iosMetadata.bundleIdentifier || '—'} mono />
+            <Stat k="Version" v={iosMetadata.bundleVersion || '—'} mono />
+            <Stat k="Deployment target" v={iosMetadata.deploymentTarget || '—'} mono />
+            <Stat k="Executable" v={iosMetadata.executableName || '—'} mono />
+            <Stat k="Architectures" v={iosMetadata.architectures.join(', ') || '—'} mono />
+            <div className="stat">
               <span className="k">Encryption</span>
-              <span className="lead" />
-              <span className={iosMetadata.isEncrypted ? 'stamp' : 'stamp stamp--muted'}>
-                {iosMetadata.isEncrypted ? 'Encrypted' : 'Exposed'}
+              <span className="mt-1">
+                <span className={cn('badge', iosMetadata.isEncrypted ? 'badge--cyan' : 'badge--high')}>
+                  {iosMetadata.isEncrypted ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  {iosMetadata.isEncrypted ? 'Encrypted' : 'Exposed'}
+                </span>
               </span>
             </div>
           </div>
 
           {iosMetadata.urlSchemes.length > 0 && (
-            <div className="space-y-1">
-              <span className="eyebrow">URL schemes</span>
-              <p className="font-mono text-xs text-signal">
-                {iosMetadata.urlSchemes.join('  ·  ')}
-              </p>
-            </div>
+            <ChipList title="URL schemes" items={iosMetadata.urlSchemes} accent />
           )}
-
           {iosMetadata.frameworks.length > 0 && (
-            <div className="space-y-1">
-              <span className="eyebrow">Frameworks · {iosMetadata.frameworks.length}</span>
-              <p className="font-mono text-xs text-bone-dim">
-                {iosMetadata.frameworks.join('  ·  ')}
-              </p>
-            </div>
+            <ChipList title="Frameworks" items={iosMetadata.frameworks} />
           )}
 
           {Object.keys(iosMetadata.entitlements).length > 0 && (
-            <div className="space-y-2">
-              <span className="eyebrow">Entitlements</span>
-              <div className="overflow-hidden rounded border border-ink-700">
-                <table className="w-full border-collapse text-left font-mono text-xs">
+            <div className="mt-6">
+              <span className="eyebrow">
+                Entitlements · {Object.keys(iosMetadata.entitlements).length}
+              </span>
+              <div className="mt-2 overflow-hidden rounded-lg border border-line">
+                <table className="data-table">
                   <tbody>
-                    {Object.entries(iosMetadata.entitlements).map(([k, v], i) => (
-                      <tr
-                        key={k}
-                        className={cn('align-top', i % 2 === 1 && 'bg-ink-800/50')}
-                      >
-                        <td className="w-1/3 break-all px-3 py-2 text-bone-dim">{k}</td>
-                        <td className="break-all px-3 py-2 text-bone">
-                          {JSON.stringify(v)}
-                        </td>
+                    {Object.entries(iosMetadata.entitlements).map(([k, v]) => (
+                      <tr key={k}>
+                        <td>{k}</td>
+                        <td>{typeof v === 'string' ? v : JSON.stringify(v)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -164,29 +214,22 @@ export function Results() {
               </div>
             </div>
           )}
-        </section>
+        </motion.section>
       )}
 
       {/* Android target panel */}
       {resultPlatform === 'android' && metadata && (
-        <section className="dossier space-y-4 p-6">
-          <span className="eyebrow">Target · Android</span>
-          <div className="grid gap-2 md:grid-cols-2">
-            <Ev k="Package" v={metadata.packageName} />
-            <Ev k="Version" v={metadata.version} />
-            <Ev k="Min SDK" v={metadata.minSdk} />
-            <Ev k="Target SDK" v={metadata.targetSdk} />
+        <motion.section className="card p-6 md:p-8" {...rise(2)}>
+          <SectionTitle>Target · Android</SectionTitle>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat k="Package" v={metadata.packageName || '—'} mono />
+            <Stat k="Version" v={metadata.version || '—'} mono />
+            <Stat k="Min SDK" v={metadata.minSdk || '—'} mono />
+            <Stat k="Target SDK" v={metadata.targetSdk || '—'} mono />
           </div>
-
-          <div className="space-y-2">
-            <ComponentSection
-              title="Activities"
-              items={metadata.activities.map((a: Activity) => a.name)}
-            />
-            <ComponentSection
-              title="Services"
-              items={metadata.services.map((c: NamedComponent) => c.name)}
-            />
+          <div className="mt-6 flex flex-col gap-2">
+            <ComponentSection title="Activities" items={metadata.activities.map((a: Activity) => a.name)} />
+            <ComponentSection title="Services" items={metadata.services.map((c: NamedComponent) => c.name)} />
             <ComponentSection
               title="Content providers"
               items={metadata.contentProviders.map((c: NamedComponent) => c.name)}
@@ -197,129 +240,52 @@ export function Results() {
             />
             <ComponentSection title="Permissions" items={metadata.permissions} />
           </div>
-        </section>
+        </motion.section>
       )}
-
-      {/* Discovered secrets */}
-      <section className="dossier p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="eyebrow">Discovered secrets</span>
-          <span className="font-mono text-xs text-bone-dim">
-            {filtered.length} of {secrets.length} shown
-          </span>
-        </div>
-
-        {secrets.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <label className="relative flex-1 min-w-[12rem]">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-bone-dim"
-                aria-hidden
-              />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Filter by type or value"
-                aria-label="Filter secrets by type or value"
-                className="w-full rounded border border-ink-700 bg-ink-900/60 py-2 pl-9 pr-3 font-mono text-xs text-bone placeholder:text-bone-dim focus:border-signal focus:outline-none"
-              />
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              {(['all', ...SEVERITIES] as SevFilter[]).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setSevFilter(f)}
-                  aria-pressed={sevFilter === f}
-                  className={cn(
-                    'rounded border px-3 py-1.5 font-mono text-[0.65rem] uppercase tracking-widest transition-colors',
-                    sevFilter === f
-                      ? 'border-signal text-signal'
-                      : 'border-ink-700 text-bone-dim hover:text-signal',
-                  )}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-4 space-y-3">
-          {secrets.length === 0 && (
-            <p className="font-mono text-sm text-bone-dim">No exposed secrets found.</p>
-          )}
-          {secrets.length > 0 && filtered.length === 0 && (
-            <p className="font-mono text-sm text-bone-dim">
-              No secrets match your filter.
-            </p>
-          )}
-          {filtered.map((s, i) => (
-            <SecretCard key={`${s.fileLocation}:${s.lineNo}:${i}`} secret={s} motion={cardMotion(i)} />
-          ))}
-        </div>
-      </section>
     </div>
   )
 }
 
-function SecretCard({
-  secret: s,
-  motion: motionProps,
-}: {
-  secret: Secret
-  motion: Record<string, unknown>
-}) {
-  const [copied, setCopied] = useState(false)
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h2 className="font-display text-lg font-semibold text-txt">{children}</h2>
+}
 
-  const copy = () => {
-    navigator.clipboard?.writeText(s.secretString)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
-  }
-
+function Stat({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
-    <motion.div
-      className="rounded border border-ink-700 bg-ink-800/60 p-4"
-      {...motionProps}
-    >
-      <div className="flex items-center gap-3">
-        <span className={cn('sev', sevClass[s.secretConfidence])} />
-        <span className="font-display text-lg text-bone">{s.secretType || s.type}</span>
-        <span className={cn('ml-auto', stampClass[s.secretConfidence])}>
-          {s.secretConfidence}
-        </span>
-      </div>
+    <div className="stat">
+      <span className="k">{k}</span>
+      <span className={cn('v break-all', mono && 'font-mono text-sm')}>{v}</span>
+    </div>
+  )
+}
 
-      <div className="mt-3 flex items-center gap-3">
-        <span className="font-mono text-xs text-bone-dim">value</span>
-        {/* SIGNATURE — redaction bar reveals the leaked secret on hover/focus. */}
-        <span
-          className="redaction font-mono text-sm"
-          tabIndex={0}
-          role="button"
-          title="Reveal secret"
-          aria-label="Reveal secret value"
-        >
-          {s.secretString}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={copy}
-          aria-label="Copy value"
-          className="ml-auto text-[0.65rem]"
-        >
-          <Copy className="h-3 w-3" aria-hidden />
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
+// A wrapped list of pills, with expand-all when there are many.
+function ChipList({ title, items, accent }: { title: string; items: string[]; accent?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const LIMIT = 24
+  const shown = open ? items : items.slice(0, LIMIT)
+  const hidden = items.length - shown.length
+  return (
+    <div className="mt-6">
+      <span className="eyebrow">
+        {title} · {items.length}
+      </span>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {shown.map((it) => (
+          <span key={it} className={cn('chip', accent && 'border-cyan/30 text-cyan')}>
+            {it}
+          </span>
+        ))}
+        {hidden > 0 && (
+          <button
+            onClick={() => setOpen(true)}
+            className="chip border-indigo/40 text-indigo-hi hover:text-indigo-hi"
+          >
+            <Plus className="h-3 w-3" /> {hidden} more
+          </button>
+        )}
       </div>
-
-      <p className="mt-2 font-mono text-xs text-bone-dim">
-        {cleanPath(s.fileLocation)}:{s.lineNo}
-      </p>
-    </motion.div>
+    </div>
   )
 }
 
@@ -327,35 +293,88 @@ function ComponentSection({ title, items }: { title: string; items: string[] }) 
   const [open, setOpen] = useState(false)
   if (items.length === 0) return null
   return (
-    <Collapsible.Root open={open} onOpenChange={setOpen} className="rounded border border-ink-700">
-      <Collapsible.Trigger className="flex w-full items-center justify-between px-4 py-3 text-left font-mono text-xs text-bone hover:text-signal">
-        <span className="uppercase tracking-widest">
-          {title} <span className="text-bone-dim">· {items.length}</span>
+    <Collapsible.Root open={open} onOpenChange={setOpen}>
+      <Collapsible.Trigger className="flex w-full items-center justify-between rounded-lg border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-line-hi">
+        <span className="flex items-center gap-2 text-sm font-medium text-txt">
+          {title}
+          <span className="badge badge--muted">{items.length}</span>
         </span>
-        <ChevronDown
-          className={cn('h-4 w-4 transition-transform', open && 'rotate-180')}
-          aria-hidden
-        />
+        <ChevronDown className={cn('h-4 w-4 text-txt-dim transition-transform', open && 'rotate-180')} />
       </Collapsible.Trigger>
-      <Collapsible.Content className="border-t border-ink-700 px-4 py-3">
-        <ul className="space-y-1 font-mono text-xs text-bone-dim">
-          {items.map((name, i) => (
-            <li key={`${name}:${i}`} className="break-all">
-              {name}
-            </li>
+      <Collapsible.Content className="overflow-hidden">
+        <div className="flex flex-wrap gap-1.5 px-1 py-3">
+          {items.map((it, i) => (
+            <span key={`${it}-${i}`} className="chip">
+              {it}
+            </span>
           ))}
-        </ul>
+        </div>
       </Collapsible.Content>
     </Collapsible.Root>
   )
 }
 
-function Ev({ k, v }: { k: string; v: string }) {
+function SecretCard({ secret, index, reduce }: { secret: Secret; index: number; reduce: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const [revealed, setRevealed] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(secret.secretString)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+  const motionProps = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, y: 10 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.35, delay: Math.min(index * 0.04, 0.4) },
+      }
   return (
-    <div className="evidence">
-      <span className="k">{k}</span>
-      <span className="lead" />
-      <span className="v">{v || '—'}</span>
-    </div>
+    <motion.div className="card card-hover p-5" {...motionProps}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className={cn('sev-dot', sevDot[secret.secretConfidence])} />
+          <span className="font-display text-base font-semibold text-txt">
+            {secret.secretType || secret.type}
+          </span>
+        </div>
+        <span className={cn(sevBadge[secret.secretConfidence])}>{secret.secretConfidence}</span>
+      </div>
+
+      <div className="mt-4 flex items-center gap-2">
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={() => setRevealed((r) => !r)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setRevealed((r) => !r)
+            }
+          }}
+          className={cn('reveal min-w-0 flex-1 text-sm', revealed && 'revealed')}
+          aria-label="Secret value — activate to reveal"
+        >
+          {secret.secretString}
+        </span>
+        <button
+          onClick={copy}
+          aria-label="Copy secret value"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-2 font-mono text-xs text-txt-muted transition-colors hover:border-line-hi hover:text-txt"
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-sev-low" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+
+      <p className="mt-3 truncate font-mono text-xs text-txt-dim" title={secret.fileLocation}>
+        {cleanPath(secret.fileLocation)}
+        {secret.lineNo ? `:${secret.lineNo}` : ''}
+      </p>
+    </motion.div>
   )
 }

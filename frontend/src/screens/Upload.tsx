@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { motion, useReducedMotion, type Variants } from 'framer-motion'
+import { UploadCloud, ShieldCheck } from 'lucide-react'
 import { useScan } from '@/store/scanStore'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
@@ -49,8 +50,10 @@ export function Upload() {
     >
       <motion.div variants={item}>
         <span className="eyebrow">Intake</span>
-        <h1 className="font-display text-5xl text-bone">Open a case file</h1>
-        <p className="mt-3 max-w-xl font-sans text-bone-dim">
+        <h1 className="mt-2 font-display text-5xl font-bold tracking-tight text-txt">
+          Open a <span className="gradient-text">case file</span>
+        </h1>
+        <p className="mt-3 max-w-xl font-sans text-txt-muted">
           Hand over a mobile app package and MORF combs it for hardcoded secrets, exposed
           components, and telling metadata.
         </p>
@@ -58,10 +61,12 @@ export function Upload() {
 
       {/* Platform choice — explained, with the accepted extension shown. */}
       <motion.div variants={item} className="flex flex-col gap-2">
-        <span className="font-mono text-xs uppercase tracking-widest text-bone-dim">
-          What are we looking at?
-        </span>
-        <div role="tablist" aria-label="Target platform" className="flex flex-wrap gap-2 font-mono text-sm">
+        <span className="eyebrow">What are we looking at?</span>
+        <div
+          role="tablist"
+          aria-label="Target platform"
+          className="inline-flex w-fit items-center gap-1 rounded-xl border border-line bg-surface p-1"
+        >
           {(
             [
               { id: 'android', label: 'Android', accepts: '.apk' },
@@ -79,14 +84,19 @@ export function Upload() {
                   setError(null)
                 }}
                 className={cn(
-                  'flex items-baseline gap-2 rounded border px-4 py-2 uppercase tracking-wider transition-colors',
+                  'flex items-baseline gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
                   active
-                    ? 'border-signal text-signal'
-                    : 'border-ink-700 text-bone-dim hover:border-bone-dim hover:text-bone',
+                    ? 'bg-surface-hi text-txt shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]'
+                    : 'text-txt-dim hover:text-txt-muted',
                 )}
               >
-                <span>{p.label}</span>
-                <span className={cn('lowercase tracking-normal', active ? 'text-signal/70' : 'text-bone-dim/60')}>
+                <span className="font-display font-semibold tracking-tight">{p.label}</span>
+                <span
+                  className={cn(
+                    'font-mono text-xs',
+                    active ? 'text-cyan' : 'text-txt-dim',
+                  )}
+                >
                   {p.accepts}
                 </span>
               </button>
@@ -119,24 +129,34 @@ export function Upload() {
             handle(e.dataTransfer.files?.[0])
           }}
           className={cn(
-            'dossier group flex min-h-64 cursor-pointer flex-col items-center justify-center gap-3 rounded border-2 border-dashed p-10 text-center transition-colors',
+            'card group flex min-h-64 cursor-pointer flex-col items-center justify-center gap-4 border-2 border-dashed p-10 text-center transition-colors',
             dragging
-              ? 'border-signal bg-signal/5'
+              ? 'border-indigo bg-indigo/[0.06]'
               : error
-                ? 'border-oxblood/60 hover:border-oxblood'
-                : 'border-bone-dim/40 hover:border-signal hover:bg-signal/[0.03]',
+                ? 'border-sev-high/50 hover:border-sev-high'
+                : 'border-line-hi hover:border-indigo hover:bg-indigo/[0.03]',
           )}
         >
-          <span className="font-display text-2xl text-bone">
+          <span
+            className={cn(
+              'flex h-14 w-14 items-center justify-center rounded-2xl border transition-colors',
+              dragging
+                ? 'border-indigo/50 bg-indigo/10 text-indigo-hi'
+                : 'border-line bg-surface-hi text-txt-muted group-hover:border-indigo/40 group-hover:text-indigo-hi',
+            )}
+          >
+            <UploadCloud className="h-6 w-6" />
+          </span>
+          <span className="font-display text-2xl font-semibold tracking-tight text-txt">
             Drag a {ext} here, or click to browse
           </span>
-          <span className="font-mono text-xs uppercase tracking-widest text-bone-dim">
+          <span className="chip">
             {platformName} · accepts {ext}
           </span>
           <Button
             variant="outline"
             size="sm"
-            className="mt-2 pointer-events-none"
+            className="mt-1 pointer-events-none"
             tabIndex={-1}
             aria-hidden="true"
           >
@@ -154,20 +174,21 @@ export function Upload() {
           />
         </div>
 
-        {/* Inline extension-mismatch error — dossier voice: what's wrong + how to fix. */}
+        {/* Inline extension-mismatch error — what's wrong + how to fix. */}
         {error && (
-          <p role="alert" className="mt-3 font-mono text-sm text-oxblood">
+          <p role="alert" className="mt-3 font-mono text-sm text-sev-high">
             {error}
           </p>
         )}
       </motion.div>
 
       {/* What happens next / analyzed locally. */}
-      <motion.div variants={item} className="dossier rounded border border-ink-700 p-4">
-        <span className="font-mono text-xs uppercase tracking-widest text-bone-dim">
-          What happens next
-        </span>
-        <p className="mt-2 font-sans text-sm text-bone-dim">
+      <motion.div variants={item} className="card p-5">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-cyan" />
+          <span className="eyebrow">What happens next</span>
+        </div>
+        <p className="mt-2.5 font-sans text-sm text-txt-muted">
           We unpack the archive, parse its manifest and metadata, then run every detection rule
           across the decompiled sources. Your file is analyzed on this machine — nothing about the
           app leaves your setup.

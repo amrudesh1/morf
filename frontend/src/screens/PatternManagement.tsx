@@ -1,12 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, useReducedMotion } from 'framer-motion'
+import { X } from 'lucide-react'
 import { patternsApi } from '@/lib/api'
 import type { Confidence, Pattern, PatternFile, PatternTestResponse } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
 
 const CONFIDENCES: Confidence[] = ['high', 'medium', 'low']
+
+// Confidence → severity signal tokens (high→high, medium→med, low→low).
+const sevDot: Record<Confidence, string> = {
+  high: 'sev-dot--high',
+  medium: 'sev-dot--med',
+  low: 'sev-dot--low',
+}
 
 // --- Toast ------------------------------------------------------------------
 function Toast({ message, onDone }: { message: string; onDone: () => void }) {
@@ -22,10 +30,10 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
       initial={reduce ? false : { opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
-      className="dossier fixed bottom-6 right-6 z-50 flex items-center gap-3 border-signal/50 px-4 py-3"
+      className="card fixed bottom-6 right-6 z-50 flex items-center gap-3 border-cyan/40 px-4 py-3 shadow-glow-cyan"
     >
-      <span className="sev sev--medium" />
-      <span className="font-mono text-sm text-bone">{message}</span>
+      <span className="sev-dot sev-dot--low" />
+      <span className="font-mono text-sm text-txt">{message}</span>
     </motion.div>
   )
 }
@@ -48,7 +56,7 @@ function Modal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink-900/70 backdrop-blur-sm data-[state=open]:animate-in" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-base/75 backdrop-blur-sm data-[state=open]:animate-in" />
         <Dialog.Content
           className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,32rem)] -translate-x-1/2 -translate-y-1/2 focus:outline-none"
           asChild
@@ -57,10 +65,12 @@ function Modal({
             initial={reduce ? false : { opacity: 0, scale: 0.97, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="dossier p-6"
+            className="card rounded-xl p-6"
           >
-            <Dialog.Title className="font-display text-2xl text-bone">{title}</Dialog.Title>
-            <Dialog.Description className="mt-1 font-mono text-xs text-bone-dim">
+            <Dialog.Title className="font-display text-2xl font-semibold text-txt">
+              {title}
+            </Dialog.Title>
+            <Dialog.Description className="mt-1 font-mono text-xs text-txt-muted">
               {description}
             </Dialog.Description>
             <div className="mt-5">{children}</div>
@@ -73,11 +83,11 @@ function Modal({
 
 // --- Shared form field styling ---------------------------------------------
 const fieldCls =
-  'w-full rounded border border-ink-700 bg-ink-900 px-3 py-2 font-mono text-sm text-bone placeholder:text-bone-dim/60 focus:border-signal focus:outline-none'
+  'w-full rounded-lg border border-line bg-surface px-3 py-2 font-sans text-sm text-txt placeholder:text-txt-dim focus:border-indigo focus:outline-none'
 const labelCls = 'eyebrow mb-1.5 block'
 
 function fieldError(msg: string) {
-  return <p className="mt-1 font-mono text-xs text-oxblood">{msg}</p>
+  return <p className="mt-1 font-mono text-xs text-sev-high">{msg}</p>
 }
 
 // --- Rule form (shared by Add + Edit) ---------------------------------------
@@ -170,12 +180,12 @@ function RuleForm({
         </select>
       </div>
 
-      <label className="flex cursor-pointer items-center gap-2.5 font-mono text-sm text-bone">
+      <label className="flex cursor-pointer items-center gap-2.5 font-sans text-sm text-txt">
         <input
           type="checkbox"
           checked={enabled}
           onChange={(e) => setEnabled(e.target.checked)}
-          className="h-4 w-4 accent-signal"
+          className="h-4 w-4 accent-indigo"
         />
         Enabled
       </label>
@@ -292,18 +302,18 @@ export function PatternManagement() {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-6 py-12">
+    <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 px-4 py-10 md:px-6">
       {/* Title + helper (global AppHeader owns the wordmark/nav) */}
       <header>
         <motion.h1
           initial={reduce ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="font-display text-4xl text-bone"
+          className="font-display text-4xl font-semibold text-txt"
         >
           Detection rules ledger
         </motion.h1>
-        <p className="mt-2 font-mono text-sm text-bone-dim">
+        <p className="mt-2 text-sm text-txt-muted">
           Manage the regex rules MORF uses to flag secrets. Pick a file on the left, then add, edit,
           test, or retire its rules.
         </p>
@@ -318,29 +328,29 @@ export function PatternManagement() {
       {error && (
         <div
           role="alert"
-          className="dossier flex items-start justify-between gap-4 border-oxblood/70 bg-oxblood/10 px-4 py-3"
+          className="flex items-start justify-between gap-4 rounded-xl border border-sev-high/40 bg-sev-high/10 px-4 py-3"
         >
-          <p className="font-mono text-sm text-oxblood">{error}</p>
+          <p className="font-mono text-sm text-sev-high">{error}</p>
           <button
             onClick={() => setError(null)}
             aria-label="Dismiss error"
-            className="font-mono text-xs text-oxblood hover:text-bone"
+            className="shrink-0 text-txt-muted transition-colors hover:text-txt"
           >
-            ✕
+            <X className="h-4 w-4" />
           </button>
         </div>
       )}
 
       <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
         {/* Left: rule files */}
-        <div className="dossier flex flex-col p-4">
+        <div className="card flex flex-col p-4">
           <div className="flex items-center justify-between">
             <span className="eyebrow">Rule files</span>
             <Button variant="outline" size="sm" onClick={() => setShowNewFile(true)}>
               New file
             </Button>
           </div>
-          <ul className="mt-4 space-y-1">
+          <ul className="mt-4 space-y-1.5">
             {files.map((f) => {
               const isActive = selectedName === f.filename
               return (
@@ -349,42 +359,47 @@ export function PatternManagement() {
                     onClick={() => setSelectedName(f.filename)}
                     aria-current={isActive}
                     className={cn(
-                      'flex w-full items-center justify-between rounded px-3 py-2 text-left font-mono text-sm transition-colors',
-                      isActive ? 'bg-signal/10 text-signal' : 'text-bone-dim hover:text-bone',
+                      'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left font-mono text-sm transition-colors',
+                      isActive
+                        ? 'border-indigo/50 bg-indigo/10 text-indigo-hi'
+                        : 'border-transparent text-txt-muted hover:border-line-hi hover:bg-surface-hi hover:text-txt',
                     )}
                   >
                     <span className="truncate">{f.filename}</span>
-                    <span className="ml-2 shrink-0 text-xs text-bone-dim">
+                    <span
+                      className={cn(
+                        'badge ml-2 shrink-0',
+                        isActive ? 'badge--indigo' : 'badge--muted',
+                      )}
+                    >
                       {f.patterns.length} {f.patterns.length === 1 ? 'rule' : 'rules'}
                     </span>
                   </button>
                   <button
                     onClick={() => setConfirmFileDelete(f.filename)}
                     aria-label={`Delete file ${f.filename}`}
-                    className="shrink-0 px-2 py-1 font-mono text-xs text-bone-dim opacity-0 transition-opacity hover:text-oxblood focus-visible:opacity-100 group-hover:opacity-100"
+                    className="shrink-0 rounded-md p-1.5 text-txt-dim opacity-0 transition-opacity hover:text-sev-high focus-visible:opacity-100 group-hover:opacity-100"
                   >
-                    ✕
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 </li>
               )
             })}
             {files.length === 0 && !loading && (
-              <li className="py-6 text-center font-mono text-xs text-bone-dim">
+              <li className="py-6 text-center font-mono text-xs text-txt-dim">
                 No rule files yet — create one.
               </li>
             )}
             {files.length === 0 && loading && (
-              <li className="py-6 text-center font-mono text-xs text-bone-dim">Loading files…</li>
+              <li className="py-6 text-center font-mono text-xs text-txt-muted">Loading files…</li>
             )}
           </ul>
         </div>
 
         {/* Right: selected file's rules */}
-        <div className="dossier flex flex-col p-4">
+        <div className="card flex flex-col p-4">
           <div className="flex items-center justify-between">
-            <span className="eyebrow">
-              {selected ? selected.filename : 'Rules'}
-            </span>
+            <span className="eyebrow">{selected ? selected.filename : 'Rules'}</span>
             {selected && (
               <Button variant="primary" size="sm" onClick={() => setShowAdd(true)}>
                 Add rule
@@ -392,15 +407,15 @@ export function PatternManagement() {
             )}
           </div>
 
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 flex flex-col">
             {!selected && (
-              <p className="py-8 text-center font-mono text-sm text-bone-dim">
+              <p className="py-8 text-center font-mono text-sm text-txt-muted">
                 Open a file to see its rules.
               </p>
             )}
 
             {selected && selected.patterns.length === 0 && (
-              <p className="py-8 text-center font-mono text-sm text-bone-dim">
+              <p className="py-8 text-center font-mono text-sm text-txt-muted">
                 No rules in this file yet — add one.
               </p>
             )}
@@ -408,15 +423,15 @@ export function PatternManagement() {
             {selected?.patterns.map((p) => (
               <div
                 key={p.name}
-                className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-ink-700 pb-3 pt-1"
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line py-3 last:border-b-0"
               >
                 <span
-                  className={cn('sev', `sev--${p.confidence}`)}
+                  className={cn('sev-dot', sevDot[p.confidence])}
                   aria-label={`${p.confidence} confidence`}
                   title={`${p.confidence} confidence`}
                 />
-                <span className="font-mono text-sm text-bone">{p.name}</span>
-                <code className="min-w-0 max-w-[16rem] truncate rounded bg-ink-900 px-2 py-0.5 font-mono text-xs text-bone-dim">
+                <span className="font-display text-sm font-semibold text-txt">{p.name}</span>
+                <code className="min-w-0 max-w-[16rem] truncate rounded-md border border-line bg-surface-hi px-2 py-0.5 font-mono text-xs text-txt-muted">
                   {p.regex}
                 </code>
 
@@ -425,8 +440,8 @@ export function PatternManagement() {
                   disabled={busy}
                   aria-label={p.enabled ? `Disable ${p.name}` : `Enable ${p.name}`}
                   className={cn(
-                    'ml-auto transition-transform hover:scale-105 disabled:opacity-50',
-                    p.enabled ? 'stamp stamp--signal' : 'stamp stamp--muted',
+                    'badge ml-auto transition-transform hover:scale-105 disabled:opacity-50',
+                    p.enabled ? 'badge--cyan' : 'badge--muted',
                   )}
                 >
                   {p.enabled ? 'On' : 'Off'}
@@ -443,7 +458,7 @@ export function PatternManagement() {
                     onClick={() => void deleteRule(p.name)}
                     disabled={busy}
                     aria-label={`Delete rule ${p.name}`}
-                    className="px-2 py-1 font-mono text-xs uppercase tracking-widest text-bone-dim transition-colors hover:text-oxblood disabled:opacity-50"
+                    className="px-2 py-1 font-mono text-xs uppercase tracking-widest text-txt-dim transition-colors hover:text-sev-high disabled:opacity-50"
                   >
                     Delete
                   </button>
@@ -461,7 +476,7 @@ export function PatternManagement() {
         open={showNewFile}
         onOpenChange={setShowNewFile}
         title="New rule file"
-        description="Create an empty .dossier file to hold a set of rules."
+        description="Create an empty file to hold a set of rules."
       >
         <NewFileForm busy={busy} onCancel={() => setShowNewFile(false)} onSubmit={createFile} />
       </Modal>
@@ -531,8 +546,8 @@ export function PatternManagement() {
         title="Delete file?"
         description="This removes the file and every rule inside it. This can't be undone."
       >
-        <p className="mb-5 font-mono text-sm text-bone">
-          Delete <span className="text-signal">{confirmFileDelete}</span> and all its rules?
+        <p className="mb-5 font-mono text-sm text-txt">
+          Delete <span className="text-indigo-hi">{confirmFileDelete}</span> and all its rules?
         </p>
         <div className="flex justify-end gap-3">
           <Button variant="ghost" size="sm" onClick={() => setConfirmFileDelete(null)}>
@@ -589,15 +604,15 @@ function NewFileForm({
         </label>
         <input
           id="new-file"
-          className={fieldCls}
+          className={cn(fieldCls, 'font-mono')}
           value={filename}
           onChange={(e) => setFilename(e.target.value)}
           placeholder="custom-rules.dossier"
           autoFocus
         />
         {touched && invalid && fieldError('Give the file a name.')}
-        <p className="mt-1 font-mono text-xs text-bone-dim">
-          We'll add <span className="text-bone">.dossier</span> if you skip the extension.
+        <p className="mt-1.5 font-mono text-xs text-txt-dim">
+          We'll add <span className="text-txt-muted">.dossier</span> if you skip the extension.
         </p>
       </div>
       <div className="flex justify-end gap-3 pt-2">
@@ -651,7 +666,7 @@ function TestForm({
         </label>
         <textarea
           id="test-sample"
-          className={cn(fieldCls, 'min-h-[7rem] resize-y')}
+          className={cn(fieldCls, 'min-h-[7rem] resize-y font-mono')}
           value={sample}
           onChange={(e) => setSample(e.target.value)}
           placeholder="Paste text to run the rule against…"
@@ -669,26 +684,23 @@ function TestForm({
       </div>
 
       {result && (
-        <div className="dossier mt-2 space-y-3 p-4">
+        <div className="card mt-2 space-y-3 rounded-lg p-4">
           <div className="flex items-center gap-3">
-            <span className={cn('stamp', result.matched ? 'stamp--signal' : 'stamp--muted')}>
+            <span className={cn('badge', result.matched ? 'badge--cyan' : 'badge--muted')}>
               {result.matched ? 'Matched' : 'No match'}
             </span>
-            <span className="font-mono text-xs text-bone-dim">
+            <span className="font-mono text-xs text-txt-muted">
               {result.count} {result.count === 1 ? 'match' : 'matches'}
             </span>
           </div>
           {result.matches.length > 0 && (
-            <ul className="space-y-1">
+            <div className="flex flex-wrap gap-1.5">
               {result.matches.map((m, i) => (
-                <li
-                  key={i}
-                  className="truncate rounded bg-ink-900 px-2 py-1 font-mono text-xs text-bone"
-                >
+                <span key={i} className="chip max-w-full truncate">
                   {m}
-                </li>
+                </span>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       )}

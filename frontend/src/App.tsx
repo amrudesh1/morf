@@ -23,7 +23,7 @@ function Shell() {
   const Current = SCREENS[currentScreen]
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-ink text-bone">
+    <div className="relative min-h-screen overflow-x-hidden bg-base text-txt">
       <AnimatePresence>
         {error && (
           <motion.div
@@ -31,16 +31,16 @@ function Shell() {
             initial={{ y: -24, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -24, opacity: 0 }}
-            className="fixed inset-x-0 top-0 z-50 flex items-start justify-between gap-4 border-b border-oxblood bg-ink-900/95 px-4 py-3 backdrop-blur"
+            className="fixed inset-x-0 top-0 z-50 flex items-start justify-between gap-4 border-b border-sev-high/50 bg-sev-high/10 px-4 py-3 backdrop-blur-xl"
           >
             <div className="flex flex-col gap-1">
-              <span className="eyebrow text-oxblood">Scan interrupted</span>
-              <span className="font-mono text-sm text-bone">{error}</span>
+              <span className="eyebrow text-sev-high">Scan interrupted</span>
+              <span className="font-mono text-sm text-txt">{error}</span>
             </div>
             <button
               onClick={clearError}
               aria-label="Dismiss"
-              className="text-bone-dim transition-colors hover:text-signal focus-visible:text-signal"
+              className="text-txt-muted transition-colors hover:text-txt focus-visible:text-txt"
             >
               <X className="h-5 w-5" />
             </button>

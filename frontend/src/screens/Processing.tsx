@@ -15,6 +15,9 @@ const PHASES = [
   { label: 'Compile dossier', detail: 'Assemble the findings' },
 ]
 
+// Widths for the shimmering placeholder document "lines" under the scan-sweep.
+const DOC_BARS = [92, 74, 84, 58, 78, 66]
+
 export function Processing() {
   const { currentFile, selectedPlatform, cancelScan } = useScan()
   const reduce = useReducedMotion()
@@ -46,35 +49,40 @@ export function Processing() {
   return (
     <div className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-8 px-6 py-16">
       <motion.header className="space-y-3" {...rise(0)}>
-        <span className="eyebrow text-signal">Reconnaissance in progress</span>
-        <h1 className="font-display text-4xl text-bone md:text-5xl">
-          Analyzing <span className="text-signal">{name}</span>
+        <span className="eyebrow">Reconnaissance in progress</span>
+        <h1 className="font-display text-4xl font-semibold text-txt md:text-5xl">
+          Analyzing <span className="gradient-text">{name}</span>
         </h1>
-        <p className="max-w-xl font-sans text-base leading-relaxed text-bone-dim">
+        <p className="max-w-xl text-base leading-relaxed text-txt-muted">
           MORF is decompiling your {kind} and matching it against every detection rule.
           Hold tight — you can leave this screen open while it works.
         </p>
       </motion.header>
 
-      {/* Redacted document under the signature scan-sweep. */}
+      {/* Placeholder document under the signature indigo→cyan scan-sweep. */}
       <motion.div
-        className="dossier relative overflow-hidden p-6"
+        className="card relative overflow-hidden p-6"
         aria-label={`Analyzing ${name}`}
         {...rise(0.08)}
       >
-        <div className="space-y-2" aria-hidden>
-          {[90, 70, 82, 55, 76].map((w, i) => (
-            <div key={i} className="redaction h-3" style={{ width: `${w}%` }}>
-              &nbsp;
-            </div>
+        <div className="space-y-2.5" aria-hidden>
+          {DOC_BARS.map((w, i) => (
+            <div
+              key={i}
+              className={cn(
+                'h-3 rounded bg-gradient-to-r from-surface-hi via-line-hi to-surface-hi',
+                !reduce && 'animate-shimmer',
+              )}
+              style={{ width: `${w}%`, backgroundSize: '200% 100%' }}
+            />
           ))}
         </div>
         {!reduce && (
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-16 animate-scan-sweep bg-gradient-to-b from-transparent via-signal/25 to-transparent" />
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-20 animate-scan-sweep bg-gradient-to-b from-transparent via-indigo/25 to-cyan/20" />
         )}
       </motion.div>
 
-      {/* Phase stepper — the active phase is highlighted; done phases get a check. */}
+      {/* Phase stepper — the active phase gets an indigo ring; done phases a cyan check. */}
       <motion.ol
         className="grid grid-cols-1 gap-2 sm:grid-cols-2"
         aria-label="Scan phases"
@@ -89,22 +97,22 @@ export function Processing() {
               key={phase.label}
               aria-current={current ? 'step' : undefined}
               className={cn(
-                'flex items-start gap-3 rounded border p-3 transition-colors',
+                'card flex items-start gap-3 p-3 transition-colors',
                 current
-                  ? 'border-signal/70 bg-signal/10'
+                  ? 'border-indigo/60 shadow-glow'
                   : done
-                    ? 'border-bone-dim/20 bg-transparent'
-                    : 'border-bone-dim/10 bg-transparent',
+                    ? 'border-line-hi'
+                    : 'border-line opacity-70',
               )}
             >
               <span
                 className={cn(
                   'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
                   current
-                    ? 'border-signal text-signal'
+                    ? 'border-indigo text-indigo-hi'
                     : done
-                      ? 'border-signal/60 text-signal/80'
-                      : 'border-bone-dim/30 text-bone-dim/50',
+                      ? 'border-cyan/50 text-cyan'
+                      : 'border-line-hi text-txt-dim',
                 )}
                 aria-hidden
               >
@@ -119,36 +127,37 @@ export function Processing() {
               <span className="flex flex-col">
                 <span
                   className={cn(
-                    'font-sans text-sm font-semibold',
-                    current ? 'text-bone' : done ? 'text-bone-dim' : 'text-bone-dim/60',
+                    'font-display text-sm font-semibold',
+                    current ? 'text-txt' : done ? 'text-txt-muted' : 'text-txt-dim',
                   )}
                 >
                   {phase.label}
                 </span>
-                <span className="font-mono text-[0.68rem] text-bone-dim/70">{phase.detail}</span>
+                <span className="font-mono text-[0.68rem] text-txt-dim">{phase.detail}</span>
               </span>
             </li>
           )
         })}
       </motion.ol>
 
-      <motion.p className="font-mono text-xs text-bone-dim/70" {...rise(0.24)}>
+      <motion.p className="font-mono text-xs text-txt-dim" {...rise(0.24)}>
         Large apps can take a minute. We don&apos;t report an exact percentage — the phases above
         show roughly where we are.
       </motion.p>
 
-      {/* File under scan, as evidence rows. */}
-      <motion.div className="space-y-2" {...rise(0.32)}>
-        <div className="evidence">
+      {/* File under scan. */}
+      <motion.div className="card flex flex-wrap items-center gap-8 p-5" {...rise(0.32)}>
+        <div className="stat min-w-0">
           <span className="k">File</span>
-          <span className="lead" />
-          <span className="v">{currentFile?.name ?? '—'}</span>
+          <span className="v break-all font-mono text-sm">{currentFile?.name ?? '—'}</span>
         </div>
-        <div className="evidence">
+        <div className="stat">
           <span className="k">Size</span>
-          <span className="lead" />
-          <span className="v">{size}</span>
+          <span className="v font-mono text-sm">{size}</span>
         </div>
+        <span className={cn('badge ml-auto', selectedPlatform === 'ios' ? 'badge--cyan' : 'badge--indigo')}>
+          {selectedPlatform === 'ios' ? 'iOS' : 'Android'}
+        </span>
       </motion.div>
 
       <motion.div {...rise(0.4)}>
