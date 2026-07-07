@@ -121,6 +121,7 @@ export interface UploadResponse {
 export interface JobStatusResponse {
   job_id: string
   status: JobStatus
+  phase?: string // coarse in-progress stage: unpacking|parsing|scanning|compiling
   created_at: string
   started_at?: string
   completed_at?: string

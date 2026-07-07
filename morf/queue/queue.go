@@ -711,6 +711,18 @@ func (q *JobQueue) MoveToDLQ(jobID string) error {
 	return nil
 }
 
+// SetJobPhase records the coarse in-progress stage of a job for the UI stepper
+// (e.g. "unpacking", "parsing", "scanning", "compiling"). It writes only the
+// "phase" field on the job hash (additive HSet), so it never disturbs status or
+// other fields. Best-effort: callers ignore the error, since a missed phase
+// update only degrades the progress display, never correctness.
+func (q *JobQueue) SetJobPhase(jobID, phase string) error {
+	ctx, cancel := q.opCtx()
+	defer cancel()
+	key := fmt.Sprintf("morf:jobs:%s", jobID)
+	return q.client.HSet(ctx, key, "phase", phase).Err()
+}
+
 // RegisterWorker registers a worker
 func (q *JobQueue) RegisterWorker(workerID string) error {
 	ctx, cancel := q.opCtx()

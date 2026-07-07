@@ -581,6 +581,9 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 	}
 	defer jobCtx.CleanupWorkspace()
 
+	// UI phase: preparing the workspace / fetching the package bytes.
+	_ = w.queue.SetJobPhase(job.ID, "unpacking")
+
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
@@ -654,6 +657,7 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 	}
 
 	// Phase: extract metadata + package data (apkanalyzer / aapt)
+	_ = w.queue.SetJobPhase(job.ID, "parsing")
 	metaStart := time.Now()
 	// R-1: thread scanCtx into metadata extraction and propagate its error so an
 	// apkanalyzer/open/unmarshal failure fails the job instead of silently
@@ -671,6 +675,7 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 	// error so a failed scan fails the job instead of being silently swallowed. The
 	// scanCtx (this ctx) threads the per-job timeout and explicit cancellation into
 	// every subprocess.
+	_ = w.queue.SetJobPhase(job.ID, "scanning")
 	scanPhaseStart := time.Now()
 	scannerData, scanErr := apk.StartSecScanE(ctx, localPath, jobCtx)
 	timings["scan_ms"] = time.Since(scanPhaseStart).Milliseconds()
@@ -681,6 +686,8 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 		return nil, fmt.Errorf("secret scan failed: %w", scanErr)
 	}
 
+	// UI phase: assembling + persisting the dossier.
+	_ = w.queue.SetJobPhase(job.ID, "compiling")
 	secretData, err := json.Marshal(scannerData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal scanner data: %v", err)
@@ -738,6 +745,9 @@ func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error
 	}
 	defer jobCtx.CleanupWorkspace()
 
+	// UI phase: preparing the workspace / fetching the package bytes.
+	_ = w.queue.SetJobPhase(job.ID, "unpacking")
+
 	select {
 	case <-ctx.Done():
 		return nil, fmt.Errorf("job cancelled")
@@ -780,6 +790,7 @@ func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error
 	// Phase: iOS extraction pipeline (unzip + macho + plist + frameworks + scan).
 	// Record per-tool metrics for the phases the pipeline drives so iOS scans are
 	// observable alongside the APK tool metrics.
+	_ = w.queue.SetJobPhase(job.ID, "scanning")
 	extractStart := time.Now()
 	secretsModels, iosMeta, extractErr := ios.StartIOSExtraction(ctx, localPath, jobCtx)
 	extractDur := time.Since(extractStart)
@@ -801,6 +812,8 @@ func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error
 	// data; the hash is computed from the resolved file (same helper as the
 	// duplicate check) and the bundle identifier/version are carried on the
 	// IOSMetadata row rather than the Android package_data columns.
+	// UI phase: assembling + persisting the dossier.
+	_ = w.queue.SetJobPhase(job.ID, "compiling")
 	apkHash := utils.ExtractHash(localPath)
 	secret := models.Secrets{
 		FileName:    job.OriginalFilename,
