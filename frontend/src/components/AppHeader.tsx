@@ -9,17 +9,22 @@ export function AppHeader() {
   const onPatterns = currentScreen === 'patterns'
 
   return (
-    <header className="sticky top-0 z-40 flex items-center justify-between border-b border-ink-700 bg-ink/85 px-4 py-3 backdrop-blur md:px-8">
+    <header className="sticky top-0 z-40 flex items-center justify-between border-b border-line bg-base/80 px-4 py-3 backdrop-blur-xl md:px-8">
       <button
         onClick={() => (onPatterns ? setScreen('upload') : resetScan())}
-        className="group flex items-baseline gap-2"
+        className="group flex items-center gap-2.5"
         aria-label="MORF home"
       >
-        <span className="font-display text-2xl leading-none text-bone transition-colors group-hover:text-signal">
-          MORF
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-indigo to-cyan text-sm font-bold text-base shadow-[0_4px_16px_-6px_rgba(99,102,241,0.8)]">
+          M
         </span>
-        <span className="hidden text-[0.6rem] uppercase tracking-[0.28em] text-bone-dim sm:inline">
-          Mobile Reconnaissance Framework
+        <span className="flex flex-col leading-none">
+          <span className="font-display text-lg font-bold tracking-tight text-txt transition-colors group-hover:text-indigo-hi">
+            MORF
+          </span>
+          <span className="hidden text-[0.55rem] uppercase tracking-[0.24em] text-txt-dim sm:inline">
+            Mobile Reconnaissance Framework
+          </span>
         </span>
       </button>
 
