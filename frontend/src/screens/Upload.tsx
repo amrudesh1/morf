@@ -151,7 +151,7 @@ export function Upload() {
       </motion.div>
 
       {/* What happens next / analyzed locally. */}
-      <motion.div variants={item} className="card p-5">
+      <motion.div variants={item} className="card card-hover p-5">
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-cyan" />
           <span className="eyebrow">What happens next</span>

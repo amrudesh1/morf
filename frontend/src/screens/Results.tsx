@@ -15,6 +15,7 @@ import {
 import { useScan } from '@/store/scanStore'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
+import { useCountUp } from '@/lib/useCountUp'
 import type { Confidence, NamedComponent, Activity, Secret } from '@/types'
 
 const sevDot: Record<Confidence, string> = {
@@ -48,6 +49,7 @@ export function Results() {
   const reduce = useReducedMotion()
   const [query, setQuery] = useState('')
   const [sevFilter, setSevFilter] = useState<SevFilter>('all')
+  const count = useCountUp(secrets.length)
 
   const targetIdentity =
     resultPlatform === 'ios'
@@ -64,6 +66,15 @@ export function Results() {
   }, [secrets, query, sevFilter])
 
   const ease = [0.2, 0.8, 0.2, 1] as const
+  // Scroll-reveal for the below-the-fold metadata panels.
+  const scrollReveal = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, y: 16 },
+        whileInView: { opacity: 1, y: 0 },
+        viewport: { once: true, margin: '-10% 0px' },
+        transition: { duration: 0.5, ease },
+      }
   const rise = (i: number) =>
     reduce
       ? {}
@@ -81,8 +92,8 @@ export function Results() {
           <div>
             <span className="eyebrow text-txt-dim">Reconnaissance complete</span>
             <div className="mt-3 flex items-end gap-3">
-              <span className="gradient-text font-display text-6xl font-bold leading-none md:text-7xl">
-                {secrets.length}
+              <span className="gradient-text font-display text-6xl font-bold leading-none md:text-7xl tabular-nums">
+                {count}
               </span>
               <span className="pb-1 font-display text-2xl font-semibold text-txt-muted">
                 {secrets.length === 1 ? 'secret exposed' : 'secrets exposed'}
@@ -169,7 +180,7 @@ export function Results() {
 
       {/* iOS target panel */}
       {resultPlatform === 'ios' && iosMetadata && (
-        <motion.section className="card p-6 md:p-8" {...rise(2)}>
+        <motion.section className="card p-6 md:p-8" {...scrollReveal}>
           <SectionTitle>Target · iOS</SectionTitle>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Stat k="Bundle ID" v={iosMetadata.bundleIdentifier || '—'} mono />
@@ -219,7 +230,7 @@ export function Results() {
 
       {/* Android target panel */}
       {resultPlatform === 'android' && metadata && (
-        <motion.section className="card p-6 md:p-8" {...rise(2)}>
+        <motion.section className="card p-6 md:p-8" {...scrollReveal}>
           <SectionTitle>Target · Android</SectionTitle>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Stat k="Package" v={metadata.packageName || '—'} mono />
@@ -291,6 +302,7 @@ function ChipList({ title, items, accent }: { title: string; items: string[]; ac
 
 function ComponentSection({ title, items }: { title: string; items: string[] }) {
   const [open, setOpen] = useState(false)
+  const reduce = useReducedMotion()
   if (items.length === 0) return null
   return (
     <Collapsible.Root open={open} onOpenChange={setOpen}>
@@ -302,13 +314,22 @@ function ComponentSection({ title, items }: { title: string; items: string[] }) 
         <ChevronDown className={cn('h-4 w-4 text-txt-dim transition-transform', open && 'rotate-180')} />
       </Collapsible.Trigger>
       <Collapsible.Content className="overflow-hidden">
-        <div className="flex flex-wrap gap-1.5 px-1 py-3">
+        <motion.div
+          className="flex flex-wrap gap-1.5 px-1 py-3"
+          initial={reduce ? false : 'hidden'}
+          animate="show"
+          variants={{ show: { transition: { staggerChildren: 0.015 } } }}
+        >
           {items.map((it, i) => (
-            <span key={`${it}-${i}`} className="chip">
+            <motion.span
+              key={`${it}-${i}`}
+              className="chip"
+              variants={reduce ? undefined : { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0 } }}
+            >
               {it}
-            </span>
+            </motion.span>
           ))}
-        </div>
+        </motion.div>
       </Collapsible.Content>
     </Collapsible.Root>
   )

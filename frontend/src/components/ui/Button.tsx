@@ -6,7 +6,7 @@ import { cn } from '@/lib/cn'
 // outline = indigo border; ghost = quiet link; danger = severity red.
 // All keyboard-focusable via the global :focus-visible ring.
 const button = cva(
-  'inline-flex items-center justify-center gap-2 rounded-lg font-sans font-semibold transition-all disabled:opacity-50 disabled:pointer-events-none select-none',
+  'inline-flex items-center justify-center gap-2 rounded-lg font-sans font-semibold transition-all active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none select-none',
   {
     variants: {
       variant: {
