@@ -1,9 +1,181 @@
-/* You can add global styles to this file, and also import other style files */
+/* ============================================================================
+   MORF — Mobile Reconnaissance Framework
+   "Forensic Dossier" global styles.
+
+   Identity: findings are declassified evidence. The one signature element is the
+   REDACTION BAR (.redaction) that reveals a leaked secret on demand; everything
+   else stays quiet and disciplined. Product name is always
+   "MORF - Mobile Reconnaissance Framework" — dossier is a visual treatment only.
+   ========================================================================== */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+:root {
+  --ink: #14110f;
+  --ink-800: #1d1916;
+  --ink-700: #2a2420;
+  --ink-900: #0a0806;
+  --bone: #ede6d6;
+  --bone-dim: #b9ac93;
+  --signal: #e8a33d;
+  --signal-hi: #f5b657;
+  --oxblood: #a83232;
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background-color: var(--ink);
+    /* Restrained paper grain: two faint diagonal hatches + a soft vignette so the
+       "field" reads as a document surface, never as a gradient poster. */
+    background-image:
+      repeating-linear-gradient(135deg, rgba(237, 230, 214, 0.018) 0 1px, transparent 1px 7px),
+      radial-gradient(120% 120% at 50% -10%, rgba(232, 163, 61, 0.05), transparent 60%);
+    color: var(--bone);
+    font-family: 'Archivo', system-ui, sans-serif;
+    font-feature-settings: "ss01", "cv01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Display statements: MORF wordmark, "EXPOSED", counts, screen titles. */
+  h1, h2, .u-display {
+    font-family: 'Anton', 'Arial Narrow', sans-serif;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    line-height: 0.92;
+    text-transform: uppercase;
+  }
+
+  /* Data, paths, secret values, timestamps — the typewritten evidence voice. */
+  code, kbd, samp, .u-mono { font-family: 'Space Mono', ui-monospace, monospace; }
+
+  ::selection { background: var(--signal); color: var(--ink); }
+
+  /* Quality floor: visible keyboard focus everywhere. */
+  :focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+@layer components {
+  /* --- Eyebrow / label: the small stenciled caption above a section ------- */
+  .eyebrow {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--bone-dim);
+  }
+
+  /* --- Dossier panel: a raised "document" surface ------------------------- */
+  .dossier {
+    background: linear-gradient(180deg, var(--ink-800), #191512);
+    border: 1px solid var(--ink-700);
+    border-radius: 4px;
+    box-shadow: 0 1px 0 rgba(237, 230, 214, 0.04) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.8);
+  }
+
+  /* --- Case rule: a hairline divider carrying a label --------------------- */
+  .case-rule {
+    border: 0;
+    border-top: 1px solid var(--ink-700);
+  }
+
+  /* ======================================================================
+     SIGNATURE — REDACTION BAR
+     A leaked secret is shown as a solid ink bar (as if struck from a
+     declassified page). Hover, focus, tap, or the .revealed class scrubs it
+     away to expose the underlying value. This is the one memorable element.
+     ====================================================================== */
+  .redaction {
+    display: inline-block;
+    max-width: 100%;
+    padding: 0.05em 0.35em;
+    border-radius: 1px;
+    background-color: var(--ink-900);
+    /* subtle horizontal striations so it reads as a physical marker */
+    background-image: repeating-linear-gradient(
+      90deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 4px);
+    color: transparent;
+    cursor: pointer;
+    user-select: none;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .redaction:hover,
+  .redaction:focus-visible,
+  .redaction.revealed {
+    background-color: rgba(232, 163, 61, 0.14);
+    background-image: none;
+    color: var(--bone);
+    user-select: text;
+    box-shadow: inset 0 -1px 0 var(--signal);
+  }
+
+  /* ======================================================================
+     EVIDENCE STAMP — EXPOSED / CONFIRMED
+     A rotated, letter-spaced rubber-stamp mark for verdicts and severities.
+     ====================================================================== */
+  .stamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.2em 0.6em;
+    font-family: 'Archivo', sans-serif;
+    font-weight: 800;
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    border: 2px solid var(--oxblood);
+    border-radius: 3px;
+    transform: rotate(-5deg);
+    opacity: 0.92;
+    background: rgba(168, 50, 50, 0.06);
+  }
+  .stamp--signal { color: var(--signal); border-color: var(--signal); background: rgba(232, 163, 61, 0.08); }
+  .stamp--muted  { color: var(--bone-dim); border-color: var(--bone-dim); background: transparent; opacity: 0.8; }
+
+  /* --- Evidence row: field ......... value (typewritten, leader dots) ----- */
+  .evidence {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.82rem;
+  }
+  .evidence > .k { color: var(--bone-dim); white-space: nowrap; }
+  .evidence > .lead { flex: 1; border-bottom: 1px dotted var(--ink-700); transform: translateY(-0.2em); }
+  .evidence > .v { color: var(--bone); }
+
+  /* --- Severity dots ------------------------------------------------------ */
+  .sev { width: 0.55rem; height: 0.55rem; border-radius: 9999px; display: inline-block; }
+  .sev--high { background: var(--oxblood); box-shadow: 0 0 0 3px rgba(168, 50, 50, 0.18); }
+  .sev--medium { background: var(--signal); box-shadow: 0 0 0 3px rgba(232, 163, 61, 0.16); }
+  .sev--low { background: var(--bone-dim); }
+}
+
+/* Thin, on-brand scrollbars. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--ink); }
+::-webkit-scrollbar-thumb { background: var(--ink-700); border-radius: 6px; border: 2px solid var(--ink); }
+::-webkit-scrollbar-thumb:hover { background: var(--signal); }
+
+/* Respect reduced-motion: kill all animation/transition. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
