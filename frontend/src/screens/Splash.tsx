@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight, ScrollText, ShieldAlert } from 'lucide-react'
 import { useScan } from '@/store/scanStore'
 import { Button } from '@/components/ui/Button'
+import morfLogo from '@/assets/morf.png'
 
 // Intro hero that AUTO-FLOWS into the upload screen after a beat. It states what
 // MORF does, dramatizes the thesis (a frosted "leaked" key sharpens on a loop),
@@ -51,20 +52,27 @@ export function Splash() {
         </>
       )}
 
-      <motion.div className="badge badge--indigo" {...rise(0)}>
+      {/* Original MORF logo. */}
+      <motion.img
+        src={morfLogo}
+        alt="MORF"
+        className="h-32 w-32 object-contain drop-shadow-[0_8px_40px_rgba(99,102,241,0.5)] md:h-40 md:w-40"
+        initial={reduce ? {} : { opacity: 0, scale: 0.85 }}
+        animate={reduce ? {} : { opacity: 1, scale: 1 }}
+        transition={{ duration: 0.6, ease }}
+      />
+
+      <motion.div className="badge badge--indigo mt-6" {...rise(0.12)}>
         <ShieldAlert className="h-3.5 w-3.5" /> Static secret reconnaissance
       </motion.div>
 
       <motion.h1
-        className="mt-6 font-display text-[5.5rem] font-bold leading-none tracking-tight md:text-[10rem]"
-        {...rise(0.08)}
+        className="mt-5 font-display text-6xl font-bold leading-none tracking-tight md:text-8xl"
+        {...rise(0.2)}
       >
         <span className="gradient-text">MORF</span>
       </motion.h1>
-      <motion.span
-        className="eyebrow mt-1 text-txt-muted"
-        {...rise(0.16)}
-      >
+      <motion.span className="eyebrow mt-2 text-txt-muted" {...rise(0.28)}>
         Mobile Reconnaissance Framework
       </motion.span>
 
