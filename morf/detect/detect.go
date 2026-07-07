@@ -308,6 +308,105 @@ func (c *PatternCache) FindMatchingPattern(content string) *PatternInfo {
 	return nil
 }
 
+// FindingsForLine converts a single ripgrep-matched corpus line into one or more
+// SecretModel findings. This is the security-critical value-extraction core:
+//
+//   - RECALL — it emits a finding for EVERY match span on the line, not just the
+//     first. A densely packed line (a terminator-less __rodata blob, minified or
+//     obfuscated code, concatenated literals) can carry several distinct secrets;
+//     collapsing them into one finding would silently drop real secrets. And the
+//     line always yields at least one finding, so a ripgrep hit is never lost.
+//   - PRECISION — each finding's value is derived from the EXACT regex match span
+//     (via the owning compiled pattern), then passed through ExtractSecret to peel
+//     surrounding quotes/keys. It is never a heuristic applied to the whole line,
+//     which is what previously returned the wrong token on packed lines.
+//   - SAFETY — SecretString is never empty (falls back to the raw span), and
+//     confidence always defaults to a valid ENUM member ("low").
+//
+// Attribution reuses the same combined-regex group map as FindMatchingPattern.
+func (c *PatternCache) FindingsForLine(fileLocation string, lineNo int, content string) []models.SecretModel {
+	out := make([]models.SecretModel, 0, 4)
+	add := func(patternIdx int, span string) {
+		secretType := "unattributed"
+		confidence := "low"
+		if patternIdx >= 0 && patternIdx < len(c.Patterns) {
+			secretType = c.Patterns[patternIdx].Name
+			confidence = c.Patterns[patternIdx].Confidence
+		}
+		value := ExtractSecret(span)
+		if strings.TrimSpace(value) == "" {
+			// Never emit an empty secret value: fall back to the exact span.
+			value = span
+		}
+		out = append(out, models.SecretModel{
+			Type:             secretType,
+			LineNo:           lineNo,
+			FileLocation:     strings.Clone(fileLocation),
+			SecretType:       secretType,
+			SecretString:     strings.Clone(value),
+			SecretConfidence: confidence,
+		})
+	}
+
+	// Preferred path: enumerate EVERY match of the combined RE2 regex and
+	// attribute each to its owning pattern via the group map. content[loc[0]:loc[1]]
+	// is the exact text the matching alternative consumed — i.e. that pattern's
+	// match — so packed lines yield the true per-secret value.
+	if c.Combined != nil {
+		for _, loc := range c.Combined.FindAllStringSubmatchIndex(content, -1) {
+			if len(loc) < 2 || loc[0] < 0 || loc[1] < loc[0] {
+				continue
+			}
+			span := content[loc[0]:loc[1]]
+			patternIdx := -1
+			for g := 1; 2*g+1 < len(loc); g++ {
+				if loc[2*g] < 0 {
+					continue // group g did not participate in this match.
+				}
+				if g < len(c.GroupToPattern) {
+					if pi := c.GroupToPattern[g]; pi >= 0 && pi < len(c.Patterns) {
+						patternIdx = pi
+						break
+					}
+				}
+			}
+			add(patternIdx, span)
+		}
+		if len(out) > 0 {
+			return out
+		}
+		// Combined matched nothing on this line: fall through to the non-RE2 path.
+	} else {
+		// No combined regex (union failed to build): scan each RE2 pattern's
+		// every match individually so recall/precision are preserved.
+		for i := range c.Patterns {
+			if c.Patterns[i].Compiled == nil {
+				continue
+			}
+			for _, span := range c.Patterns[i].Compiled.FindAllString(content, -1) {
+				add(i, span)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	// ripgrep flagged the line but no RE2 pattern attributed it — it matched a
+	// non-RE2 ripgrep pattern (lookaround/backref/multiline Go cannot run). Never
+	// drop the hit: emit one best-effort finding attributed to the first non-RE2
+	// pattern (or "unattributed"), with the heuristic value over the whole line.
+	patternIdx := -1
+	for i := range c.Patterns {
+		if c.Patterns[i].Compiled == nil {
+			patternIdx = i
+			break
+		}
+	}
+	add(patternIdx, content)
+	return out
+}
+
 // ScanCorpus runs the batch ripgrep pattern scan over the given filesystem
 // roots and returns the attributed (unsanitized) secrets plus an error. It is
 // the platform-agnostic core shared by the apk and ios pipelines: the caller
@@ -405,28 +504,12 @@ func ScanCorpus(ctx context.Context, jobID string, roots []string) ([]models.Sec
 		}
 		content := strings.TrimSpace(parts[2])
 
-		// Row 028: when neither the combined RE2 regex nor the non-RE2 fallback
-		// can attribute a ripgrep hit (ripgrep supports lookaround/backref/
-		// multiline semantics Go's regexp does not), label it with an explicit
-		// sentinel type rather than silently borrowing patterns[0]'s identity.
-		matched := patternCache.FindMatchingPattern(content)
-		secretType := "unattributed"
-		// D-1: default to a valid ENUM member ("low") so an unattributed hit
-		// never inserts an empty-string confidence into the column.
-		secretConfidence := "low"
-		if matched != nil {
-			secretType = matched.Name
-			secretConfidence = matched.Confidence
-		}
-
-		secretModel = append(secretModel, models.SecretModel{
-			Type:             secretType,
-			LineNo:           lineNumber,
-			FileLocation:     strings.Clone(parts[0]),
-			SecretType:       secretType,
-			SecretString:     strings.Clone(ExtractSecret(content)),
-			SecretConfidence: secretConfidence,
-		})
+		// Emit one finding per match span on the line: a packed line can carry
+		// multiple distinct secrets (RECALL), each reported with its exact matched
+		// value (PRECISION). FindingsForLine guarantees at least one finding so a
+		// ripgrep hit is never dropped, and never an empty SecretString. Row 028's
+		// "unattributed" sentinel is preserved inside FindingsForLine.
+		secretModel = append(secretModel, patternCache.FindingsForLine(parts[0], lineNumber, content)...)
 		return nil
 	}
 
