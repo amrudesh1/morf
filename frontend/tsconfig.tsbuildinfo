@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/lib/api.ts","./src/lib/cn.ts","./src/screens/patternmanagement.tsx","./src/screens/processing.tsx","./src/screens/results.tsx","./src/screens/splash.tsx","./src/screens/upload.tsx","./src/store/scanstore.tsx"],"errors":true,"version":"5.6.3"}

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-# Stage 1: Build Angular app.
+# Stage 1: Build the React (Vite) app.
 # BuildKit cache mounts speed up reinstalls when only source changes.
 FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 WORKDIR /app
@@ -9,13 +9,13 @@ COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --no-fund
 
-# Copy sources and build with prod optimizations.
+# Copy sources and build (Vite emits to dist/frontend — see vite.config.ts).
 COPY . .
-RUN npm run build -- --configuration production
+RUN npm run build
 
 # Stage 2: Serve static bundle with nginx (alpine for size).
 FROM nginx:1.27-alpine
-# Angular's prod build emits assets into the dist root; one COPY suffices.
+# Vite's build emits to dist/frontend; one COPY suffices.
 COPY --from=builder /app/dist/frontend /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
