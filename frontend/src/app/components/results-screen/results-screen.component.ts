@@ -1,6 +1,6 @@
 import { Component, OnInit, OnDestroy, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ScanService, Secret } from '../../services/scan.service';
+import { ScanService, Secret, IosMetadata } from '../../services/scan.service';
 import { trigger, transition, style, animate, state, group } from '@angular/animations';
 import { Subscription } from 'rxjs';
 
@@ -75,8 +75,13 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
       layouts: number;
     };
   } | null = null;
+  // iOS-specific metadata, populated for .ipa scans (platform === 'ios').
+  iosMetadata: IosMetadata | null = null;
+  // Resolved platform of the current result (what the backend reported), used
+  // to decide whether to render Android or iOS sections.
+  platform: 'android' | 'ios' = 'android';
   particlePositions: Array<{top: string, left: string, size: string, delay: string}> = [];
-  
+
   // Section visibility states - all collapsed by default
   showPermissions = false;
   showActivities = false;
@@ -88,11 +93,17 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
   showFeatures = false;
   showResourceData = false;
   showDeeplinks = false;
+  // iOS section visibility states.
+  showUrlSchemes = false;
+  showFrameworks = false;
+  showEntitlements = false;
 
   private platformSubscription?: Subscription;
+  private resultPlatformSubscription?: Subscription;
   private fileSubscription?: Subscription;
   private secretsSubscription?: Subscription;
   private metadataSubscription?: Subscription;
+  private iosMetadataSubscription?: Subscription;
   private particleSubscription?: Subscription;
   // Performance optimizations
   private readonly SCROLL_THRESHOLD = 100;
@@ -125,11 +136,18 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
     this.platformSubscription = this.scanService.selectedPlatform$.subscribe(platform => {
       this.selectedPlatform = platform;
     });
-    
+
+    // resultPlatform$ reflects the platform the backend actually reported for
+    // the completed scan; drive section rendering off this rather than the
+    // user's tab selection.
+    this.resultPlatformSubscription = this.scanService.resultPlatform$.subscribe(platform => {
+      this.platform = platform;
+    });
+
     this.fileSubscription = this.scanService.currentFile$.subscribe(file => {
       this.currentFile = file;
     });
-    
+
     this.secretsSubscription = this.scanService.secrets$.subscribe(secrets => {
       this.secrets = secrets;
     });
@@ -137,15 +155,21 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
     this.metadataSubscription = this.scanService.metadata$.subscribe(metadata => {
       this.metadata = metadata;
     });
+
+    this.iosMetadataSubscription = this.scanService.iosMetadata$.subscribe(iosMetadata => {
+      this.iosMetadata = iosMetadata;
+    });
   }
 
   private cleanupSubscriptions() {
     [
       this.particleSubscription,
       this.platformSubscription,
+      this.resultPlatformSubscription,
       this.fileSubscription,
       this.secretsSubscription,
-      this.metadataSubscription
+      this.metadataSubscription,
+      this.iosMetadataSubscription
     ].forEach(sub => sub?.unsubscribe());
   }
 
@@ -186,9 +210,10 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
   }
 
   // Optimized section toggling
-  private toggleSection(section: 'showPermissions' | 'showActivities' | 'showServices' | 
-    'showContentProviders' | 'showBroadcastReceivers' | 'showLibraries' | 
-    'showCustomPermissions' | 'showFeatures' | 'showResourceData' | 'showDeeplinks') {
+  private toggleSection(section: 'showPermissions' | 'showActivities' | 'showServices' |
+    'showContentProviders' | 'showBroadcastReceivers' | 'showLibraries' |
+    'showCustomPermissions' | 'showFeatures' | 'showResourceData' | 'showDeeplinks' |
+    'showUrlSchemes' | 'showFrameworks' | 'showEntitlements') {
     requestAnimationFrame(() => {
       this[section] = !this[section];
     });
@@ -226,6 +251,38 @@ export class ResultsScreenComponent implements OnInit, OnDestroy, AfterViewInit 
   toggleFeatures() { this.toggleSection('showFeatures'); }
   toggleResourceData() { this.toggleSection('showResourceData'); }
   toggleDeeplinks() { this.toggleSection('showDeeplinks'); }
+  // iOS toggle methods
+  toggleUrlSchemes() { this.toggleSection('showUrlSchemes'); }
+  toggleFrameworks() { this.toggleSection('showFrameworks'); }
+  toggleEntitlements() { this.toggleSection('showEntitlements'); }
+
+  // iOS entitlements are a free-form object; flatten to display rows of
+  // key -> stringified value. Nested arrays/objects are JSON-encoded so they
+  // remain readable in the UI without special-casing every shape.
+  getEntitlementEntries(): Array<{ key: string; value: string }> {
+    const ent = this.iosMetadata?.entitlements;
+    if (!ent) return [];
+    return Object.keys(ent).map(key => {
+      const raw = (ent as Record<string, unknown>)[key];
+      let value: string;
+      if (raw === null || raw === undefined) {
+        value = '';
+      } else if (typeof raw === 'object') {
+        try {
+          value = JSON.stringify(raw);
+        } catch {
+          value = String(raw);
+        }
+      } else {
+        value = String(raw);
+      }
+      return { key, value };
+    });
+  }
+
+  getEntitlementCount = () => this.getEntitlementEntries().length;
+
+  trackByEntitlement = (_: number, e: { key: string }) => e.key;
 
   // Helper methods
   getActivitiesWithDeeplinks() {
