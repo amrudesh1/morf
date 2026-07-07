@@ -42,8 +42,30 @@ export interface Secret {
   secretConfidence: 'high' | 'low';
 }
 
+// iOS-specific metadata returned by the backend for .ipa scans. Mirrors the
+// documented iosMetadata envelope (see WS-IOS-FRONTEND spec):
+// { bundleIdentifier, bundleVersion, deploymentTarget, executableName,
+//   architectures: string[], isEncrypted: bool, urlSchemes: string[],
+//   entitlements: object, frameworks: string[] }.
+export interface IosMetadata {
+  bundleIdentifier: string;
+  bundleVersion: string;
+  deploymentTarget: string;
+  executableName: string;
+  architectures: string[];
+  isEncrypted: boolean;
+  urlSchemes: string[];
+  // entitlements is a free-form key/value object whose values can be strings,
+  // booleans, numbers, or nested arrays/objects (e.g. keychain-access-groups).
+  entitlements: Record<string, unknown>;
+  frameworks: string[];
+}
+
 interface ScanResponse {
   message: string;
+  // Platform of the scanned package. Android responses may omit this (treated
+  // as 'android'); iOS responses set it to 'ios' and include iosMetadata.
+  platform?: 'android' | 'ios';
   data: {
     fileName: string;
     packageName: string;
@@ -54,6 +76,8 @@ interface ScanResponse {
     secretCount: number;
     secrets: BackendSecret[];
     createdAt: string;
+    // Present only on iOS scans (platform === 'ios').
+    iosMetadata?: IosMetadata;
     // New fields
     activities: Array<{
       name: string;
@@ -190,6 +214,17 @@ export class ScanService {
   } | null>(null);
   metadata$ = this.metadataSubject.asObservable();
 
+  // iOS-specific metadata (null for Android scans or before a scan completes).
+  private iosMetadataSubject = new BehaviorSubject<IosMetadata | null>(null);
+  iosMetadata$ = this.iosMetadataSubject.asObservable();
+
+  // Resolved platform of the most recent scan result. Distinct from the
+  // user-selected platform (selectedPlatform$): this reflects what the backend
+  // actually reported, so the results screen renders the correct sections even
+  // if the selection state drifts.
+  private resultPlatformSubject = new BehaviorSubject<'android' | 'ios'>('android');
+  resultPlatform$ = this.resultPlatformSubject.asObservable();
+
   // Current screen
   private currentScreenSubject = new BehaviorSubject<'splash' | 'upload' | 'processing' | 'results' | 'patterns'>('splash');
   currentScreen$ = this.currentScreenSubject.asObservable();
@@ -263,6 +298,8 @@ export class ScanService {
     this.currentFileSubject.next(null);
     this.secretsSubject.next([]);
     this.metadataSubject.next(null);
+    this.iosMetadataSubject.next(null);
+    this.resultPlatformSubject.next('android');
     this.setCurrentScreen('upload');
   }
 
@@ -457,6 +494,25 @@ export class ScanService {
                 layouts: 0,
               },
             });
+            // Resolve the platform from the response envelope, defaulting to
+            // 'android' when the backend omits it (Android scans).
+            const platform = resultData.platform === 'ios' ? 'ios' : 'android';
+            this.resultPlatformSubject.next(platform);
+            this.iosMetadataSubject.next(
+              platform === 'ios' && resultData.data?.iosMetadata
+                ? {
+                    bundleIdentifier: resultData.data.iosMetadata.bundleIdentifier || '',
+                    bundleVersion: resultData.data.iosMetadata.bundleVersion || '',
+                    deploymentTarget: resultData.data.iosMetadata.deploymentTarget || '',
+                    executableName: resultData.data.iosMetadata.executableName || '',
+                    architectures: resultData.data.iosMetadata.architectures || [],
+                    isEncrypted: !!resultData.data.iosMetadata.isEncrypted,
+                    urlSchemes: resultData.data.iosMetadata.urlSchemes || [],
+                    entitlements: resultData.data.iosMetadata.entitlements || {},
+                    frameworks: resultData.data.iosMetadata.frameworks || [],
+                  }
+                : null,
+            );
             this.setCurrentScreen('results');
           } else if (response.status === 'failed') {
             this.resetScan();
