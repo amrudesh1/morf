@@ -24,6 +24,7 @@ import (
 	"io"
 	"morf/apk"
 	database "morf/db"
+	"morf/ios"
 	"morf/metrics"
 	"morf/models"
 	"morf/queue"
@@ -523,8 +524,16 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 		return
 	}
 
-	// Process the APK with timeout
-	result, err := w.scanAPK(scanCtx, job)
+	// Process the artifact with timeout. Dispatch on the job's FileType platform
+	// discriminator: an "ipa" job runs the iOS pipeline (scanIPA), everything else
+	// (including an empty FileType, which is legacy Android) runs scanAPK. Both
+	// return the same gin.H result shape consumed by handleJobSuccess.
+	var result gin.H
+	if strings.EqualFold(job.FileType, "ipa") {
+		result, err = w.scanIPA(scanCtx, job)
+	} else {
+		result, err = w.scanAPK(scanCtx, job)
+	}
 	if err != nil {
 		// Check if error is due to timeout
 		if scanCtx.Err() == context.DeadlineExceeded {
@@ -699,6 +708,133 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 	result := apiHandler.CreateSuccessResponse()
 	metadataHandler.AddMetadataToResponse(result, &secret)
 	resourceHandler.AddResourceDataToResponse(result)
+
+	return result, nil
+}
+
+// scanIPA performs the actual iOS (.ipa) scanning. It is the iOS analogue of
+// scanAPK and returns the SAME gin.H result envelope shape so handleJobSuccess,
+// the /results/:jobID reader, and webhook subscribers stay platform-agnostic.
+//
+// It mirrors scanAPK's structure: create the workspace, resolve the artifact via
+// the shared resolveAPKPath (an .ipa is just a file in the storage backend, keyed
+// on StorageKey exactly like an APK), gate it on the shared zip-bomb/zip-slip
+// check (an .ipa is a zip), short-circuit on a duplicate, run the iOS extraction
+// pipeline (ios.StartIOSExtraction: unzip + Mach-O strings + plist + frameworks +
+// corpus scan), persist a platform="ios" secret with its IOSMetadata, and build
+// the result with the iOS metadata handler. Per-phase timings (unzip/macho/plist
+// aggregated as the extract phase) are emitted as structured fields.
+func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error) {
+	scanStart := time.Now()
+	timings := log.Fields{"job_id": job.ID, "platform": "ios"}
+	if job.RequestID != "" {
+		timings["request_id"] = job.RequestID
+	}
+
+	// Deterministic per-job workspace keyed on the job ID (MED-ioFactor(2)).
+	jobCtx := utils.NewJobContextForID(job.ID)
+	if err := jobCtx.CreateWorkspace(); err != nil {
+		return nil, fmt.Errorf("failed to create workspace: %v", err)
+	}
+	defer jobCtx.CleanupWorkspace()
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("job cancelled")
+	default:
+	}
+
+	// SCALE-1 / DISK-1: resolve a usable local path for the .ipa from the storage
+	// backend (reused verbatim from the APK path — resolution is content-agnostic).
+	localPath, err := w.resolveAPKPath(ctx, job, jobCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	// S-5: gate on the shared zip-bomb / zip-slip check before any extraction. An
+	// .ipa is a zip archive, so the same guard applies. Tag deterministic.
+	if err := utils.CheckAPKSafe(localPath); err != nil {
+		return nil, fmt.Errorf("safety check failed: %w: %w", utils.ErrNonRetryable, err)
+	}
+
+	// Duplicate check: the hash is computed from the resolved local file, exactly
+	// as for APKs, so a re-uploaded .ipa short-circuits to the stored result.
+	if database.DatabaseRequired && database.GormDB != nil {
+		dupStart := time.Now()
+		found, jsonData := utils.CheckDuplicateInDB(database.GormDB, localPath)
+		timings["dup_check_ms"] = time.Since(dupStart).Milliseconds()
+		if found {
+			if existingSecret, perr := response.ParseExistingSecret(jsonData); perr == nil {
+				metrics.RecordScan("duplicate")
+				timings["total_ms"] = time.Since(scanStart).Milliseconds()
+				timings["outcome"] = "duplicate"
+				log.WithFields(timings).Info("Scan phase timings")
+				apiHandler := response.NewAPIResponseHandler(existingSecret, existingSecret.SecretModel)
+				return apiHandler.CreateDuplicateResponse(), nil
+			}
+			dupFields := jobLogFields(job.WorkerID, job)
+			log.WithFields(dupFields).Warn("Failed to parse existing duplicate iOS secret; falling through to full scan")
+		}
+	}
+
+	// Phase: iOS extraction pipeline (unzip + macho + plist + frameworks + scan).
+	// Record per-tool metrics for the phases the pipeline drives so iOS scans are
+	// observable alongside the APK tool metrics.
+	extractStart := time.Now()
+	secretsModels, iosMeta, extractErr := ios.StartIOSExtraction(ctx, localPath, jobCtx)
+	extractDur := time.Since(extractStart)
+	timings["extract_ms"] = extractDur.Milliseconds()
+	// The pipeline internally runs unzip -> macho parse -> plist parse; attribute
+	// the aggregate extraction time to each tool name so the tool-execution
+	// histogram carries ipa_unzip / macho_parse / plist_parse series.
+	metrics.RecordToolExecution("ipa_unzip", extractDur.Seconds())
+	metrics.RecordToolExecution("macho_parse", extractDur.Seconds())
+	metrics.RecordToolExecution("plist_parse", extractDur.Seconds())
+	if extractErr != nil {
+		timings["outcome"] = "failed"
+		timings["total_ms"] = time.Since(scanStart).Milliseconds()
+		log.WithFields(timings).Warn("Scan phase timings (failed)")
+		return nil, fmt.Errorf("ios extraction failed: %w", extractErr)
+	}
+
+	// Build the legacy-shaped Secrets carrier. iOS has no apkanalyzer package
+	// data; the hash is computed from the resolved file (same helper as the
+	// duplicate check) and the bundle identifier/version are carried on the
+	// IOSMetadata row rather than the Android package_data columns.
+	apkHash := utils.ExtractHash(localPath)
+	secret := models.Secrets{
+		FileName:    job.OriginalFilename,
+		APKHash:     apkHash,
+		APKVersion:  iosMeta.BundleVersion,
+		SecretModel: models.SecretModelArray(secretsModels),
+		PackageDataModel: models.PackageDataModel{
+			APKHash:     apkHash,
+			PackageName: iosMeta.BundleIdentifier,
+			VersionName: iosMeta.BundleVersion,
+		},
+	}
+
+	// Phase: persist. iOS routes through InsertSecretsIOS which stamps
+	// platform="ios", skips the Android component tables, and links the
+	// ios_metadata row to the created secret.
+	if database.DatabaseRequired && database.GormDB != nil {
+		dbStart := time.Now()
+		database.InsertSecretsIOS(secret, iosMeta)
+		timings["db_ms"] = time.Since(dbStart).Milliseconds()
+	}
+
+	timings["secret_count"] = len(secretsModels)
+	timings["total_ms"] = time.Since(scanStart).Milliseconds()
+	timings["outcome"] = "success"
+	log.WithFields(timings).Info("Scan phase timings")
+
+	// Build the response with the iOS metadata handler so the envelope carries
+	// the iOS fields (bundle identity, architectures, encryption, frameworks, …)
+	// in place of the Android component fields.
+	apiHandler := response.NewAPIResponseHandler(secret, secretsModels)
+	iosHandler := response.NewIOSMetadataHandler(iosMeta)
+	result := apiHandler.CreateSuccessResponse()
+	iosHandler.AddMetadataToResponse(result)
 
 	return result, nil
 }

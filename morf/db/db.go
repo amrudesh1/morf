@@ -546,7 +546,9 @@ func normalizeSecretJSON(secret *models.Secrets) bool {
 	return dirty
 }
 
-// InsertSecrets inserts a secret into the database using normalized schema
+// InsertSecrets inserts a secret into the database using normalized schema.
+// It is the Android (APK) entry point: platform is "android" and no iOS
+// metadata is attached.
 func InsertSecrets(secret models.Secrets, db interface{}) {
 	if GormDB == nil {
 		log.Error("Database connection is nil")
@@ -554,10 +556,27 @@ func InsertSecrets(secret models.Secrets, db interface{}) {
 	}
 
 	log.Infof("Inserting secret for file: %s", secret.FileName)
-	insertSecretsSync(secret)
+	insertSecretsSync(secret, "android", nil)
 }
 
-// InsertSecretsAsync inserts a secret into the database asynchronously
+// InsertSecretsIOS inserts an iOS (IPA) scan result. It reuses the same
+// package_data + secret + secret_findings write path as Android but stamps
+// platform="ios" on the secret row and, instead of the Android component
+// tables (activities/services/…), links a single ios_metadata row to the
+// created secret. The caller passes the IOSMetadata assembled by
+// ios.StartIOSExtraction; its SecretID is populated inside the transaction once
+// the secret row's ID is known.
+func InsertSecretsIOS(secret models.Secrets, iosMeta models.IOSMetadata) {
+	if GormDB == nil {
+		log.Error("Database connection is nil")
+		return
+	}
+
+	log.Infof("Inserting iOS secret for file: %s", secret.FileName)
+	insertSecretsSync(secret, "ios", &iosMeta)
+}
+
+// InsertSecretsAsync inserts a secret into the database asynchronously (Android).
 func InsertSecretsAsync(secret models.Secrets) {
 	if GormDB == nil {
 		log.Error("Database connection is nil")
@@ -575,7 +594,7 @@ func InsertSecretsAsync(secret models.Secrets) {
 			}
 		}()
 
-		insertSecretsSync(secret)
+		insertSecretsSync(secret, "android", nil)
 		log.WithFields(log.Fields{
 			"file": secret.FileName,
 		}).Info("Async database write completed")
@@ -596,7 +615,19 @@ func InsertSecretsAsync(secret models.Secrets) {
 //
 // CONC-7: the whole write path runs through the "db" circuit breaker. utils.Do is
 // fail-open: when the breaker is unset/closed the function executes unchanged.
-func insertSecretsSync(secret models.Secrets) {
+//
+// platform is the discriminator persisted on the secret row ("android" or
+// "ios"). For "ios", the Android component inserts (activities/services/content
+// providers/broadcast receivers) are SKIPPED and, if iosMeta is non-nil, a
+// single ios_metadata row is inserted linked to the created secret via
+// secret_id. The package_data + secret + secret_findings inserts are performed
+// for BOTH platforms (an iOS secret still references a package_data row keyed on
+// its hash). iosMeta is ignored for "android".
+func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.IOSMetadata) {
+	if platform == "" {
+		platform = "android"
+	}
+	isIOS := platform == "ios"
 	// DB-8: marshal metadata exactly once per insert and reuse the bytes below.
 	metadataJSON, err := json.Marshal(secret.Metadata)
 	if err != nil {
@@ -648,6 +679,7 @@ func insertSecretsSync(secret models.Secrets) {
 				APKHash:       secret.APKHash,
 				APKVersion:    secret.APKVersion,
 				SecretCount:   len(secret.SecretModel),
+				Platform:      platform,
 				Metadata:      metadataStr,
 			}
 			if err := tx.Create(&newSecret).Error; err != nil {
@@ -674,7 +706,25 @@ func insertSecretsSync(secret models.Secrets) {
 				log.Infof("Inserted %d secret findings", len(findings))
 			}
 
-			// Step 5: Insert components.
+			// Step 5: Insert platform-specific data.
+			//
+			// iOS: skip the Android component tables entirely and instead insert a
+			// single ios_metadata row linked to this secret. Return early — the
+			// package_data + secret + secret_findings above are already committed as
+			// part of this transaction.
+			if isIOS {
+				if iosMeta != nil {
+					row := *iosMeta // copy so the caller's value is not mutated
+					row.SecretID = newSecret.ID
+					if err := tx.Create(&row).Error; err != nil {
+						return fmt.Errorf("failed to create ios_metadata for %s: %w", secret.APKHash, err)
+					}
+					log.Infof("Inserted ios_metadata row for secret %d (bundle %s)", newSecret.ID, row.BundleIdentifier)
+				}
+				return nil
+			}
+
+			// Android component inserts.
 			// Activities
 			if len(secret.Activities) > 0 {
 				activities := make([]models.Activity, 0, len(secret.Activities))
