@@ -24,6 +24,14 @@ function Shell() {
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-base text-txt">
+      {/* Shared ambient aurora — ties every screen to the splash. */}
+      {!reduce && (
+        <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+          <div className="absolute -left-40 -top-40 h-[32rem] w-[32rem] rounded-full bg-indigo/10 blur-[150px]" />
+          <div className="absolute -right-40 top-1/3 h-[28rem] w-[28rem] rounded-full bg-cyan/[0.07] blur-[150px]" />
+        </div>
+      )}
+
       <AnimatePresence>
         {error && (
           <motion.div

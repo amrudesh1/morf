@@ -49,12 +49,33 @@ export default {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
+        breathe: {
+          '0%, 100%': { filter: 'drop-shadow(0 0 14px rgba(129,140,248,0.45))' },
+          '50%': { filter: 'drop-shadow(0 0 34px rgba(34,211,238,0.7))' },
+        },
+        particle: {
+          '0%': { opacity: '0', transform: 'translateY(0) scale(0.5)' },
+          '50%': { opacity: '0.7' },
+          '100%': { opacity: '0', transform: 'translateY(-14px) scale(1)' },
+        },
+        'ping-ring': {
+          '0%': { transform: 'scale(0.7)', opacity: '0.5' },
+          '100%': { transform: 'scale(2.1)', opacity: '0' },
+        },
+        'dot-pulse': {
+          '0%, 100%': { opacity: '0.25', transform: 'scale(0.8)' },
+          '50%': { opacity: '1', transform: 'scale(1.15)' },
+        },
       },
       animation: {
         'scan-sweep': 'scan-sweep 2.4s ease-in-out infinite',
         'file-in': 'file-in 0.4s ease-out both',
         'glow-pulse': 'glow-pulse 2.4s ease-in-out infinite',
         shimmer: 'shimmer 2.2s linear infinite',
+        breathe: 'breathe 2.6s ease-in-out infinite',
+        particle: 'particle 3s ease-in-out infinite',
+        'ping-ring': 'ping-ring 3s ease-out infinite',
+        'dot-pulse': 'dot-pulse 1s ease-in-out infinite',
       },
     },
   },
