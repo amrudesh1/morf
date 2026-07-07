@@ -1,0 +1,361 @@
+# Copyright [2023] [Amrudesh Balakrishnan]
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+openapi: 3.0.3
+info:
+  title: MORF API
+  description: |
+    HTTP API for the Mobile Reconnaissance Framework (MORF).
+
+    MORF statically analyses mobile applications for hardcoded secrets and
+    security-relevant metadata. It supports **Android** (`.apk`) and
+    **iOS** (`.ipa`) inputs. The upload endpoint accepts either file type;
+    the scan pipeline branches on the platform and returns a shared result
+    shape. iOS-specific metadata is carried in the `iosMetadata` object and
+    the platform is tagged via the `platform` field.
+
+    See `docs/IOS_SCANNING.md` for the iOS Mach-O analysis architecture.
+  version: "1.1.0"
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:9092/api
+    description: Local MORF server (default port; routes are mounted under /api)
+
+tags:
+  - name: health
+  - name: scan
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: ok
+
+  /upload:
+    post:
+      tags: [scan]
+      summary: Upload an APK or IPA for scanning
+      description: |
+        Accepts a multipart form upload of a mobile application binary and
+        starts an asynchronous scan.
+
+        - **Android:** `.apk`
+        - **iOS:** `.ipa` (zip containing `Payload/<App>.app/`; the Mach-O
+          executable and `Info.plist` are analysed — see `docs/IOS_SCANNING.md`)
+
+        The platform is inferred from the file extension. The response is
+        returned immediately; poll `GET /results/{filename}` for the scan
+        result keyed by the uploaded filename.
+      operationId: uploadApp
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: >-
+                    The application file to scan. A `.apk` (Android) or
+                    `.ipa` (iOS) archive.
+      responses:
+        "200":
+          description: Upload accepted; scanning started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: File uploaded successfully. Processing started.
+        "400":
+          description: Missing file or unsupported extension.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Database unavailable / not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to persist the uploaded file.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /results/{filename}:
+    get:
+      tags: [scan]
+      summary: Fetch a completed scan result
+      description: |
+        Retrieve the result for a previously uploaded file. Returns `202` while
+        the scan is still in progress; once ready, returns `200` with the full
+        result (and the in-memory entry is consumed). Poll until `200`.
+      operationId: getResult
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The filename as uploaded (e.g. `app.ipa`).
+      responses:
+        "200":
+          description: Scan complete.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+        "202":
+          description: Still processing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Processing
+
+  /jira:
+    post:
+      tags: [scan]
+      summary: Scan an app referenced from a Jira webhook
+      operationId: jiraScan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Accepted; processing asynchronously.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Sit Back and Relax! We are working on it!
+        "400":
+          description: Invalid body or database not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /slackscan:
+    post:
+      tags: [scan]
+      summary: Scan an app shared via Slack
+      operationId: slackScan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Accepted; processing asynchronously.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Sit Back and Relax! We are working on it!
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Database unavailable / not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Only APK or IPA files are allowed
+
+    Secret:
+      type: object
+      description: A single secret finding. Shared across Android and iOS scans.
+      properties:
+        type:
+          type: string
+          example: AWS API Key
+        lineNo:
+          type: integer
+          description: >-
+            Line number in the decompiled source (Android) or the string
+            index/offset within the Mach-O section (iOS).
+          example: 42
+        fileLocation:
+          type: string
+          description: >-
+            Source file path (Android) or `Mach-O:<segment>.<section>`
+            locator (iOS), e.g. `Mach-O:__TEXT.__cstring`.
+          example: "Mach-O:__TEXT.__cstring"
+        secretType:
+          type: string
+          example: AWS API Key
+        secretString:
+          type: string
+          example: AKIAIOSFODNN7EXAMPLE
+        secretConfidence:
+          type: string
+          example: high
+
+    IosMetadata:
+      type: object
+      description: |
+        iOS-specific metadata extracted from the `.ipa`'s `Info.plist` and the
+        Mach-O executable. Present only when `platform` is `ios`. Fields are
+        populated from the parsed property list (XML or binary) and the Mach-O
+        load commands.
+      properties:
+        bundleIdentifier:
+          type: string
+          description: CFBundleIdentifier.
+          example: com.morf.fixture
+        bundleExecutable:
+          type: string
+          description: CFBundleExecutable (name of the Mach-O in the .app).
+          example: Fixture
+        shortVersion:
+          type: string
+          description: CFBundleShortVersionString.
+          example: "1.0"
+        bundleVersion:
+          type: string
+          description: CFBundleVersion.
+          example: "1"
+        minimumOSVersion:
+          type: string
+          description: MinimumOSVersion.
+          example: "15.0"
+        urlSchemes:
+          type: array
+          description: >-
+            Custom URL schemes declared under
+            CFBundleURLTypes[].CFBundleURLSchemes[] (deeplink inventory).
+          items:
+            type: string
+          example: ["morffixture"]
+        isFairPlayEncrypted:
+          type: boolean
+          description: >-
+            True when a LC_ENCRYPTION_INFO[_64] load command reports a
+            non-zero cryptid. When true, in-binary secret extraction over the
+            encrypted __TEXT range is not meaningful (static analysis cannot
+            decrypt FairPlay). See docs/IOS_SCANNING.md.
+          example: false
+        isFatBinary:
+          type: boolean
+          description: >-
+            True when the executable is a fat/universal Mach-O (opened via
+            macho.OpenFat); each architecture slice is analysed separately.
+          example: false
+        architectures:
+          type: array
+          description: CPU architectures found in the Mach-O (e.g. arm64).
+          items:
+            type: string
+          example: ["arm64"]
+
+    ScanResult:
+      type: object
+      description: |
+        Result of a completed scan. The `data` envelope mirrors the Android
+        response; the `platform` discriminator and the optional `iosMetadata`
+        object are the iOS additions.
+      properties:
+        message:
+          type: string
+          example: Success
+        data:
+          type: object
+          properties:
+            platform:
+              type: string
+              description: >-
+                Which analyser produced this result. `android` for `.apk`
+                inputs, `ios` for `.ipa` inputs.
+              enum: [android, ios]
+              example: ios
+            fileName:
+              type: string
+              example: fixture.ipa
+            packageName:
+              type: string
+              description: >-
+                Android package name, or the iOS CFBundleIdentifier when
+                `platform` is `ios`.
+              example: com.morf.fixture
+            version:
+              type: string
+              example: "1.0"
+            secretCount:
+              type: integer
+              example: 2
+            secrets:
+              type: array
+              items:
+                $ref: "#/components/schemas/Secret"
+            iosMetadata:
+              description: >-
+                Present only when `platform` is `ios`. Omitted (or null) for
+                Android scans.
+              allOf:
+                - $ref: "#/components/schemas/IosMetadata"
+            createdAt:
+              type: string
+              format: date-time
+              example: "2026-07-07T00:00:00Z"
