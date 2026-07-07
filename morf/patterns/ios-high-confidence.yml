@@ -1,0 +1,76 @@
+patterns:
+  # ---------------------------------------------------------------------------
+  # High-confidence-only iOS + cross-platform secrets. This is a low-false-
+  # positive subset: only fixed-prefix / structurally-unambiguous credentials.
+  # All regexes are RE2 (Go regexp) and ripgrep (Rust regex) compatible.
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: AWS Access Key ID
+      regex: "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Google API Key
+      regex: "AIza[0-9A-Za-z\\-_]{35}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Google OAuth Client ID (iOS)
+      regex: "[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Firebase Cloud Messaging Server Key (AAAA)
+      regex: "AAAA[A-Za-z0-9_\\-]{7}:[A-Za-z0-9_\\-]{140}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Stripe Live Secret Key
+      regex: "sk_live_[0-9a-zA-Z]{24}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Stripe Restricted Live Key
+      regex: "rk_live_[0-9a-zA-Z]{24}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Slack Token
+      regex: "xox[baprs]-[0-9a-zA-Z]{10,48}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Slack Webhook
+      regex: "https://hooks\\.slack\\.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Twilio API Key SID
+      regex: "SK[0-9a-f]{32}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: SendGrid API Key
+      regex: "SG\\.[A-Za-z0-9_\\-]{22}\\.[A-Za-z0-9_\\-]{43}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: GitHub Token
+      regex: "(ghp|gho|ghu|ghs|ghr)_[0-9a-zA-Z]{36,76}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: JSON Web Token (JWT)
+      regex: "eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Private Key Block
+      regex: "-----BEGIN[ A-Z0-9]* PRIVATE KEY-----"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: iOS Google Reversed Client ID Scheme
+      regex: "com\\.googleusercontent\\.apps\\.[0-9]+-[0-9A-Za-z_]{32}"
+      confidence: high
+      enabled: true
