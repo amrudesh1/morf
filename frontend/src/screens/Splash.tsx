@@ -41,7 +41,6 @@ function useScramble(target: string, enabled: boolean) {
 export function Splash() {
   const { setScreen } = useScan()
   const reduce = useReducedMotion()
-  const [leaving, setLeaving] = useState(false)
   const wordmark = useScramble('MORF', !reduce)
 
   const go = () => setScreen('upload')
@@ -75,16 +74,15 @@ export function Splash() {
 
   return (
     <motion.div
-      onClick={() => {
-        setLeaving(true)
-        go()
-      }}
+      onClick={go}
       role="button"
       tabIndex={-1}
       aria-label="Enter MORF"
-      className="fixed inset-0 z-[60] flex cursor-pointer flex-col items-center justify-center overflow-hidden bg-base"
-      animate={leaving && !reduce ? { opacity: 0 } : { opacity: 1 }}
-      transition={{ duration: 0.45, ease }}
+      className="fixed inset-0 z-[70] flex cursor-pointer flex-col items-center justify-center overflow-hidden bg-base"
+      initial={reduce ? {} : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 1.04 }}
+      transition={{ duration: 0.5, ease }}
     >
       {/* Dynamic aurora backdrop. */}
       <AuroraBackground intense />
@@ -102,11 +100,7 @@ export function Splash() {
       {/* Light vignette so the aurora still reads. */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_120%_at_50%_45%,transparent_55%,rgba(10,14,23,0.55)_100%)]" />
 
-      <motion.div
-        className="relative z-10 flex flex-col items-center"
-        animate={leaving && !reduce ? { scale: 1.05 } : { scale: 1 }}
-        transition={{ duration: 0.45, ease }}
-      >
+      <motion.div className="relative z-10 flex flex-col items-center">
         {/* Logo: radar rings + sweep + breathing glow. */}
         <motion.div
           className="relative grid h-44 w-44 place-items-center md:h-52 md:w-52"
