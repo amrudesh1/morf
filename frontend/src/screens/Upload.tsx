@@ -1,36 +1,42 @@
 import { useRef, useState } from 'react'
 import { motion, useReducedMotion, type Variants } from 'framer-motion'
-import { UploadCloud, ShieldCheck } from 'lucide-react'
+import { UploadCloud, ShieldCheck, Smartphone, Apple } from 'lucide-react'
 import { useScan } from '@/store/scanStore'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
+import type { Platform } from '@/types'
+
+// One dropzone for both platforms — the extension tells us everything, so there
+// is no platform to pick. .apk → Android, .ipa → iOS, anything else is rejected.
+function detectPlatform(name: string): Platform | null {
+  const n = name.toLowerCase()
+  if (n.endsWith('.apk')) return 'android'
+  if (n.endsWith('.ipa')) return 'ios'
+  return null
+}
 
 export function Upload() {
-  const { selectedPlatform, setSelectedPlatform, processFile } = useScan()
+  const { setSelectedPlatform, processFile } = useScan()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reduceMotion = useReducedMotion()
 
-  const ext = selectedPlatform === 'ios' ? '.ipa' : '.apk'
-  const platformName = selectedPlatform === 'ios' ? 'iOS' : 'Android'
-
   const handle = (file?: File | null) => {
     if (!file) return
-    if (!file.name.toLowerCase().endsWith(ext)) {
+    const platform = detectPlatform(file.name)
+    if (!platform) {
       const got = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : 'that file'
-      setError(
-        `That's a ${got} file, but ${platformName} analysis needs a ${ext}. Switch the platform above, or drop a ${ext} instead.`,
-      )
+      setError(`MORF reads Android .apk and iOS .ipa packages — ${got} isn't one. Drop one of those.`)
       return
     }
     setError(null)
+    setSelectedPlatform(platform) // keep store in sync for the processing screen
     processFile(file)
   }
 
   const openPicker = () => inputRef.current?.click()
 
-  // ONE tasteful entrance: stagger the intake blocks in. No motion when reduced.
   const container: Variants = reduceMotion
     ? { hidden: {}, show: {} }
     : { hidden: {}, show: { transition: { staggerChildren: 0.08, delayChildren: 0.04 } } }
@@ -51,66 +57,20 @@ export function Upload() {
       <motion.div variants={item}>
         <span className="eyebrow">Intake</span>
         <h1 className="mt-2 font-display text-5xl font-bold tracking-tight text-txt">
-          Open a <span className="gradient-text">case file</span>
+          Every build hides <span className="gradient-text">something</span>.
         </h1>
         <p className="mt-3 max-w-xl font-sans text-txt-muted">
-          Hand over a mobile app package and MORF combs it for hardcoded secrets, exposed
-          components, and telling metadata.
+          Drop a mobile app package and MORF combs it for hardcoded secrets, exposed components,
+          and telling metadata — in seconds.
         </p>
       </motion.div>
 
-      {/* Platform choice — explained, with the accepted extension shown. */}
-      <motion.div variants={item} className="flex flex-col gap-2">
-        <span className="eyebrow">What are we looking at?</span>
-        <div
-          role="tablist"
-          aria-label="Target platform"
-          className="inline-flex w-fit items-center gap-1 rounded-xl border border-line bg-surface p-1"
-        >
-          {(
-            [
-              { id: 'android', label: 'Android', accepts: '.apk' },
-              { id: 'ios', label: 'iOS', accepts: '.ipa' },
-            ] as const
-          ).map((p) => {
-            const active = selectedPlatform === p.id
-            return (
-              <button
-                key={p.id}
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setSelectedPlatform(p.id)
-                  setError(null)
-                }}
-                className={cn(
-                  'flex items-baseline gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-                  active
-                    ? 'bg-surface-hi text-txt shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]'
-                    : 'text-txt-dim hover:text-txt-muted',
-                )}
-              >
-                <span className="font-display font-semibold tracking-tight">{p.label}</span>
-                <span
-                  className={cn(
-                    'font-mono text-xs',
-                    active ? 'text-cyan' : 'text-txt-dim',
-                  )}
-                >
-                  {p.accepts}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      </motion.div>
-
-      {/* Dropzone — obviously interactive, keyboard reachable. */}
+      {/* Dropzone — one window for both platforms; the extension picks the lane. */}
       <motion.div variants={item}>
         <div
           role="button"
           tabIndex={0}
-          aria-label={`Upload a ${ext} file for ${platformName} analysis — drag and drop, or activate to browse`}
+          aria-label="Upload an .apk or .ipa file — drag and drop, or activate to browse"
           onClick={openPicker}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -129,7 +89,7 @@ export function Upload() {
             handle(e.dataTransfer.files?.[0])
           }}
           className={cn(
-            'card group flex min-h-64 cursor-pointer flex-col items-center justify-center gap-4 border-2 border-dashed p-10 text-center transition-colors',
+            'card group flex min-h-72 cursor-pointer flex-col items-center justify-center gap-4 border-2 border-dashed p-10 text-center transition-colors',
             dragging
               ? 'border-indigo bg-indigo/[0.06]'
               : error
@@ -148,11 +108,19 @@ export function Upload() {
             <UploadCloud className="h-6 w-6" />
           </span>
           <span className="font-display text-2xl font-semibold tracking-tight text-txt">
-            Drag a {ext} here, or click to browse
+            {dragging ? 'Drop it — we’ll take it from here' : 'Drag your build here, or click to browse'}
           </span>
-          <span className="chip">
-            {platformName} · accepts {ext}
-          </span>
+
+          {/* Supported formats — informational, not a choice to make. */}
+          <div className="flex items-center gap-2">
+            <span className="chip">
+              <Smartphone className="h-3 w-3" /> Android .apk
+            </span>
+            <span className="chip">
+              <Apple className="h-3 w-3" /> iOS .ipa
+            </span>
+          </div>
+
           <Button
             variant="outline"
             size="sm"
@@ -174,7 +142,7 @@ export function Upload() {
           />
         </div>
 
-        {/* Inline extension-mismatch error — what's wrong + how to fix. */}
+        {/* Inline error — what's wrong + how to fix. */}
         {error && (
           <p role="alert" className="mt-3 font-mono text-sm text-sev-high">
             {error}
