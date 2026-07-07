@@ -198,22 +198,40 @@ func extractSliceStrings(f *macho.File, arch string) ArchStrings {
 	return slice
 }
 
-// splitNulStrings splits a byte buffer on NUL and returns the printable-ASCII
-// runs of at least stringMinLen bytes. It is the generic fallback used for C
-// string / Swift metadata sections when a dedicated go-macho helper is not
-// applicable.
+// splitNulStrings extracts every maximal run of printable-ASCII bytes of at
+// least stringMinLen from a byte buffer (the classic strings(1) approach),
+// splitting on ANY non-printable byte — not only NUL. This is deliberately
+// more aggressive than NUL-splitting: NUL-terminated C strings are captured
+// identically (NUL is non-printable), but it ALSO recovers literals that are
+// packed without terminators and interleaved with binary data — notably Go's
+// __rodata blob (Go strings are length-prefixed, not NUL-terminated) and mixed
+// read-only constant pools — where a whole-chunk "mostly printable" test would
+// discard the surrounding noise and lose the embedded secret with it.
 func splitNulStrings(data []byte) []string {
 	var out []string
-	for _, chunk := range bytes.Split(data, []byte{0}) {
-		if len(chunk) < stringMinLen {
+	start := -1
+	for i := 0; i <= len(data); i++ {
+		printable := i < len(data) && isPrintableStringByte(data[i])
+		if printable {
+			if start < 0 {
+				start = i
+			}
 			continue
 		}
-		if !isMostlyPrintable(chunk) {
-			continue
+		if start >= 0 {
+			if i-start >= stringMinLen {
+				out = append(out, string(data[start:i]))
+			}
+			start = -1
 		}
-		out = append(out, string(chunk))
 	}
 	return out
+}
+
+// isPrintableStringByte reports whether b is a printable ASCII character (or
+// tab) suitable for inclusion in an extracted string run.
+func isPrintableStringByte(b byte) bool {
+	return b == '\t' || (b >= 0x20 && b <= 0x7e)
 }
 
 // isMostlyPrintable reports whether every byte of b is printable ASCII or common
