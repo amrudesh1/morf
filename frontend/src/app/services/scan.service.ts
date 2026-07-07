@@ -29,7 +29,7 @@ interface BackendSecret {
   secretType: string;
   fileLocation: string;
   secretString: string;
-  secretConfidence: 'high' | 'low';
+  secretConfidence: 'high' | 'medium' | 'low';
 }
 
 // Frontend format matches backend format for simplicity
@@ -39,7 +39,7 @@ export interface Secret {
   secretType: string;
   fileLocation: string;
   secretString: string;
-  secretConfidence: 'high' | 'low';
+  secretConfidence: 'high' | 'medium' | 'low';
 }
 
 // iOS-specific metadata view model for .ipa scans. The backend emits these
@@ -555,7 +555,7 @@ export class ScanService {
   
   // Mock data function removed as we're using real API data
 
-  getSecretCountBySeverity(confidence: 'high' | 'low'): number {
+  getSecretCountBySeverity(confidence: 'high' | 'medium' | 'low'): number {
     return this.secretsSubject.getValue().filter(s => s.secretConfidence === confidence).length;
   }
 

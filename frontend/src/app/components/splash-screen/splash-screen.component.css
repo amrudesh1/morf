@@ -1,196 +1,79 @@
-/* Particle Animation */
-.particles-container {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
+/* ============================================================
+   Splash — case-file TITLE CARD (Forensic Dossier)
+   Quiet and disciplined: one wordmark, one eyebrow, one struck bar.
+   All motion here is killed globally under prefers-reduced-motion.
+   ============================================================ */
+
+/* Title card enters like a page settling into a folder. */
+.title-card {
+  animation: cardIn 0.6s ease-out both;
 }
 
-.particle {
-  position: absolute;
-  width: var(--size, 8px);
-  height: var(--size, 8px);
-  background: radial-gradient(circle, rgba(56, 182, 255, 0.8) 0%, rgba(56, 182, 255, 0) 70%);
-  border-radius: 50%;
-  opacity: 0;
-  animation: particleFade 2s ease-in-out infinite; /* Reduced from 3s to 2s */
-  animation-delay: var(--delay, 0s);
-  /* Add will-change for better performance */
-  will-change: opacity, transform;
-}
-
-@keyframes particleFade {
+@keyframes cardIn {
   0% {
     opacity: 0;
-    transform: scale(0.5);
-  }
-  50% {
-    opacity: 0.6; /* Reduced from 0.8 to 0.6 */
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.5);
-  }
-}
-
-/* Logo Container */
-.logo-container {
-  position: relative;
-  width: 256px;
-  height: 256px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Logo Animation */
-.logo-reveal {
-  opacity: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  filter: brightness(0) invert(1);
-  animation: revealLogo 0.8s ease-out forwards,
-             glowPulse 2s ease-in-out infinite 0.8s;
-  will-change: opacity, transform, filter;
-  position: relative;
-  z-index: 1;
-}
-
-@keyframes revealLogo {
-  0% {
-    opacity: 0;
-    transform: scale(0.8);
+    transform: translateY(8px);
   }
   100% {
     opacity: 1;
-    transform: scale(1);
+    transform: translateY(0);
   }
 }
 
-@keyframes glowPulse {
-  0%, 100% {
-    filter: brightness(0) invert(1) drop-shadow(0 0 20px #ffffff);
-  }
-  50% {
-    filter: brightness(0) invert(1) drop-shadow(0 0 40px #ffffff);
-  }
+/* MORF wordmark — big Anton, bone on ink. */
+.wordmark {
+  font-size: clamp(4.5rem, 22vw, 11rem);
+  letter-spacing: 0.02em;
+  color: var(--bone);
 }
 
-/* Scanner Animation */
-.scanner-container {
-  width: 300px;
-  height: 4px;
-  background-color: rgba(56, 182, 255, 0.2);
-  border-radius: 2px;
-  overflow: hidden;
-  position: relative;
+/* Framework caption uses the global .eyebrow; give it room to breathe. */
+.framework-text {
+  min-height: 1.2em;
 }
 
-.scanner-line {
-  height: 100%;
-  width: 30px;
-  background: linear-gradient(to right, rgba(56, 182, 255, 0), rgba(56, 182, 255, 1), rgba(56, 182, 255, 0));
-  position: absolute;
-  animation: scannerMove 1.5s linear infinite; /* Reduced from 2s to 1.5s */
-  will-change: transform; /* Use transform instead of left for better performance */
-}
-
-@keyframes scannerMove {
-  0% {
-    transform: translateX(-30px);
-  }
-  100% {
-    transform: translateX(300px);
-  }
-}
-
-/* Loading Animation */
-.loading-bar {
-  background: linear-gradient(to right, #38b6ff, #5271ff);
-  width: 30%;
-  animation: loadingMove 1.5s infinite; /* Reduced from 2s to 1.5s */
-  will-change: transform, width; /* Use transform for better performance */
-}
-
-@keyframes loadingMove {
-  0% {
-    transform: translateX(0%);
-    width: 30%;
-  }
-  50% {
-    transform: translateX(233%); /* 70/30 * 100 = 233% */
-    width: 30%;
-  }
-  100% {
-    transform: translateX(0%);
-    width: 30%;
-  }
-}
-
-.loading-dot {
-  width: 6px;
-  height: 6px;
-  background-color: #38b6ff;
-  border-radius: 50%;
-  animation: dotPulse 1s infinite; /* Reduced from 1.5s to 1s */
-  will-change: opacity, transform;
-}
-
-.loading-dot:nth-child(2) {
-  animation-delay: 0.3s; /* Reduced from 0.5s to 0.3s */
-}
-
-.loading-dot:nth-child(3) {
-  animation-delay: 0.6s; /* Reduced from 1s to 0.6s */
-}
-
-@keyframes dotPulse {
-  0%, 100% {
-    opacity: 0.2;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.2);
-  }
-}
-
-/* Fonts */
-.splash-font {
-  font-family: 'Orbitron', sans-serif;
-  letter-spacing: 2px;
-}
-
-.splash-font-secondary {
-  font-family: 'Roboto Mono', monospace;
-  letter-spacing: 1px;
-}
-
-/* Matrix Text Effect */
-.matrix-text {
-  font-family: 'Courier New', monospace;
-  letter-spacing: 2px;
-}
-
-/* Framework Text Bold Transition */
+/* Restrained emphasis at the end of the decode (added by TS). */
 .text-bold-transition {
-  animation: boldTransition 1s forwards;
+  color: var(--bone);
 }
 
-@keyframes boldTransition {
-  0% {
-    font-weight: normal;
-    text-shadow: none;
-  }
-  100% {
-    font-weight: bold;
-    text-shadow: 0 0 8px rgba(56, 182, 255, 0.7); /* Reduced shadow from 10px to 8px */
-  }
+/* Control code in the header — decoded mono characters. */
+.matrix-code {
+  letter-spacing: 0.28em;
+  white-space: nowrap;
 }
 
-/* Glow Effects */
-.drop-shadow-glow {
-  filter: drop-shadow(0 0 8px rgba(56, 182, 255, 0.7));
+/* Struck classification bar — the single restrained accent.
+   Uses the global .stamp for the rubber-stamp treatment; a strike-through
+   line reinforces the "struck from a declassified page" read. */
+.classification-bar {
+  position: relative;
+}
+.classification-bar::after {
+  content: "";
+  position: absolute;
+  left: -0.4em;
+  right: -0.4em;
+  top: 50%;
+  height: 1px;
+  background: var(--bone-dim);
+  opacity: 0.5;
+  transform: translateY(-50%);
+}
+
+/* Ambient index ticks — faint paper registration marks (from particle data).
+   Kept low-contrast so the card stays the focus. */
+.index-tick {
+  position: absolute;
+  width: 1px;
+  height: 8px;
+  background: var(--ink-700);
+  opacity: 0;
+  animation: tickFade 4s ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+@keyframes tickFade {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.4; }
 }

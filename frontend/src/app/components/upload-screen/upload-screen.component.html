@@ -1,119 +1,109 @@
-<div class="fixed inset-0 overflow-hidden" [@fadeInOut]>
-  <!-- Animated Background -->
-  <div class="absolute inset-0 bg-gradient-to-br from-blue-900 to-black">
-    <div class="particles-container">
-      <div *ngFor="let particle of particlePositions" 
-           class="particle" 
-           [ngStyle]="{
-             'top': particle.top,
-             'left': particle.left,
-             '--size': particle.size,
-             '--delay': particle.delay
-           }">
+<div class="fixed inset-0 overflow-hidden bg-ink text-bone" [@fadeInOut]>
+  <!-- Header -->
+  <header class="absolute top-0 left-0 right-0 px-6 py-5 flex items-center justify-between z-10">
+    <div class="flex items-center gap-3">
+      <img src="assets/morf.png" alt="MORF" class="w-9 h-9">
+      <div class="leading-none">
+        <div class="font-display text-xl tracking-wide">MORF</div>
+        <div class="eyebrow mt-1">Mobile Reconnaissance Framework</div>
       </div>
     </div>
-  </div>
-  
-  <!-- Header -->
-  <div class="absolute top-0 left-0 right-0 p-6 flex items-center justify-between z-10">
-    <div class="flex items-center">
-      <img src="assets/morf.png" alt="MORF" class="w-10 h-10 mr-3 drop-shadow-glow">
-      <h1 class="text-2xl font-bold text-white splash-font">MORF Scanner</h1>
-    </div>
-    <div class="flex items-center gap-4">
+    <div class="flex items-center gap-6">
       <button
         (click)="openPatternManagement()"
-        class="px-4 py-2 bg-blue-600/80 text-white rounded-lg hover:bg-blue-500/80 transition-colors splash-font-secondary backdrop-blur-sm text-sm"
+        class="font-sans text-sm text-bone-dim hover:text-signal transition-colors border border-ink-700 hover:border-signal rounded px-4 py-2"
       >
-        Manage Patterns
+        Detection rules
       </button>
-      <div class="text-xs text-blue-300 matrix-text">
+      <div class="eyebrow hidden sm:block">
         <span *ngFor="let char of matrixChars">{{char}}</span>
       </div>
     </div>
-  </div>
-  
+  </header>
+
   <!-- Main Content -->
-  <div class="absolute inset-0 flex flex-col items-center justify-center z-10 px-6">
-    <div class="w-full max-w-3xl">
+  <main class="absolute inset-0 flex flex-col items-center justify-center z-10 px-6">
+    <div class="w-full max-w-2xl animate-file-in">
+      <!-- Title -->
+      <div class="text-center mb-8">
+        <p class="eyebrow mb-3">Intake</p>
+        <h1 class="font-display text-5xl sm:text-6xl tracking-wide uppercase">Open a case file</h1>
+        <p class="font-sans text-bone-dim mt-3">
+          Submit a mobile app package for reconnaissance. MORF scans it for exposed API keys, credentials, and other secrets.
+        </p>
+      </div>
+
       <!-- Platform Selection Tabs -->
-      <div class="flex mb-6 justify-center">
-        <button 
-          [class]="selectedPlatform === 'android' ? 'bg-blue-600/50 text-white' : 'bg-blue-900/30 text-blue-300'" 
-          class="px-6 py-3 rounded-tl-lg rounded-bl-lg backdrop-blur-sm border border-blue-500/30 transition-colors splash-font flex items-center"
+      <div class="flex justify-center mb-6" role="tablist" aria-label="Package platform">
+        <button
+          role="tab"
+          [attr.aria-selected]="selectedPlatform === 'android'"
+          [class]="selectedPlatform === 'android' ? 'text-ink bg-signal border-signal' : 'text-bone-dim bg-transparent border-ink-700 hover:border-bone-dim'"
+          class="px-6 py-2 font-sans text-sm uppercase tracking-wider border rounded-l transition-colors"
           (click)="setPlatform('android')"
         >
-          <svg class="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M17.6,9.48l1.84-3.18c0.16-0.31,0.04-0.69-0.26-0.85c-0.29-0.15-0.65-0.06-0.83,0.22l-1.88,3.24 c-2.86-1.21-6.08-1.21-8.94,0L5.65,5.67c-0.19-0.29-0.58-0.38-0.87-0.2C4.5,5.65,4.41,6.01,4.56,6.3L6.4,9.48 C3.3,11.25,1.28,14.44,1,18h22C22.72,14.44,20.7,11.25,17.6,9.48z M7,15.25c-0.69,0-1.25-0.56-1.25-1.25 c0-0.69,0.56-1.25,1.25-1.25S8.25,13.31,8.25,14C8.25,14.69,7.69,15.25,7,15.25z M17,15.25c-0.69,0-1.25-0.56-1.25-1.25 c0-0.69,0.56-1.25,1.25-1.25s1.25,0.56,1.25,1.25C18.25,14.69,17.69,15.25,17,15.25z"/>
-          </svg>
-          Android
+          Android · .apk
         </button>
-        <button 
-          [class]="selectedPlatform === 'ios' ? 'bg-blue-600/50 text-white' : 'bg-blue-900/30 text-blue-300'" 
-          class="px-6 py-3 rounded-tr-lg rounded-br-lg backdrop-blur-sm border border-blue-500/30 transition-colors splash-font flex items-center"
+        <button
+          role="tab"
+          [attr.aria-selected]="selectedPlatform === 'ios'"
+          [class]="selectedPlatform === 'ios' ? 'text-ink bg-signal border-signal' : 'text-bone-dim bg-transparent border-ink-700 hover:border-bone-dim'"
+          class="px-6 py-2 font-sans text-sm uppercase tracking-wider border border-l-0 rounded-r transition-colors"
           (click)="setPlatform('ios')"
         >
-          <svg class="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M17.05,20.28c-0.98,0.95-2.05,0.8-3.08,0.35c-1.09-0.46-2.09-0.48-3.24,0c-1.44,0.62-2.2,0.44-3.06-0.35 C2.79,15.25,3.51,7.59,8.42,7.31c1.33,0.07,2.25,0.78,3.05,0.8c1.22-0.04,1.94-0.81,3.05-0.87C16.28,7.4,17.72,8.4,18.5,9.9 c-3.12,1.94-2.58,6.22,0.7,7.26C18.43,18.21,17.86,19.25,17.05,20.28z M12.03,7.25c-0.15-2.23,1.66-4.07,3.74-4.25 C15.95,5.18,13.74,7.16,12.03,7.25z"/>
-          </svg>
-          iOS
+          iOS · .ipa
         </button>
       </div>
-      
-      <!-- Upload Area -->
-      <div 
-        class="border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-all duration-300 border-blue-500/50 hover:border-blue-400 bg-blue-900/20 backdrop-blur-sm group relative overflow-hidden"
+
+      <!-- Intake slot / dropzone -->
+      <div
+        class="intake-slot"
+        [class.is-dragging]="isDragging"
         (dragover)="onDragOver($event)"
+        (dragleave)="onDragLeave($event)"
         (drop)="onDrop($event)"
         (click)="fileInput.click()"
+        (keydown.enter)="fileInput.click()"
+        (keydown.space)="fileInput.click()"
+        tabindex="0"
+        role="button"
+        [attr.aria-label]="'Select a ' + (selectedPlatform === 'android' ? '.apk' : '.ipa') + ' file, or drop one here'"
       >
-        <!-- Animated Scanner Line -->
-        <div class="scanner-upload-line"></div>
-        
-        <input 
+        <input
           #fileInput
-          type="file" 
-          class="hidden" 
+          type="file"
+          class="hidden"
           [accept]="selectedPlatform === 'android' ? '.apk' : '.ipa'"
           (change)="onFileSelected($event)"
         >
-        
-        <!-- Upload Icon with Animation -->
-        <div class="text-blue-300 mb-6 transform transition-transform duration-300 group-hover:scale-110 group-hover:text-blue-200">
-          <svg class="w-16 h-16 mx-auto drop-shadow-glow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-          </svg>
-        </div>
-        
-        <!-- Upload Text -->
-        <p class="text-2xl text-blue-200 mb-3 splash-font">
-          Drop your {{ selectedPlatform === 'android' ? 'APK' : 'IPA' }} file here
-        </p>
-        <p class="text-md text-blue-300 splash-font-secondary">
-          or click to select file
-        </p>
-        
-        <!-- File Type Info -->
-        <div class="mt-8 inline-block px-4 py-2 rounded-full bg-blue-900/40 border border-blue-500/30 text-blue-300 text-sm splash-font-secondary">
-          {{ selectedPlatform === 'android' ? 'Android Package (.apk)' : 'iOS App Store Package (.ipa)' }}
+
+        <div class="intake-slot__inner text-center">
+          <p class="eyebrow mb-4">{{ selectedPlatform === 'android' ? 'Android package' : 'iOS package' }}</p>
+
+          <p class="font-display text-2xl sm:text-3xl uppercase tracking-wide text-bone">
+            Drop a {{ selectedPlatform === 'android' ? '.apk' : '.ipa' }} to analyze
+          </p>
+          <p class="font-sans text-bone-dim mt-2">
+            or click to choose a file — MORF analyzes it the moment you do
+          </p>
+
+          <p class="font-mono text-xs text-bone-dim mt-6">
+            accepts:&nbsp;.apk&nbsp;·&nbsp;.ipa &nbsp;—&nbsp; {{ selectedPlatform === 'android' ? 'Android application package' : 'iOS app store package' }}
+          </p>
         </div>
       </div>
-      
-      <!-- Security Info -->
-      <div class="mt-8 text-center">
-        <div class="flex items-center justify-center space-x-2 mb-2">
-          <div class="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-          <p class="text-blue-300 splash-font-secondary">Secure Local Analysis - Your app is never uploaded to any server</p>
-        </div>
-        <p class="text-blue-400/70 text-sm splash-font-secondary">MORF will scan for API keys, credentials, and other sensitive information</p>
+
+      <!-- Analysis note -->
+      <div class="mt-6 text-center">
+        <p class="font-mono text-xs text-bone-dim">
+          Analysis is local. Your package is never uploaded to any third-party server.
+        </p>
       </div>
     </div>
-  </div>
-  
+  </main>
+
   <!-- Footer -->
-  <div class="absolute bottom-6 left-0 right-0 flex justify-center z-10">
-    <div class="px-4 py-2 rounded-lg bg-blue-900/20 backdrop-blur-sm border border-blue-500/30">
-      <p class="text-xs text-blue-300 splash-font-secondary">Mobile Reconnaissance Framework v1.0.0</p>
-    </div>
-  </div>
+  <footer class="absolute bottom-5 left-0 right-0 flex justify-center z-10">
+    <p class="eyebrow">MORF — Mobile Reconnaissance Framework · v1.0.0</p>
+  </footer>
 </div>

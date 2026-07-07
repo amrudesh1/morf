@@ -1,122 +1,87 @@
-/* Particle Animation */
-.particles-container {
+/* ============================================================
+   Processing — "Reconnaissance in progress" (Forensic Dossier)
+   One orchestrated moment: an amber scan sweep passing over a
+   redacted document. Everything else stays quiet and disciplined.
+   All motion here is killed globally under prefers-reduced-motion.
+   ============================================================ */
+
+/* --- The redacted document motif inside the dossier panel -------------- */
+.scan-doc {
+  /* let the sweep clip to the document edges */
+  isolation: isolate;
+}
+
+/* Struck-out "lines" of evidence — solid ink bars like a redacted page. */
+.redaction-line {
+  height: 0.85rem;
+  border-radius: 1px;
+  background-color: var(--ink-900);
+  background-image: repeating-linear-gradient(
+    90deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 4px);
+}
+
+/* --- The signature motion: a single amber sweep down the document ------ */
+.scan-sweep-bar {
   position: absolute;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
-.particle {
-  position: absolute;
-  width: var(--size, 8px);
-  height: var(--size, 8px);
-  background: radial-gradient(circle, rgba(56, 182, 255, 0.8) 0%, rgba(56, 182, 255, 0) 70%);
-  border-radius: 50%;
-  opacity: 0;
-  animation: particleFade 2s ease-in-out infinite; /* Reduced from 3s to 2s */
-  animation-delay: var(--delay, 0s);
-  will-change: opacity, transform; /* Add will-change for better performance */
-}
-
-@keyframes particleFade {
-  0% {
-    opacity: 0;
-    transform: scale(0.5);
-  }
-  50% {
-    opacity: 0.6; /* Reduced from 0.8 to 0.6 */
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.5);
-  }
-}
-
-/* Scanner Animation */
-.scanner-container {
-  width: 300px;
-  height: 4px;
-  background-color: rgba(56, 182, 255, 0.2);
-  border-radius: 2px;
-  overflow: hidden;
-  position: relative;
-}
-
-.scanner-line {
-  height: 100%;
-  width: 30px;
-  background: linear-gradient(to right, rgba(56, 182, 255, 0), rgba(56, 182, 255, 1), rgba(56, 182, 255, 0));
-  position: absolute;
-  animation: scannerMove 1.5s linear infinite; /* Reduced from 2s to 1.5s */
-  will-change: transform; /* Add will-change for better performance */
-}
-
-@keyframes scannerMove {
-  0% {
-    transform: translateX(-30px); /* Use transform instead of left */
-  }
-  100% {
-    transform: translateX(300px);
-  }
-}
-
-/* Loading Animation */
-.loading-dot {
-  width: 6px;
-  height: 6px;
-  background-color: #38b6ff;
-  border-radius: 50%;
-  animation: dotPulse 1s infinite; /* Reduced from 1.5s to 1s */
-  will-change: opacity, transform;
-}
-
-.loading-dot:nth-child(2) {
-  animation-delay: 0.3s; /* Reduced from 0.5s to 0.3s */
-}
-
-.loading-dot:nth-child(3) {
-  animation-delay: 0.6s; /* Reduced from 1s to 0.6s */
-}
-
-@keyframes dotPulse {
-  0%, 100% {
-    opacity: 0.2;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.2);
-  }
-}
-
-/* Spin Animation */
-.spin {
-  animation: spin 1.5s linear infinite; /* Reduced from 2s to 1.5s */
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 34%;
+  pointer-events: none;
+  /* Amber wash that reads as a scanner passing over the page. */
+  background: linear-gradient(
+    180deg,
+    rgba(232, 163, 61, 0) 0%,
+    rgba(232, 163, 61, 0.16) 45%,
+    rgba(245, 182, 87, 0.32) 50%,
+    rgba(232, 163, 61, 0.16) 55%,
+    rgba(232, 163, 61, 0) 100%);
+  box-shadow: 0 0 24px rgba(232, 163, 61, 0.12);
   will-change: transform;
 }
 
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* --- Status / progress lines: mono, resolving bone-dim -> bone --------- */
+.status-line {
+  color: var(--bone-dim);
+}
+.status-line .status-mark {
+  color: var(--bone-dim);
 }
 
-/* Fonts */
-.splash-font {
-  font-family: 'Orbitron', sans-serif;
-  letter-spacing: 2px;
+/* Completed steps read as fully "developed" bone. */
+.status-line--done {
+  color: var(--bone);
+}
+.status-line--done .status-mark {
+  color: var(--signal);
 }
 
-.splash-font-secondary {
-  font-family: 'Roboto Mono', monospace;
-  letter-spacing: 1px;
+/* The in-flight step pulses quietly to earn its amber marker. */
+.status-line--active {
+  color: var(--bone);
+}
+.status-line--active .status-mark {
+  color: var(--signal);
+  animation: statusBlink 1.1s steps(2, jump-none) infinite;
 }
 
-/* Glow Effects */
-.drop-shadow-glow {
-  filter: drop-shadow(0 0 8px rgba(56, 182, 255, 0.7));
+@keyframes statusBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* --- Ambient index ticks — faint paper registration marks (particles) -- */
+.index-tick {
+  position: absolute;
+  width: 1px;
+  height: 8px;
+  background: var(--ink-700);
+  opacity: 0;
+  animation: tickFade 4s ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+@keyframes tickFade {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.4; }
 }
