@@ -45,6 +45,12 @@ import (
 
 // SecretPatterns is the on-disk YAML shape of a pattern file under patternsDir.
 type SecretPatterns struct {
+	// Platform optionally scopes an ENTIRE file to one platform: "ios",
+	// "android", or "any" (default). When absent, the platform is inferred from
+	// the file name prefix ("ios-*" -> ios, "android-*" -> android, else any).
+	// A scan only compiles patterns whose platform is "any" or matches the scan,
+	// so iOS-only rules never run against an Android app and vice-versa.
+	Platform string `yaml:"platform"`
 	Patterns []struct {
 		Pattern struct {
 			Name       string `yaml:"name"`
@@ -64,7 +70,43 @@ type PatternInfo struct {
 	Name       string
 	Regex      string
 	Confidence string
+	Platform   string // "ios" | "android" | "any" — scan scope (see SecretPatterns.Platform)
 	Compiled   *regexp.Regexp
+}
+
+// normalizePlatform coerces an arbitrary string to a known scope value.
+func normalizePlatform(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "ios":
+		return "ios"
+	case "android":
+		return "android"
+	default:
+		return "any"
+	}
+}
+
+// filePlatform resolves a pattern file's platform scope from its declared
+// `platform:` field, falling back to the file-name prefix, else "any".
+func filePlatform(fileName, declared string) string {
+	if p := normalizePlatform(declared); p != "any" {
+		return p
+	}
+	lower := strings.ToLower(fileName)
+	switch {
+	case strings.HasPrefix(lower, "ios-"):
+		return "ios"
+	case strings.HasPrefix(lower, "android-"):
+		return "android"
+	default:
+		return "any"
+	}
+}
+
+// patternApplies reports whether a pattern with the given platform scope should
+// run in a scan of scanPlatform. Cross-platform ("any") patterns always apply.
+func patternApplies(patternPlatform, scanPlatform string) bool {
+	return patternPlatform == "any" || patternPlatform == scanPlatform
 }
 
 // patternsDir is the on-disk location of the secret pattern YAML files.
@@ -99,16 +141,20 @@ type PatternCache struct {
 	BuiltFrom time.Time
 }
 
-// cacheMu guards the current pattern cache pointer (SCAN-4).
+// cacheMu guards the per-platform pattern caches (SCAN-4). Each scan platform
+// ("android"/"ios"/"any") gets its own immutable snapshot, since the compiled
+// pattern set differs by platform scope.
 var (
 	cacheMu sync.RWMutex
-	cache   *PatternCache
+	caches  = map[string]*PatternCache{}
 )
 
-// GetPatternCache returns a fresh, immutable pattern cache, rebuilding it only
+// GetPatternCache returns a fresh, immutable pattern cache scoped to the given
+// scan platform ("android"/"ios"; anything else -> "any"), rebuilding it only
 // when patternsDir has changed since the last build (detected via the max entry
 // ModTime). This replaces a per-scan load+compile (SCAN-4).
-func GetPatternCache(jobID string) (*PatternCache, error) {
+func GetPatternCache(jobID, platform string) (*PatternCache, error) {
+	platform = normalizePlatform(platform)
 	files := utils.ReadDir(utils.GetAppFS(), patternsDir())
 
 	var maxMod time.Time
@@ -118,9 +164,9 @@ func GetPatternCache(jobID string) (*PatternCache, error) {
 		}
 	}
 
-	// Fast path: an existing cache that is at least as new as patternsDir.
+	// Fast path: an existing cache for this platform at least as new as patternsDir.
 	cacheMu.RLock()
-	cached := cache
+	cached := caches[platform]
 	cacheMu.RUnlock()
 	if cached != nil && !maxMod.After(cached.BuiltFrom) {
 		return cached, nil
@@ -130,21 +176,21 @@ func GetPatternCache(jobID string) (*PatternCache, error) {
 	// it so concurrent scans build at most once.
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	if cache != nil && !maxMod.After(cache.BuiltFrom) {
-		return cache, nil
+	if c := caches[platform]; c != nil && !maxMod.After(c.BuiltFrom) {
+		return c, nil
 	}
 
-	built, err := buildPatternCache(files, maxMod, jobID)
+	built, err := buildPatternCache(files, maxMod, jobID, platform)
 	if err != nil {
 		return nil, err
 	}
-	cache = built
+	caches[platform] = built
 	return built, nil
 }
 
 // buildPatternCache loads every YAML pattern file in patternsDir, compiles the
 // patterns, and precomputes the combined regex, group map and patterns.txt body.
-func buildPatternCache(files []fs.FileInfo, maxMod time.Time, jobID string) (*PatternCache, error) {
+func buildPatternCache(files []fs.FileInfo, maxMod time.Time, jobID, platform string) (*PatternCache, error) {
 	var allPatterns []PatternInfo
 
 	for _, file := range files {
@@ -160,6 +206,14 @@ func buildPatternCache(files []fs.FileInfo, maxMod time.Time, jobID string) (*Pa
 				"file":   name,
 				"error":  err.Error(),
 			}).Error("Error unmarshaling YAML file")
+			continue
+		}
+
+		// PLATFORM-SCOPE: skip whole files that don't apply to this scan so
+		// iOS-only rules never run on Android apps (and vice-versa). "any"
+		// (cross-platform) files always apply.
+		fp := filePlatform(name, secretPatterns.Platform)
+		if !patternApplies(fp, platform) {
 			continue
 		}
 
@@ -187,13 +241,14 @@ func buildPatternCache(files []fs.FileInfo, maxMod time.Time, jobID string) (*Pa
 				Name:       pattern.Pattern.Name,
 				Regex:      pattern.Pattern.Regex,
 				Confidence: pattern.Pattern.Confidence,
+				Platform:   fp,
 				Compiled:   compiled,
 			})
 		}
 	}
 
 	if len(allPatterns) == 0 {
-		return nil, fmt.Errorf("no secret patterns found in %s", patternsDir())
+		return nil, fmt.Errorf("no secret patterns found in %s for platform %q", patternsDir(), platform)
 	}
 
 	// Build the patterns.txt body once (one regex per line).
@@ -207,6 +262,7 @@ func buildPatternCache(files []fs.FileInfo, maxMod time.Time, jobID string) (*Pa
 
 	log.WithFields(log.Fields{
 		"job_id":        jobID,
+		"platform":      platform,
 		"pattern_count": len(allPatterns),
 		"combined":      combined != nil,
 	}).Info("Built pattern cache for batch scanning")
@@ -423,12 +479,13 @@ func (c *PatternCache) FindingsForLine(fileLocation string, lineNo int, content 
 //
 // Only roots that exist as directories are scanned; when none exist the scan is
 // a no-op returning an empty slice (not an error).
-func ScanCorpus(ctx context.Context, jobID string, roots []string) ([]models.SecretModel, error) {
+func ScanCorpus(ctx context.Context, jobID string, roots []string, platform string) ([]models.SecretModel, error) {
 	log.WithFields(log.Fields{
-		"job_id": jobID,
+		"job_id":   jobID,
+		"platform": normalizePlatform(platform),
 	}).Info("Starting batch pattern scan")
 
-	patternCache, err := GetPatternCache(jobID)
+	patternCache, err := GetPatternCache(jobID, platform)
 	if err != nil {
 		// No patterns to scan is not a scan failure; mirror the historical
 		// "empty result" behavior rather than erroring.
@@ -477,7 +534,22 @@ func ScanCorpus(ctx context.Context, jobID string, roots []string) ([]models.Sec
 		return nil, fmt.Errorf("failed to close pattern file: %w", closeErr)
 	}
 
-	args := append([]string{"-n", "--file", patternFilePath, "--multiline"}, existing...)
+	// NOISE-1: exclude asset/binary resource directories that never hold real
+	// secrets (decompiled drawables, mipmaps, colors, animations, fonts). apktool
+	// decodes binary XML to text, so ripgrep would otherwise grep e.g.
+	// res/drawable/*.xml and surface hundreds of low-confidence false positives.
+	// res/values (strings.xml can legitimately hold API keys) and the smali
+	// source tree are deliberately kept. Harmless for iOS (no such paths).
+	excludeGlobs := []string{
+		"-g", "!**/res/drawable*/**",
+		"-g", "!**/res/mipmap*/**",
+		"-g", "!**/res/color*/**",
+		"-g", "!**/res/anim*/**",
+		"-g", "!**/res/animator*/**",
+		"-g", "!**/res/font*/**",
+	}
+	args := append([]string{"-n", "--file", patternFilePath, "--multiline"}, excludeGlobs...)
+	args = append(args, existing...)
 
 	log.WithFields(log.Fields{
 		"job_id": jobID,
@@ -578,26 +650,28 @@ func ExtractSecret(content string) string {
 	return content
 }
 
-// SanitizeSecrets deduplicates findings on the composite (FileLocation, LineNo,
-// SecretString) key, preserving the first occurrence of each, and logs only
-// non-sensitive metadata per finding (never the plaintext secret value, SCAN-9).
+// SanitizeSecrets deduplicates findings on the (SecretType, SecretString) key,
+// preserving the first occurrence of each, and logs only non-sensitive metadata
+// per finding (never the plaintext secret value, SCAN-9).
+//
+// DEDUP-BY-VALUE: a hardcoded secret is ONE finding no matter how many files or
+// lines it appears on — the same key literal repeated across a large app was
+// previously counted once per (file,line), inflating the count into the
+// hundreds. Keying on (type, value) collapses those into a single distinct
+// finding (first location preserved), which is what "N secrets exposed" should
+// mean. Two genuinely different values, or the same value flagged by two
+// different rule types, remain distinct.
 func SanitizeSecrets(scannerData []models.SecretModel) []models.SecretModel {
 	sanitizedSecrets := make([]models.SecretModel, 0, len(scannerData))
-	// Row 025: key uniqueness on the composite (FileLocation, LineNo,
-	// SecretString) so two genuinely distinct findings that happen to share an
-	// extracted value are preserved, and empty-value matches at different
-	// locations are not all collapsed into a single "" entry.
 	type secretKey struct {
-		fileLocation string
-		lineNo       int
+		secretType   string
 		secretString string
 	}
 	uniqueSecrets := make(map[secretKey]struct{}, len(scannerData))
 
 	for _, secret := range scannerData {
 		key := secretKey{
-			fileLocation: secret.FileLocation,
-			lineNo:       secret.LineNo,
+			secretType:   secret.SecretType,
 			secretString: secret.SecretString,
 		}
 		// If the secret is not already in uniqueSecrets, add it.

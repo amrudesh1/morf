@@ -161,7 +161,8 @@ func StartIOSExtraction(ctx context.Context, ipaPath string, jobCtx *utils.JobCo
 	}).Info("iOS metadata assembled")
 
 	// 5. Scan the corpus dir with the shared detector, then sanitize.
-	rawSecrets, scanErr := detect.ScanCorpus(ctx, jobCtx.JobID, []string{corpusDir})
+	// PLATFORM-SCOPE: iOS scan → "ios"/"any" patterns run (Android-only rules excluded).
+	rawSecrets, scanErr := detect.ScanCorpus(ctx, jobCtx.JobID, []string{corpusDir}, "ios")
 	if scanErr != nil {
 		return nil, meta, fmt.Errorf("ios corpus scan failed: %w", scanErr)
 	}

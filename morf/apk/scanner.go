@@ -269,7 +269,9 @@ func StartScan(jobCtx *utils.JobContext) []models.SecretModel {
 func StartScanE(ctx context.Context, jobCtx *utils.JobContext) ([]models.SecretModel, error) {
 	// SCAN-2: search both decompiled sources and decoded resources.
 	roots := []string{jobCtx.GetSourceDir(), jobCtx.GetResDir()}
-	return detect.ScanCorpus(ctx, jobCtx.JobID, roots)
+	// PLATFORM-SCOPE: Android scan → only "android"/"any" patterns run (iOS-only
+	// rules like "iOS Keychain Access Group" are excluded).
+	return detect.ScanCorpus(ctx, jobCtx.JobID, roots, "android")
 }
 
 // SanitizeSecrets deduplicates findings and logs only non-sensitive metadata.
