@@ -42,8 +42,9 @@ export interface Secret {
   secretConfidence: 'high' | 'low';
 }
 
-// iOS-specific metadata returned by the backend for .ipa scans. Mirrors the
-// documented iosMetadata envelope (see WS-IOS-FRONTEND spec):
+// iOS-specific metadata view model for .ipa scans. The backend emits these
+// fields flattened onto the result `data` object (response.IOSMetadataHandler);
+// this interface is the normalized shape the results screen consumes:
 // { bundleIdentifier, bundleVersion, deploymentTarget, executableName,
 //   architectures: string[], isEncrypted: bool, urlSchemes: string[],
 //   entitlements: object, frameworks: string[] }.
@@ -63,10 +64,10 @@ export interface IosMetadata {
 
 interface ScanResponse {
   message: string;
-  // Platform of the scanned package. Android responses may omit this (treated
-  // as 'android'); iOS responses set it to 'ios' and include iosMetadata.
-  platform?: 'android' | 'ios';
   data: {
+    // Platform of the scanned package. The backend stamps this inside `data`
+    // (Android scans may omit it, treated as 'android'; iOS scans set 'ios').
+    platform?: 'android' | 'ios';
     fileName: string;
     packageName: string;
     version: string;
@@ -76,8 +77,19 @@ interface ScanResponse {
     secretCount: number;
     secrets: BackendSecret[];
     createdAt: string;
-    // Present only on iOS scans (platform === 'ios').
-    iosMetadata?: IosMetadata;
+    // iOS metadata fields, present only on iOS scans (data.platform === 'ios').
+    // The backend (response.IOSMetadataHandler.TransformMetadata) flattens
+    // these directly onto `data`, alongside the shared fields above — there is
+    // no nested `iosMetadata` object in the wire envelope.
+    bundleIdentifier?: string;
+    bundleVersion?: string;
+    deploymentTarget?: string;
+    executableName?: string;
+    architectures?: string[];
+    isEncrypted?: boolean;
+    urlSchemes?: string[];
+    entitlements?: Record<string, unknown>;
+    frameworks?: string[];
     // New fields
     activities: Array<{
       name: string;
@@ -495,21 +507,25 @@ export class ScanService {
               },
             });
             // Resolve the platform from the response envelope, defaulting to
-            // 'android' when the backend omits it (Android scans).
-            const platform = resultData.platform === 'ios' ? 'ios' : 'android';
+            // 'android' when the backend omits it (Android scans). The backend
+            // stamps `platform` inside `data`, not at the top level.
+            const platform = resultData.data?.platform === 'ios' ? 'ios' : 'android';
             this.resultPlatformSubject.next(platform);
+            // The backend flattens the iOS metadata fields directly onto `data`
+            // (see response.IOSMetadataHandler); assemble the IosMetadata view
+            // model from those flat fields rather than a nested object.
             this.iosMetadataSubject.next(
-              platform === 'ios' && resultData.data?.iosMetadata
+              platform === 'ios' && resultData.data
                 ? {
-                    bundleIdentifier: resultData.data.iosMetadata.bundleIdentifier || '',
-                    bundleVersion: resultData.data.iosMetadata.bundleVersion || '',
-                    deploymentTarget: resultData.data.iosMetadata.deploymentTarget || '',
-                    executableName: resultData.data.iosMetadata.executableName || '',
-                    architectures: resultData.data.iosMetadata.architectures || [],
-                    isEncrypted: !!resultData.data.iosMetadata.isEncrypted,
-                    urlSchemes: resultData.data.iosMetadata.urlSchemes || [],
-                    entitlements: resultData.data.iosMetadata.entitlements || {},
-                    frameworks: resultData.data.iosMetadata.frameworks || [],
+                    bundleIdentifier: resultData.data.bundleIdentifier || '',
+                    bundleVersion: resultData.data.bundleVersion || '',
+                    deploymentTarget: resultData.data.deploymentTarget || '',
+                    executableName: resultData.data.executableName || '',
+                    architectures: resultData.data.architectures || [],
+                    isEncrypted: !!resultData.data.isEncrypted,
+                    urlSchemes: resultData.data.urlSchemes || [],
+                    entitlements: resultData.data.entitlements || {},
+                    frameworks: resultData.data.frameworks || [],
                   }
                 : null,
             );
