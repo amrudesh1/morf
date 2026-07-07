@@ -8,8 +8,8 @@ import morfLogo from '@/assets/morf.png'
 // field, the wordmark decoding in, and a slim progress line to the handoff.
 // A full-screen overlay (z-60) so nothing bleeds through during the exit.
 // Auto-flows into upload; a click or any key skips.
-const HOLD_MS = 3000
-const HOLD_MS_REDUCED = 700
+const HOLD_MS = 5000
+const HOLD_MS_REDUCED = 1200
 const GLYPHS = 'ABCDEFGHKLMNPRSTUVWXYZ#%$&/<>'
 
 function useScramble(target: string, enabled: boolean) {
