@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { X } from 'lucide-react'
 import { ScanStoreProvider, useScan } from '@/store/scanStore'
+import { AppHeader } from '@/components/AppHeader'
 import { Splash } from '@/screens/Splash'
 import { Upload } from '@/screens/Upload'
 import { Processing } from '@/screens/Processing'
@@ -46,6 +47,8 @@ function Shell() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {currentScreen !== 'splash' && <AppHeader />}
 
       <AnimatePresence mode="wait">
         <motion.div
