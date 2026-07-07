@@ -87,6 +87,16 @@ type Config struct {
 	ToolsDir    string // MORF_TOOLS_DIR
 	PatternsDir string // MORF_PATTERNS_DIR
 
+	// --- iOS scanning (optional) ---
+
+	// IpswPath is the path to the `ipsw` CLI used for iOS/Mach-O inspection
+	// (env MORF_IPSW_PATH). Empty means the iOS tooling is not configured.
+	IpswPath string
+	// MacosRunnerURL is the base URL of a remote macOS runner used for iOS
+	// operations that require macOS (env MORF_MACOS_RUNNER_URL). Empty means no
+	// remote runner is configured.
+	MacosRunnerURL string
+
 	// --- Integrations ---
 
 	JiraLink     string // JIRA_LINK
@@ -115,6 +125,8 @@ func Load() *Config {
 		AWSSessionToken: StringDefault("AWS_SESSION_TOKEN", ""),
 		ToolsDir:        StringDefault("MORF_TOOLS_DIR", ""),
 		PatternsDir:     StringDefault("MORF_PATTERNS_DIR", ""),
+		IpswPath:        StringDefault("MORF_IPSW_PATH", ""),
+		MacosRunnerURL:  StringDefault("MORF_MACOS_RUNNER_URL", ""),
 		JiraLink:        StringDefault("JIRA_LINK", ""),
 		SlackChannel:    StringDefault("SLACK_CHANNEL", ""),
 	}
@@ -168,6 +180,8 @@ func (c *Config) LogSummary() {
 		"aws_secret":           maskSecret(c.AWSSecretKey),
 		"tools_dir":            defaultStr(c.ToolsDir, "(default)"),
 		"patterns_dir":         defaultStr(c.PatternsDir, "(default)"),
+		"ipsw_path":            defaultStr(c.IpswPath, "-"),
+		"macos_runner_url":     defaultStr(c.MacosRunnerURL, "-"),
 		"jira_link":            defaultStr(c.JiraLink, "-"),
 		"slack_channel":        defaultStr(c.SlackChannel, "-"),
 	}).Info("Effective MORF configuration")

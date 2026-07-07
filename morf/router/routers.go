@@ -71,6 +71,29 @@ var (
 	uploadStore     storage.Storage
 )
 
+// isSupportedPackageExt reports whether a filename carries a supported mobile
+// package extension. Android (.apk) and iOS (.ipa) are both accepted; the check
+// is case-insensitive so "App.IPA" is admitted the same as "app.ipa".
+func isSupportedPackageExt(filename string) bool {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".apk", ".ipa":
+		return true
+	default:
+		return false
+	}
+}
+
+// packageFileType maps an uploaded package's extension to the ScanJob.FileType
+// platform discriminator ("apk"/"ipa"). It assumes the extension has already
+// passed isSupportedPackageExt; an unrecognised extension falls back to "apk"
+// so a job is never enqueued with an empty platform.
+func packageFileType(filename string) string {
+	if strings.ToLower(filepath.Ext(filename)) == ".ipa" {
+		return "ipa"
+	}
+	return "apk"
+}
+
 func getUploadStore() storage.Storage {
 	uploadStoreOnce.Do(func() {
 		if s, err := storage.NewFromEnv(); err == nil {
@@ -821,11 +844,12 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			return
 		}
 
-		// Validate file extension
-		if filepath.Ext(file.Filename) != ".apk" {
+		// Validate file extension. Both Android (.apk) and iOS (.ipa) packages
+		// are accepted; the platform is derived from the extension at enqueue.
+		if !isSupportedPackageExt(file.Filename) {
 			metrics.RecordError("validation")
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Only APK files are allowed",
+				"error": "Only APK or IPA files are allowed",
 			})
 			return
 		}
@@ -970,6 +994,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			Status:           models.JobStatusQueued,
 			StorageKey:       storageKey,
 			APKPath:          storageKey,
+			FileType:         packageFileType(file.Filename),
 			OriginalFilename: file.Filename,
 			CreatedAt:        time.Now(),
 			RetryCount:       0,
@@ -1154,9 +1179,10 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		for _, file := range files {
 			// UPLOAD-4: apply the SAME per-file validation as single upload.
 
-			// Validate file extension
-			if filepath.Ext(file.Filename) != ".apk" {
-				errors = append(errors, fmt.Sprintf("%s: Only APK files are allowed", file.Filename))
+			// Validate file extension. Both Android (.apk) and iOS (.ipa)
+			// packages are accepted; the platform is derived per file at enqueue.
+			if !isSupportedPackageExt(file.Filename) {
+				errors = append(errors, fmt.Sprintf("%s: Only APK or IPA files are allowed", file.Filename))
 				continue
 			}
 
@@ -1195,6 +1221,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 				Status:           models.JobStatusQueued,
 				StorageKey:       storageKey,
 				APKPath:          storageKey,
+				FileType:         packageFileType(file.Filename),
 				OriginalFilename: file.Filename,
 				CreatedAt:        time.Now(),
 				RetryCount:       0,

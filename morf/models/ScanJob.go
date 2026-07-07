@@ -37,6 +37,7 @@ type ScanJob struct {
 	ID               string     `json:"id"`
 	Status           JobStatus  `json:"status"`
 	APKPath          string     `json:"apk_path"`
+	FileType         string     `json:"file_type,omitempty"` // Platform discriminator derived from the uploaded file extension: "apk" (Android) or "ipa" (iOS). Empty is treated as "apk" for backward compatibility.
 	OriginalFilename string     `json:"original_filename"`
 	CreatedAt        time.Time  `json:"created_at"`
 	StartedAt        *time.Time `json:"started_at,omitempty"`
@@ -105,6 +106,12 @@ func (j *ScanJob) ToMap() map[string]interface{} {
 	// omitted-when-empty like the other creation-time fields.
 	if j.RequestID != "" {
 		m["request_id"] = j.RequestID
+	}
+	// Platform discriminator ("apk"/"ipa") captured at enqueue; immutable once
+	// set, so it is omitted-when-empty like the other creation-time fields. An
+	// absent value is read back as "" and treated as Android by consumers.
+	if j.FileType != "" {
+		m["file_type"] = j.FileType
 	}
 	return m
 }
@@ -179,6 +186,9 @@ func (j *ScanJob) FromMap(m map[string]interface{}) error {
 	}
 	if requestID, ok := m["request_id"].(string); ok {
 		j.RequestID = requestID
+	}
+	if fileType, ok := m["file_type"].(string); ok {
+		j.FileType = fileType
 	}
 	if scanTimeout, ok := m["scan_timeout"].(int); ok {
 		j.ScanTimeout = scanTimeout

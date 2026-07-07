@@ -66,6 +66,11 @@ func (jc *JobContext) CreateWorkspace() error {
 		jc.GetSourceDir(),
 		jc.GetResDir(),
 		jc.GetFilesDir(),
+		// iOS extraction subtree (output/ipa/...). Creating these unconditionally
+		// keeps CreateWorkspace platform-agnostic and is a cheap no-op MkdirAll
+		// for Android jobs; it does not touch the APK source/appres paths above.
+		jc.GetIOSDir(),
+		jc.GetIOSBinDir(),
 	}
 
 	for _, dir := range dirs {
@@ -132,6 +137,22 @@ func (jc *JobContext) GetResDir() string {
 // so it delegates rather than duplicating the path literal.
 func (jc *JobContext) GetFilesDir() string {
 	return jc.GetSourceDir()
+}
+
+// GetIOSDir returns the iOS extraction root for this job. It is the iOS analogue
+// of the output/apk subtree used by the Android path: the unzipped IPA (the
+// Payload/*.app bundle, Info.plist, embedded provisioning, etc.) lives under
+// output/ipa. Kept separate from output/apk so an iOS scan never collides with
+// the APK source/appres trees.
+func (jc *JobContext) GetIOSDir() string {
+	return filepath.Join(jc.Workspace, "output", "ipa")
+}
+
+// GetIOSBinDir returns the directory under the iOS extraction root where the
+// decrypted/extracted Mach-O binary and related artifacts are placed
+// (output/ipa/bin). Mirrors the source/appres split on the Android side.
+func (jc *JobContext) GetIOSBinDir() string {
+	return filepath.Join(jc.GetIOSDir(), "bin")
 }
 
 // GetTmpDir returns the temporary directory for this job (same as workspace)

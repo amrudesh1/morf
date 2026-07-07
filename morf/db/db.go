@@ -189,6 +189,7 @@ var migrationNames = []string{
 	"004_normalize_schema.sql",
 	"005_add_indexes.sql",
 	"006_component_security_fields.sql",
+	"007_ios_support.sql",
 }
 
 // connectToDatabase attempts to establish a database connection
@@ -259,8 +260,9 @@ func runMigrations() error {
 		// read during the migration period) and the APIKey table, which have no SQL
 		// migration of their own.
 		if err := GormDB.AutoMigrate(
-			&models.Secrets{}, // Legacy wide table (no SQL migration; still read during migration period)
-			&models.APIKey{},  // API keys (no SQL migration owns this table)
+			&models.Secrets{},     // Legacy wide table (no SQL migration; still read during migration period)
+			&models.APIKey{},      // API keys (no SQL migration owns this table)
+			&models.IOSMetadata{}, // iOS metadata; SQL migration 007 owns the authoritative DDL, but the model's gorm.Model uint id already maps to the BIGINT UNSIGNED that 007 creates, so AutoMigrate does not fork the schema and only reconciles when 007 has not yet run.
 		); err != nil {
 			// DB-2: a JSON error from AutoMigrate must NOT short-circuit the SQL
 			// migrations below (the old early `return nil` reported success while
