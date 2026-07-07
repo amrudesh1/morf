@@ -1,6 +1,7 @@
 import { FileSearch, ScrollText, RotateCcw } from 'lucide-react'
 import { useScan } from '@/store/scanStore'
 import { Button } from '@/components/ui/Button'
+import morfLogo from '@/assets/morf.png'
 
 // Persistent top bar so users are always oriented and can always get back.
 // Hidden on splash (see App shell). The wordmark is the home affordance.
@@ -15,9 +16,12 @@ export function AppHeader() {
         className="group flex items-center gap-2.5"
         aria-label="MORF home"
       >
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-indigo to-cyan text-sm font-bold text-base shadow-[0_4px_16px_-6px_rgba(99,102,241,0.8)]">
-          M
-        </span>
+        <img
+          src={morfLogo}
+          alt=""
+          aria-hidden="true"
+          className="h-8 w-8 object-contain drop-shadow-[0_2px_10px_rgba(99,102,241,0.45)]"
+        />
         <span className="flex flex-col leading-none">
           <span className="font-display text-lg font-bold tracking-tight text-txt transition-colors group-hover:text-indigo-hi">
             MORF
