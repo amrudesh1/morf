@@ -173,50 +173,42 @@ func TestSanitizeSecretsDedup(t *testing.T) {
 		{
 			name: "exact duplicate collapses",
 			input: []models.SecretModel{
-				{FileLocation: "a.xml", LineNo: 10, SecretString: "s1"},
-				{FileLocation: "a.xml", LineNo: 10, SecretString: "s1"},
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "s1"},
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "s1"},
 			},
 			want: 1,
 		},
 		{
-			name: "same value different file kept",
+			name: "same type+value in different files collapses (dedup by value)",
 			input: []models.SecretModel{
-				{FileLocation: "a.xml", LineNo: 10, SecretString: "shared"},
-				{FileLocation: "b.xml", LineNo: 10, SecretString: "shared"},
-			},
-			want: 2,
-		},
-		{
-			name: "same value different line kept",
-			input: []models.SecretModel{
-				{FileLocation: "a.xml", LineNo: 10, SecretString: "shared"},
-				{FileLocation: "a.xml", LineNo: 11, SecretString: "shared"},
-			},
-			want: 2,
-		},
-		{
-			name: "same location different value kept",
-			input: []models.SecretModel{
-				{FileLocation: "a.xml", LineNo: 10, SecretString: "v1"},
-				{FileLocation: "a.xml", LineNo: 10, SecretString: "v2"},
-			},
-			want: 2,
-		},
-		{
-			name: "empty-value matches at different locations not collapsed",
-			input: []models.SecretModel{
-				{FileLocation: "a.xml", LineNo: 1, SecretString: ""},
-				{FileLocation: "b.xml", LineNo: 2, SecretString: ""},
-			},
-			want: 2,
-		},
-		{
-			name: "empty-value duplicate at same location collapses",
-			input: []models.SecretModel{
-				{FileLocation: "a.xml", LineNo: 1, SecretString: ""},
-				{FileLocation: "a.xml", LineNo: 1, SecretString: ""},
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "shared"},
+				{SecretType: "aws", FileLocation: "b.xml", LineNo: 10, SecretString: "shared"},
 			},
 			want: 1,
+		},
+		{
+			name: "same type+value on different lines collapses (dedup by value)",
+			input: []models.SecretModel{
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "shared"},
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 11, SecretString: "shared"},
+			},
+			want: 1,
+		},
+		{
+			name: "same value different type kept",
+			input: []models.SecretModel{
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "shared"},
+				{SecretType: "gcp", FileLocation: "a.xml", LineNo: 10, SecretString: "shared"},
+			},
+			want: 2,
+		},
+		{
+			name: "same type different value kept",
+			input: []models.SecretModel{
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "v1"},
+				{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "v2"},
+			},
+			want: 2,
 		},
 	}
 
@@ -231,18 +223,18 @@ func TestSanitizeSecretsDedup(t *testing.T) {
 }
 
 func TestSanitizeSecretsPreservesFirstOccurrence(t *testing.T) {
-	// The first occurrence of a duplicate key should be the one preserved,
-	// along with all of its non-key fields.
+	// Two findings sharing the (SecretType, SecretString) key collapse to one,
+	// and the FIRST occurrence (with all its non-key fields) is preserved.
 	input := []models.SecretModel{
-		{Type: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "s1", SecretConfidence: "high"},
-		{Type: "gcp", FileLocation: "a.xml", LineNo: 10, SecretString: "s1", SecretConfidence: "low"},
+		{SecretType: "aws", FileLocation: "a.xml", LineNo: 10, SecretString: "s1", SecretConfidence: "high"},
+		{SecretType: "aws", FileLocation: "b.xml", LineNo: 20, SecretString: "s1", SecretConfidence: "low"},
 	}
 	got := SanitizeSecrets(input)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 secret after dedup, got %d", len(got))
 	}
-	if got[0].Type != "aws" || got[0].SecretConfidence != "high" {
-		t.Errorf("expected first occurrence (aws/high) preserved, got %+v", got[0])
+	if got[0].FileLocation != "a.xml" || got[0].SecretConfidence != "high" {
+		t.Errorf("expected first occurrence (a.xml/high) preserved, got %+v", got[0])
 	}
 }
 
