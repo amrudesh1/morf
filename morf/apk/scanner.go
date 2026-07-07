@@ -119,7 +119,10 @@ func StartSecScanE(ctx context.Context, apkPath string, jobCtx *utils.JobContext
 		// cancelled/expired request also tears down apktool and its children.
 		srcCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
-		_, sourceError = utils.RunWithContext(srcCtx, "java", jvmHeapFlag(), "-jar", apktoolJar(), "d", "-r", apkPath, "-o", jobCtx.GetSourceDir())
+		// -f (force): CreateWorkspace pre-creates the output/apk/source dir, and
+		// apktool refuses to write into an existing directory without -f. The
+		// per-job workspace is freshly created and isolated, so forcing is safe.
+		_, sourceError = utils.RunWithContext(srcCtx, "java", jvmHeapFlag(), "-jar", apktoolJar(), "d", "-f", "-r", apkPath, "-o", jobCtx.GetSourceDir())
 		metrics.RecordToolExecution("apktool_sources", time.Since(sourceStart).Seconds())
 
 		if sourceError != nil {
@@ -144,7 +147,9 @@ func StartSecScanE(ctx context.Context, apkPath string, jobCtx *utils.JobContext
 
 		resCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
-		_, resError = utils.RunWithContext(resCtx, "java", jvmHeapFlag(), "-jar", apktoolJar(), "d", "-s", apkPath, "-o", jobCtx.GetResDir())
+		// -f (force): see the sources goroutine above — the res dir is pre-created
+		// by CreateWorkspace, so apktool needs -f to decode into it.
+		_, resError = utils.RunWithContext(resCtx, "java", jvmHeapFlag(), "-jar", apktoolJar(), "d", "-f", "-s", apkPath, "-o", jobCtx.GetResDir())
 		metrics.RecordToolExecution("apktool_resources", time.Since(resStart).Seconds())
 
 		if resError != nil {
