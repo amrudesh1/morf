@@ -20,15 +20,14 @@ export function AppHeader() {
           src={morfLogo}
           alt=""
           aria-hidden="true"
-          className="h-8 w-8 object-contain drop-shadow-[0_2px_10px_rgba(99,102,241,0.45)]"
+          className="h-7 w-7 object-contain opacity-90 transition group-hover:opacity-100"
         />
-        <span className="flex flex-col leading-none">
-          <span className="font-display text-lg font-bold tracking-tight text-txt transition-colors group-hover:text-indigo-hi">
-            MORF
-          </span>
-          <span className="hidden text-[0.55rem] uppercase tracking-[0.24em] text-txt-dim sm:inline">
-            Mobile Reconnaissance Framework
-          </span>
+        <span className="font-display text-lg font-bold tracking-tight text-txt transition-colors group-hover:text-indigo-hi">
+          MORF
+        </span>
+        <span className="hidden h-4 w-px bg-line md:inline-block" />
+        <span className="hidden text-[0.6rem] uppercase tracking-[0.22em] text-txt-dim md:inline">
+          Mobile Reconnaissance Framework
         </span>
       </button>
 

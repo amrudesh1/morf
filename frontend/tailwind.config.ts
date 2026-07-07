@@ -66,6 +66,18 @@ export default {
           '0%, 100%': { opacity: '0.25', transform: 'scale(0.8)' },
           '50%': { opacity: '1', transform: 'scale(1.15)' },
         },
+        drift: {
+          '0%, 100%': { transform: 'translate(0px, 0px) scale(1)' },
+          '50%': { transform: 'translate(40px, -48px) scale(1.14)' },
+        },
+        drift2: {
+          '0%, 100%': { transform: 'translate(0px, 0px) scale(1.06)' },
+          '50%': { transform: 'translate(-52px, 40px) scale(1)' },
+        },
+        'grid-pan': {
+          '0%': { backgroundPosition: '0 0' },
+          '100%': { backgroundPosition: '48px 48px' },
+        },
       },
       animation: {
         'scan-sweep': 'scan-sweep 2.4s ease-in-out infinite',
@@ -76,6 +88,9 @@ export default {
         particle: 'particle 3s ease-in-out infinite',
         'ping-ring': 'ping-ring 3s ease-out infinite',
         'dot-pulse': 'dot-pulse 1s ease-in-out infinite',
+        drift: 'drift 18s ease-in-out infinite',
+        drift2: 'drift2 22s ease-in-out infinite',
+        'grid-pan': 'grid-pan 6s linear infinite',
       },
     },
   },

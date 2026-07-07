@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { useScan } from '@/store/scanStore'
+import { AuroraBackground } from '@/components/AuroraBackground'
 import morfLogo from '@/assets/morf.png'
 
 // Cinematic boot: the mark under a radar sweep + breathing glow on a particle
@@ -85,24 +86,21 @@ export function Splash() {
       animate={leaving && !reduce ? { opacity: 0 } : { opacity: 1 }}
       transition={{ duration: 0.45, ease }}
     >
-      {/* Aurora + vignette. */}
-      {!reduce && (
-        <>
-          <div className="pointer-events-none absolute left-1/2 top-1/2 h-[36rem] w-[36rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-indigo/15 blur-[140px] animate-glow-pulse" />
-          <div className="pointer-events-none absolute bottom-8 right-1/4 h-72 w-72 rounded-full bg-cyan/10 blur-[120px] animate-glow-pulse" />
-          {/* Particle field. */}
-          {particles.map((p) => (
-            <span
-              key={p.id}
-              className={`pointer-events-none absolute rounded-full animate-particle ${
-                p.cyan ? 'bg-cyan/70' : 'bg-indigo-hi/70'
-              }`}
-              style={{ left: p.left, top: p.top, width: p.size, height: p.size, animationDelay: p.delay }}
-            />
-          ))}
-        </>
-      )}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_120%_at_50%_50%,transparent_40%,rgba(10,14,23,0.85)_100%)]" />
+      {/* Dynamic aurora backdrop. */}
+      <AuroraBackground intense />
+      {/* Particle field. */}
+      {!reduce &&
+        particles.map((p) => (
+          <span
+            key={p.id}
+            className={`pointer-events-none absolute rounded-full animate-particle ${
+              p.cyan ? 'bg-cyan/80' : 'bg-indigo-hi/80'
+            }`}
+            style={{ left: p.left, top: p.top, width: p.size, height: p.size, animationDelay: p.delay }}
+          />
+        ))}
+      {/* Light vignette so the aurora still reads. */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_120%_at_50%_45%,transparent_55%,rgba(10,14,23,0.55)_100%)]" />
 
       <motion.div
         className="relative z-10 flex flex-col items-center"
