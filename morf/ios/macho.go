@@ -23,6 +23,7 @@ import (
 	"os"
 
 	"github.com/blacktop/go-macho"
+	"github.com/blacktop/go-macho/types"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -31,30 +32,50 @@ import (
 // scanner and only inflate the corpus.
 const stringMinLen = 4
 
-// interestingSections is the set of (segment, section) pairs from which we
-// extract literal strings. It intentionally covers ObjC metadata, C string
-// literals, CFStrings and the Swift5 reflection family. Enumeration is always
-// done BY NAME by iterating f.Sections; these entries are only a membership
-// filter, never an index.
-var interestingSections = map[[2]string]bool{
-	{"__TEXT", "__cstring"}:        true, // C string literals
-	{"__TEXT", "__const"}:          true, // read-only constants (often embedded strings)
-	{"__TEXT", "__objc_methname"}:  true, // ObjC selector/method names
-	{"__TEXT", "__objc_classname"}: true, // ObjC class names
-	{"__DATA", "__cfstring"}:       true, // CFString literal structs (contain pointers; scanned raw)
-	{"__DATA", "__objc_selrefs"}:   true, // ObjC selector references
+// interestingSectionNames is the set of string-bearing Mach-O section names we
+// extract literal strings from. We match by section NAME ONLY (never by index,
+// and deliberately NOT by (segment,section) pair): the SAME string-bearing
+// section moves between segments across compilers and toolchains — e.g. read-
+// only constant data lands in __TEXT.__const/__rodata for some binaries and in
+// __DATA_CONST.__rodata/__const for others (notably Go-emitted Mach-O), and
+// __cfstring appears under __DATA or __DATA_CONST. A (segment,section) allow-
+// list silently misses those, so we key on the section name and let any segment
+// match. Covers C strings, read-only constant pools (where most literals live),
+// CFStrings, ObjC metadata, and the Swift5 reflection family.
+var interestingSectionNames = map[string]bool{
+	"__cstring":       true, // C string literals
+	"__const":         true, // read-only constant pool (often embedded strings)
+	"__rodata":        true, // read-only data (Go and some C/C++ toolchains) — literals live here
+	"__oslogstring":   true, // os_log format strings (can embed interpolated secrets)
+	"__cfstring":      true, // CFString literal structs (scanned raw / NUL-split)
+	"__objc_methname": true, // ObjC selector/method names
+	"__objc_classname": true, // ObjC class names
+	"__objc_methtype": true, // ObjC method type encodings
+	"__objc_selrefs":  true, // ObjC selector references
 	// The __swift5_* family. __swift5_reflstr holds human-readable reflection
-	// strings (field names, type names); the others are metadata but can still
-	// carry embedded C strings, so we NUL-split them defensively.
-	{"__TEXT", "__swift5_reflstr"}: true,
-	{"__TEXT", "__swift5_typeref"}: true,
-	{"__TEXT", "__swift5_fieldmd"}: true,
-	{"__TEXT", "__swift5_types"}:   true,
-	{"__TEXT", "__swift5_capture"}: true,
-	{"__TEXT", "__swift5_builtin"}: true,
-	{"__TEXT", "__swift5_assocty"}: true,
-	{"__TEXT", "__swift5_proto"}:   true,
-	{"__TEXT", "__swift5_protos"}:  true,
+	// strings (field/type names); the others are metadata but can still carry
+	// embedded C strings, so we NUL-split them defensively.
+	"__swift5_reflstr": true,
+	"__swift5_typeref": true,
+	"__swift5_fieldmd": true,
+	"__swift5_types":   true,
+	"__swift5_capture": true,
+	"__swift5_builtin": true,
+	"__swift5_assocty": true,
+	"__swift5_proto":   true,
+	"__swift5_protos":  true,
+}
+
+// isCStringLiteralSection reports whether a section is flagged S_CSTRING_LITERALS
+// in its Mach-O section type bits. This is the authoritative, name-independent
+// signal that a section is a C-string pool, so we harvest it even if its name is
+// not in interestingSectionNames (defensive catch-all for compiler-specific
+// section names).
+func isCStringLiteralSection(sec *types.Section) bool {
+	if sec == nil {
+		return false
+	}
+	return sec.Flags.IsCstringLiterals()
 }
 
 // ArchStrings holds the strings extracted from one architecture slice of a
@@ -153,8 +174,11 @@ func extractSliceStrings(f *macho.File, arch string) ArchStrings {
 		if sec == nil {
 			continue
 		}
-		key := [2]string{sec.Seg, sec.Name}
-		if !interestingSections[key] {
+		// Match by section name (segment-agnostic), OR by the Mach-O section
+		// type flag S_CSTRING_LITERALS which definitively marks a C-string pool
+		// regardless of its name — a robust catch-all for literals the name set
+		// might not enumerate.
+		if !interestingSectionNames[sec.Name] && !isCStringLiteralSection(sec) {
 			continue
 		}
 		if swiftReflHandled && sec.Seg == "__TEXT" && sec.Name == "__swift5_reflstr" {
