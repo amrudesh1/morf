@@ -26,6 +26,7 @@ import (
 	"morf/metrics"
 	"morf/models"
 	"morf/queue"
+	"morf/report"
 	"morf/storage"
 	"morf/utils"
 	"net/http"
@@ -460,6 +461,59 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "Job is not completed yet",
 			})
+			return
+		}
+
+		// SARIF export branch: decode the same job.Result envelope the other
+		// export formats read, pull the findings/target/platform out of it, and
+		// hand them to report.EncodeSARIF. If the result payload is missing or the
+		// findings cannot be recovered, behave like the not-ready path above
+		// (400) rather than emitting an empty report.
+		if format == "sarif" {
+			var payload struct {
+				Data struct {
+					FileName    string               `json:"fileName"`
+					PackageName string               `json:"packageName"`
+					Secrets     []models.SecretModel `json:"secrets"`
+				} `json:"data"`
+			}
+			if job.Result == "" || json.Unmarshal([]byte(job.Result), &payload) != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "Job is not completed yet",
+				})
+				return
+			}
+
+			// target: prefer the scanned bundle's package id, else its file name,
+			// else the job's original upload name. platform: derived from the job's
+			// FileType discriminator ("ipa" -> ios, else android).
+			target := payload.Data.PackageName
+			if target == "" {
+				target = payload.Data.FileName
+			}
+			if target == "" {
+				target = job.OriginalFilename
+			}
+			platform := "android"
+			if strings.EqualFold(job.FileType, "ipa") {
+				platform = "ios"
+			}
+
+			sarifData, sarifErr := report.EncodeSARIF(target, platform, payload.Data.Secrets)
+			if sarifErr != nil {
+				log.WithFields(log.Fields{
+					"request_id": requestID,
+					"job_id":     jobID,
+					"error":      sarifErr.Error(),
+				}).Error("Failed to encode SARIF report")
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": fmt.Sprintf("Failed to export: %s", sarifErr.Error()),
+				})
+				return
+			}
+			filename := fmt.Sprintf("morf-scan-%s.sarif", jobID)
+			c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+			c.Data(http.StatusOK, "application/sarif+json", sarifData)
 			return
 		}
 

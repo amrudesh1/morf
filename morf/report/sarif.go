@@ -1,0 +1,264 @@
+/*
+Copyright [2023] [Amrudesh Balakrishnan]
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package report renders MORF scan findings into external interchange formats.
+// EncodeSARIF produces a SARIF 2.1.0 document (Static Analysis Results
+// Interchange Format) so findings can be ingested directly by GitHub Code
+// Scanning, Microsoft Defender, and most security dashboards without a bespoke
+// parser.
+package report
+
+import (
+	"encoding/json"
+
+	"morf/models"
+)
+
+const (
+	// sarifVersion is the SARIF schema version this encoder targets.
+	sarifVersion = "2.1.0"
+	// sarifSchema is the canonical JSON schema URL for SARIF 2.1.0.
+	sarifSchema = "https://json.schemastore.org/sarif-2.1.0.json"
+	// driverName is the analysis tool name reported in tool.driver.name.
+	driverName = "MORF"
+	// driverInfoURI is the tool's information URI.
+	driverInfoURI = "https://github.com/Cyber-Guru/MORF"
+)
+
+// SARIF document types. Only the subset of the SARIF 2.1.0 object model that
+// MORF emits is modelled here; omitempty keeps the output compact and
+// schema-valid. See https://json.schemastore.org/sarif-2.1.0.json.
+
+type sarifLog struct {
+	Schema  string     `json:"$schema"`
+	Version string     `json:"version"`
+	Runs    []sarifRun `json:"runs"`
+}
+
+type sarifRun struct {
+	Tool       sarifTool              `json:"tool"`
+	Results    []sarifResult          `json:"results"`
+	Properties map[string]interface{} `json:"properties,omitempty"`
+}
+
+type sarifTool struct {
+	Driver sarifDriver `json:"driver"`
+}
+
+type sarifDriver struct {
+	Name           string                     `json:"name"`
+	InformationURI string                     `json:"informationUri,omitempty"`
+	Rules          []sarifReportingDescriptor `json:"rules"`
+}
+
+type sarifReportingDescriptor struct {
+	ID               string               `json:"id"`
+	Name             string               `json:"name,omitempty"`
+	ShortDescription *sarifMessage        `json:"shortDescription,omitempty"`
+	Properties       *sarifRuleProperties `json:"properties,omitempty"`
+}
+
+type sarifRuleProperties struct {
+	Tags []string `json:"tags,omitempty"`
+}
+
+type sarifResult struct {
+	RuleID     string                 `json:"ruleId"`
+	Level      string                 `json:"level"`
+	Message    sarifMessage           `json:"message"`
+	Locations  []sarifLocation        `json:"locations"`
+	Properties map[string]interface{} `json:"properties,omitempty"`
+}
+
+type sarifMessage struct {
+	Text string `json:"text"`
+}
+
+type sarifLocation struct {
+	PhysicalLocation sarifPhysicalLocation `json:"physicalLocation"`
+}
+
+type sarifPhysicalLocation struct {
+	ArtifactLocation sarifArtifactLocation `json:"artifactLocation"`
+	Region           *sarifRegion          `json:"region,omitempty"`
+}
+
+type sarifArtifactLocation struct {
+	URI string `json:"uri"`
+}
+
+type sarifRegion struct {
+	StartLine int `json:"startLine"`
+}
+
+// levelForTier maps a precision Tier to a SARIF result level. "keep" findings
+// are confident true positives (error); "info" findings are retained but
+// downgraded (note); anything else falls back to "warning".
+func levelForTier(tier string) string {
+	switch tier {
+	case "keep":
+		return "error"
+	case "info":
+		return "note"
+	default:
+		return "warning"
+	}
+}
+
+// maskSecret redacts a secret value for safe inclusion in the SARIF message,
+// preserving at most the first four and last two characters so a human can
+// eyeball-correlate without the raw value leaking into the report.
+func maskSecret(value string) string {
+	runes := []rune(value)
+	n := len(runes)
+	if n == 0 {
+		return "…"
+	}
+	first := 4
+	if first > n {
+		first = n
+	}
+	last := 2
+	// Never let head and tail overlap; if the value is short, drop the tail.
+	if first+last > n {
+		last = 0
+	}
+	head := string(runes[:first])
+	tail := ""
+	if last > 0 {
+		tail = string(runes[n-last:])
+	}
+	return head + "…" + tail
+}
+
+// EncodeSARIF renders the given findings as a SARIF 2.1.0 JSON document for the
+// scanned artifact. target identifies the scanned bundle (file name / package
+// id), platform is "android" or "ios", and secrets are the enriched findings to
+// report.
+//
+// The document contains a single run whose tool.driver.name is "MORF".
+// tool.driver.rules holds one reportingDescriptor per distinct secret type (in
+// first-seen order), carrying the MASVS control id in properties.tags when a
+// finding of that type is attributed to one. Each finding becomes one SARIF
+// result: ruleId = secret type; level derived from the precision Tier; a
+// redacted (masked) message; a physicalLocation from FileLocation + LineNo; and
+// properties carrying Score, Tier, VerificationStatus, and MASVSID. The run's
+// properties are populated from target and platform so the report is
+// self-describing.
+func EncodeSARIF(target string, platform string, secrets []models.SecretModel) ([]byte, error) {
+	rules := make([]sarifReportingDescriptor, 0)
+	ruleIndex := make(map[string]int)
+	results := make([]sarifResult, 0, len(secrets))
+
+	for _, s := range secrets {
+		ruleID := s.SecretType
+
+		// Register a rule the first time we see this secret type. If a later
+		// finding of the same type carries a MASVS id and the earlier one did
+		// not, backfill the tag so the rule advertises the mapping.
+		idx, ok := ruleIndex[ruleID]
+		if !ok {
+			rule := sarifReportingDescriptor{
+				ID:   ruleID,
+				Name: ruleID,
+				ShortDescription: &sarifMessage{
+					Text: "Hardcoded secret of type " + ruleID + " detected by MORF.",
+				},
+			}
+			if s.MASVSID != "" {
+				rule.Properties = &sarifRuleProperties{Tags: []string{s.MASVSID}}
+			}
+			rules = append(rules, rule)
+			ruleIndex[ruleID] = len(rules) - 1
+		} else if s.MASVSID != "" {
+			r := &rules[idx]
+			if r.Properties == nil {
+				r.Properties = &sarifRuleProperties{}
+			}
+			if !containsString(r.Properties.Tags, s.MASVSID) {
+				r.Properties.Tags = append(r.Properties.Tags, s.MASVSID)
+			}
+		}
+
+		result := sarifResult{
+			RuleID: ruleID,
+			Level:  levelForTier(s.Tier),
+			Message: sarifMessage{
+				Text: ruleID + " (masked: " + maskSecret(s.SecretString) + ")",
+			},
+			Locations: []sarifLocation{
+				{
+					PhysicalLocation: sarifPhysicalLocation{
+						ArtifactLocation: sarifArtifactLocation{URI: s.FileLocation},
+						Region:           &sarifRegion{StartLine: s.LineNo},
+					},
+				},
+			},
+		}
+
+		props := make(map[string]interface{})
+		if s.Score != 0 {
+			props["score"] = s.Score
+		}
+		if s.Tier != "" {
+			props["tier"] = s.Tier
+		}
+		if s.VerificationStatus != "" {
+			props["verificationStatus"] = s.VerificationStatus
+		}
+		if s.MASVSID != "" {
+			props["masvsId"] = s.MASVSID
+		}
+		if len(props) > 0 {
+			result.Properties = props
+		}
+
+		results = append(results, result)
+	}
+
+	doc := sarifLog{
+		Schema:  sarifSchema,
+		Version: sarifVersion,
+		Runs: []sarifRun{
+			{
+				Tool: sarifTool{
+					Driver: sarifDriver{
+						Name:           driverName,
+						InformationURI: driverInfoURI,
+						Rules:          rules,
+					},
+				},
+				Results: results,
+				Properties: map[string]interface{}{
+					"target":   target,
+					"platform": platform,
+				},
+			},
+		},
+	}
+
+	return json.MarshalIndent(doc, "", "  ")
+}
+
+// containsString reports whether s is present in xs.
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

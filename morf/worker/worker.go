@@ -24,12 +24,14 @@ import (
 	"io"
 	"morf/apk"
 	database "morf/db"
+	"morf/detect"
 	"morf/ios"
 	"morf/metrics"
 	"morf/models"
 	"morf/queue"
 	"morf/response"
 	"morf/storage"
+	"morf/verify"
 	"morf/utils"
 	"os"
 	"runtime/debug"
@@ -686,6 +688,14 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 		return nil, fmt.Errorf("secret scan failed: %w", scanErr)
 	}
 
+	// StartSecScanE already sanitized (deduplicated) the findings. Post-process
+	// them through the shared precision + verification stages before assembling
+	// the dossier: ApplyPrecision drops/downgrades false positives deterministically,
+	// then VerifySecrets stamps a VerificationStatus (a no-op "unchecked" unless
+	// MORF_ENABLE_VERIFICATION=true). The scan ctx threads timeout/cancellation.
+	scannerData = detect.ApplyPrecision(scannerData)
+	scannerData = verify.VerifySecrets(ctx, scannerData)
+
 	// UI phase: assembling + persisting the dossier.
 	_ = w.queue.SetJobPhase(job.ID, "compiling")
 	secretData, err := json.Marshal(scannerData)
@@ -807,6 +817,15 @@ func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error
 		log.WithFields(timings).Warn("Scan phase timings (failed)")
 		return nil, fmt.Errorf("ios extraction failed: %w", extractErr)
 	}
+
+	// StartIOSExtraction already sanitized (deduplicated) the findings. Post-process
+	// them through the shared precision + verification stages before assembling
+	// the dossier, identically to the APK path: ApplyPrecision drops/downgrades
+	// false positives deterministically, then VerifySecrets stamps a
+	// VerificationStatus (a no-op "unchecked" unless MORF_ENABLE_VERIFICATION=true).
+	// The scan ctx threads timeout/cancellation.
+	secretsModels = detect.ApplyPrecision(secretsModels)
+	secretsModels = verify.VerifySecrets(ctx, secretsModels)
 
 	// Build the legacy-shaped Secrets carrier. iOS has no apkanalyzer package
 	// data; the hash is computed from the resolved file (same helper as the

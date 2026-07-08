@@ -30,6 +30,26 @@ type SecretModel struct {
 	SecretType       string `json:"secretType"`
 	SecretString     string `json:"secretString"`
 	SecretConfidence string `json:"secretConfidence"`
+
+	// Precision/verification/compliance enrichment. These are populated by the
+	// downstream precision (detect.ApplyPrecision), verification
+	// (verify.VerifySecrets) and pattern-attribution stages; all are omitempty so
+	// existing payloads and consumers that do not set them are unchanged.
+
+	// Score is the deterministic precision score assigned by detect.ApplyPrecision
+	// (higher == more likely a true positive).
+	Score float64 `json:"score,omitempty"`
+	// Tier is the precision classification: "keep" (retained as a confident
+	// finding) or "info" (retained but downgraded to informational). Set by
+	// detect.ApplyPrecision.
+	Tier string `json:"tier,omitempty"`
+	// VerificationStatus is the live-verification outcome: "active", "inactive",
+	// "unknown", or "unchecked" (verification disabled / not attempted). Set by
+	// verify.VerifySecrets.
+	VerificationStatus string `json:"verificationStatus,omitempty"`
+	// MASVSID is the OWASP MASVS control id attributed from the owning pattern
+	// (pattern-level `masvs:` overriding the file-level `masvs:`).
+	MASVSID string `json:"masvsId,omitempty"`
 }
 
 // SecretModelArray is a custom type for handling arrays of SecretModel in MySQL
