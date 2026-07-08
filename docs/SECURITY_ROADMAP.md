@@ -84,16 +84,19 @@ test; neither is handicapped by encryption).
 
 | Dimension | Internal PoC (`Secrets_IPA`) | MORF iOS |
 |---|---|---|
-| **Findings on App** | **8** — all "Google Maps API" (`AIza…`) | **29** across 9 types |
+| **Findings on App** | **8 raw matches = only 4 unique keys** (all Google `AIza…`; PoC has no value-dedup) | **29** across 9 types (incl. **8** unique Google keys) |
 | Types found | Google API keys only | Google API Key, GCP OAuth, Firebase DB URL, Private Key, Twitter Secret, JWT, iOS Keychain Access Group, Reversed Client-ID scheme, Keychain entitlement |
 | Working detectors | **1 of 11** regexes (rest typo'd/broken, e.g. `sk_live_\(…`) | 99 iOS-scoped patterns |
 | App metadata | **none** | bundle id, **73 frameworks, 21 entitlements, 12 URL schemes**, arch, encryption flag |
 | String handling | dumped **603,671** strings; the hardcoded section indices (`"29.__DATA.__cfstring"`) are a **no-op** — `r2 izzj` just dumps everything | section-scoped by name, deduped |
 | Runs on other apps? | **No** — hardcoded to `App.app/App` + a Google-Drive/password ingestion | **Yes** — cleanly scanned DVIA-v2, NOOP, TestFlight (correct bundle ids/frameworks) |
 
-**Verdict: the results do not "match" — MORF is a strict superset.** It found the *same* 8
-Google keys the PoC found **plus 21 more findings the PoC is blind to**, plus structured metadata
-the PoC has none of. On any app that isn't App, the PoC cannot run at all.
+**Verdict: MORF is a strict superset — same keys, plus far more.** Every key the PoC surfaced is
+in MORF's set: the PoC's 4 unique Google keys are all present in MORF's 8 unique Google keys
+(`PoC-only findings: none`). MORF additionally found **4 more Google keys + 25 non-Google findings
+the PoC is blind to**, plus structured metadata the PoC has none of. The PoC even mis-*counts* its
+own hits (8 raw matches for 4 real keys — no value-dedup). On any app that isn't App, the PoC
+cannot run at all.
 
 ### 3.2 Why the PoC must be retired (it is also a security liability)
 - **Secrets in the repo**: a Google Drive **service-account key committed as `vm-tenable.json`**
