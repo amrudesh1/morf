@@ -47,10 +47,17 @@ patterns:
       name: Generic API Key
       regex: '[aA][pP][iI]_?[kK][eE][yY].*[''|"][0-9a-zA-Z]{32,45}[''|"]'
       confidence: high
+      # Disabled: redundant with the specific vendor rules (Google/AWS/…) and
+      # double-reports the same real key under a second "Generic" label. Its
+      # greedy `.*` also over-matches on long smali lines.
+      enabled: false
   - pattern:
       name: Generic Secret
       regex: '[sS][eE][cC][rR][eE][tT].*[''|"][0-9a-zA-Z]{32,45}[''|"]'
       confidence: high
+      # Disabled: same noise as git-leaks Generic Secret — fires on any line
+      # containing "secret" plus a quoted token.
+      enabled: false
   - pattern:
       name: Google API Key
       regex: "AIza[0-9A-Za-z\\-_]{35}"
@@ -62,7 +69,9 @@ patterns:
   - pattern:
       name: Google Cloud Platform OAuth
       regex: "[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com"
-      confidence: high
+      # OAuth *client IDs* ship in every app and are public by design — not a
+      # secret. Kept for context but downgraded so it never reads as high-risk.
+      confidence: low
   - pattern:
       name: Google Drive API Key
       regex: "AIza[0-9A-Za-z\\-_]{35}"
