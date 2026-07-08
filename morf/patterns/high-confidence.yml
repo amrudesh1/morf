@@ -7,6 +7,8 @@ patterns:
       name: RSA private key
       regex: "-----BEGIN RSA PRIVATE KEY-----"
       confidence: high
+      # Pattern-level MASVS tag (overrides any file-level default).
+      masvs: MASVS-CRYPTO-1
   - pattern:
       name: SSH (DSA) private key
       regex: "-----BEGIN DSA PRIVATE KEY-----"

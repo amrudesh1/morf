@@ -51,11 +51,19 @@ type SecretPatterns struct {
 	// A scan only compiles patterns whose platform is "any" or matches the scan,
 	// so iOS-only rules never run against an Android app and vice-versa.
 	Platform string `yaml:"platform"`
+	// MASVS optionally tags the ENTIRE file with an OWASP MASVS control id (e.g.
+	// "MASVS-CRYPTO-1"). It is the default for every pattern in the file; a
+	// pattern's own `masvs:` (below) overrides it. Absent means no MASVS id.
+	MASVS    string `yaml:"masvs"`
 	Patterns []struct {
 		Pattern struct {
 			Name       string `yaml:"name"`
 			Regex      string `yaml:"regex"`
 			Confidence string `yaml:"confidence"`
+			// MASVS optionally tags THIS pattern with an OWASP MASVS control id;
+			// when set it overrides the file-level MASVS. Absent falls back to the
+			// file-level value.
+			MASVS string `yaml:"masvs"`
 			// Enabled is decoded as a pointer so an absent value (nil) is
 			// distinguishable from an explicit `enabled: false`. nil/absent
 			// defaults to enabled; only an explicit false skips the pattern.
@@ -71,7 +79,10 @@ type PatternInfo struct {
 	Regex      string
 	Confidence string
 	Platform   string // "ios" | "android" | "any" — scan scope (see SecretPatterns.Platform)
-	Compiled   *regexp.Regexp
+	// MASVS is the resolved OWASP MASVS control id for this pattern: the
+	// pattern-level `masvs:` if present, else the file-level `masvs:`, else "".
+	MASVS    string
+	Compiled *regexp.Regexp
 }
 
 // normalizePlatform coerces an arbitrary string to a known scope value.
@@ -237,11 +248,19 @@ func buildPatternCache(files []fs.FileInfo, maxMod time.Time, jobID, platform st
 					"error":   compileErr.Error(),
 				}).Debug("Pattern not compilable by Go regexp (RE2); attribution will fall back")
 			}
+			// Resolve the MASVS control id: the pattern-level `masvs:` overrides
+			// the file-level `masvs:`; an absent pattern value inherits the file
+			// value (which may itself be empty).
+			masvs := secretPatterns.MASVS
+			if pattern.Pattern.MASVS != "" {
+				masvs = pattern.Pattern.MASVS
+			}
 			allPatterns = append(allPatterns, PatternInfo{
 				Name:       pattern.Pattern.Name,
 				Regex:      pattern.Pattern.Regex,
 				Confidence: pattern.Pattern.Confidence,
 				Platform:   fp,
+				MASVS:      masvs,
 				Compiled:   compiled,
 			})
 		}
@@ -385,9 +404,11 @@ func (c *PatternCache) FindingsForLine(fileLocation string, lineNo int, content 
 	add := func(patternIdx int, span string) {
 		secretType := "unattributed"
 		confidence := "low"
+		masvsID := ""
 		if patternIdx >= 0 && patternIdx < len(c.Patterns) {
 			secretType = c.Patterns[patternIdx].Name
 			confidence = c.Patterns[patternIdx].Confidence
+			masvsID = c.Patterns[patternIdx].MASVS
 		}
 		value := ExtractSecret(span)
 		if strings.TrimSpace(value) == "" {
@@ -401,6 +422,7 @@ func (c *PatternCache) FindingsForLine(fileLocation string, lineNo int, content 
 			SecretType:       secretType,
 			SecretString:     strings.Clone(value),
 			SecretConfidence: confidence,
+			MASVSID:          masvsID,
 		})
 	}
 

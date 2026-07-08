@@ -31,6 +31,15 @@ type SecretFinding struct {
 	SecretString     string `json:"secretString" gorm:"column:secret_string;type:text;not null"`
 	SecretConfidence string `json:"secretConfidence" gorm:"column:secret_confidence;type:ENUM('high','medium','low');index:idx_secret_confidence;not null;default:'low'"`
 
+	// Precision / verification / compliance enrichment. Nullable so pre-existing
+	// rows (and findings not yet processed by the precision/verification stages)
+	// persist without a value. Mirrors the matching fields on models.SecretModel
+	// and migration 009_precision_verification.sql.
+	Score              *float64 `json:"score,omitempty" gorm:"column:score"`
+	Tier               string   `json:"tier,omitempty" gorm:"column:tier;size:16"`
+	VerificationStatus string   `json:"verificationStatus,omitempty" gorm:"column:verification_status;size:16"`
+	MASVSID            string   `json:"masvsId,omitempty" gorm:"column:masvs_id;size:32"`
+
 	// Relationship
 	Secret Secret `json:"-" gorm:"foreignKey:SecretID"`
 }

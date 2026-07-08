@@ -191,6 +191,7 @@ var migrationNames = []string{
 	"006_component_security_fields.sql",
 	"007_ios_support.sql",
 	"008_add_gorm_timestamps.sql",
+	"009_precision_verification.sql",
 }
 
 // connectToDatabase attempts to establish a database connection
@@ -691,7 +692,7 @@ func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.I
 			if len(secret.SecretModel) > 0 {
 				findings := make([]models.SecretFinding, 0, len(secret.SecretModel))
 				for _, secretModel := range secret.SecretModel {
-					findings = append(findings, models.SecretFinding{
+					finding := models.SecretFinding{
 						SecretID:         newSecret.ID,
 						Type:             secretModel.Type,
 						LineNo:           secretModel.LineNo,
@@ -699,7 +700,16 @@ func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.I
 						SecretType:       secretModel.SecretType,
 						SecretString:     secretModel.SecretString,
 						SecretConfidence: secretModel.SecretConfidence,
-					})
+						// Precision/verification/compliance enrichment (nullable).
+						Tier:               secretModel.Tier,
+						VerificationStatus: secretModel.VerificationStatus,
+						MASVSID:            secretModel.MASVSID,
+					}
+					if secretModel.Score != 0 {
+						score := secretModel.Score
+						finding.Score = &score
+					}
+					findings = append(findings, finding)
 				}
 				if err := tx.CreateInBatches(findings, 100).Error; err != nil {
 					return fmt.Errorf("failed to create secret findings for %s: %w", secret.APKHash, err)

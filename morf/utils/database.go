@@ -119,14 +119,22 @@ func CheckDuplicateInDB(db *gorm.DB, apkPath string) (bool, string) {
 	// Associations are already populated by the Preload chain above.
 	secretModelArray := make([]models.SecretModel, 0, len(secret.SecretFindings))
 	for _, finding := range secret.SecretFindings {
-		secretModelArray = append(secretModelArray, models.SecretModel{
+		sm := models.SecretModel{
 			Type:             finding.Type,
 			LineNo:           finding.LineNo,
 			FileLocation:     finding.FileLocation,
 			SecretType:       finding.SecretType,
 			SecretString:     finding.SecretString,
 			SecretConfidence: finding.SecretConfidence,
-		})
+			// Precision/verification/compliance enrichment (nullable in DB).
+			Tier:               finding.Tier,
+			VerificationStatus: finding.VerificationStatus,
+			MASVSID:            finding.MASVSID,
+		}
+		if finding.Score != nil {
+			sm.Score = *finding.Score
+		}
+		secretModelArray = append(secretModelArray, sm)
 	}
 
 	// Parse metadata JSON
