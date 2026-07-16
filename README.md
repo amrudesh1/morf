@@ -1,289 +1,233 @@
 <div align="center">
-  
-# MORF
+
+# MORF - Mobile Reconnaissance Framework
 
 <img src="https://github.com/amrudesh1/morf/blob/main/frontend/src/assets/morf.png" width="200" alt="MORF Logo"/>
 
-### Mobile Reconnaissance Framework
-
-**A powerful offensive security toolkit for mobile application analysis**
+**Dual APK + IPA artifact secret recon — secrets detected *and* verified — with SARIF 2.1.0 / OWASP MASVS output and a CI build gate.**
 
 [![License](https://img.shields.io/github/license/amrudesh1/morf?style=for-the-badge&logo=opensourceinitiative&logoColor=white&color=0080ff)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/amrudesh1/morf?style=for-the-badge&logo=git&logoColor=white&color=0080ff)](https://github.com/amrudesh1/morf/commits/main)
 [![Language](https://img.shields.io/github/languages/top/amrudesh1/morf?style=for-the-badge&color=0080ff)](https://github.com/amrudesh1/morf)
-[![BlackHat Arsenal](https://img.shields.io/badge/BlackHat-Arsenal-blue?style=for-the-badge&color=0080ff)](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292)
+[![BlackHat Arsenal](https://img.shields.io/badge/BlackHat-Arsenal%202026-blue?style=for-the-badge&color=0080ff)](https://www.blackhat.com/)
 
-<p><b>Find Secrets. Protect Apps. Stay Secure.</b></p>
+<p><b>Find Secrets. Verify Them. Gate the Build.</b></p>
 
 </div>
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [💡 Overview](#-overview)
-- [🚀 Quick Start](#-quick-start)
-- [🔍 Key Features](#-key-features)
-- [🏗️ Architecture](#️-architecture)
-- [📋 Common Use Cases](#-common-use-cases)
-- [📦 Installation](#-installation)
-  - [Prerequisites](#prerequisites)
-  - [Method 1: Docker (Recommended)](#method-1-docker-recommended)
-  - [Method 2: Run Script](#method-2-run-script)
-  - [Environment Configuration](#environment-configuration)
-- [🖥️ Usage](#️-usage)
-  - [Web Interface](#web-interface)
-  - [Command Line Interface](#command-line-interface)
-- [🏆 Conference Recognition](#-conference-recognition)
-- [🛣️ Development Roadmap](#️-development-roadmap)
-- [👨‍💻 Authors](#-authors)
-- [📄 License](#-license)
-- [🙏 Acknowledgments](#-acknowledgments)
+- [Overview](#overview)
+- [Feature Matrix](#feature-matrix)
+- [Quick Start](#quick-start)
+- [CLI Usage (`morf scan` / `morf gate`)](#cli-usage-morf-scan--morf-gate)
+- [MCP Agent Server (`morf mcp`)](#mcp-agent-server-morf-mcp)
+- [SARIF & OWASP MASVS Output](#sarif--owasp-masvs-output)
+- [Security Posture](#security-posture)
+- [Architecture](#architecture)
+- [Common Use Cases](#common-use-cases)
+- [What's New in v2](#whats-new-in-v2)
+- [Conference Recognition](#conference-recognition)
+- [Authors](#authors)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
-## 💡 Overview
+## Overview
 
-MORF is an advanced **mobile security analysis tool** that automatically discovers sensitive information within Android and iOS applications. Designed for security professionals, penetration testers, and developers, MORF provides comprehensive insights into mobile app security posture.
+**MORF - Mobile Reconnaissance Framework** is an offensive-security toolkit that discovers
+hardcoded secrets and reconnaissance signal inside mobile application **artifacts** —
+Android `.apk` and iOS `.ipa` — from a single shared detection core. Unlike source-level
+SAST or repo secret scanners, MORF works on the shipped binary: it decompiles APKs with
+apktool and parses Mach-O executables in pure Go, then runs the same secret patterns and
+precision engine over both.
 
-> **v2 architecture:** MORF now runs as a scalable service — a **Redis-backed job queue + worker pool** (scans are async, retrieved by `jobID`), **API-key authentication + rate limiting**, **Prometheus/Grafana** observability, a **normalized MySQL schema**, runtime **pattern management** (`/api/patterns` CRUD + UI), plus PDF export, scan comparison, webhooks, zip-bomb protection, caching, and S3 storage. The binary is multi-mode: `morf server` (API + workers), `morf api`, `morf worker`, `morf migrate`, `morf apikey`. See [README-LOCAL.md](README-LOCAL.md) and `morf/docs/` for details.
+What sets MORF apart from a plain regex scanner:
 
-> **⚠️ Known issues**
-> - **MySQL 8 + AutoMigrate:** `morf server` against a fresh MySQL 8 fails migration with `JSON column 'meta_activities' can't have a default value`, disabling the DB layer. Workaround: run with `MORF_DISABLE_AUTO_MIGRATE=true` and `./morf migrate`, or fix the GORM model tag.
-> - **Apple Silicon:** build the backend image for arm64 (`--build-arg TARGETARCH=arm64` / `--platform linux/arm64`); the default amd64 binary crashes under emulation.
+- **Detected *and* verified.** Candidate secrets can be confirmed live against their
+  provider (read-only), so a finding is not just "this looks like a Stripe key" but "this
+  key is *active*."
+- **Deterministic precision engine.** Entropy + structural signals tier every candidate
+  into `drop` / `info` / `keep`, cutting false positives with no network calls and no LLM.
+- **CI-native output.** SARIF 2.1.0 for GitHub Code Scanning and every SAST dashboard,
+  OWASP MASVS control mapping, and a build-diff **gate** that fails a pipeline only on
+  *new* secrets.
 
-<p align="center">
-  <img src="https://github.com/amrudesh1/MORF/assets/20198748/1fec6d18-e279-4a8a-b63c-01a1d66c20a2" width="800" alt="MORF Demo"/>
-</p>
+MORF runs three ways from one binary: as a scalable **service** (Redis-backed job queue +
+worker pool, MySQL, Prometheus/Grafana, React web UI), as a **CLI** for CI, and as an
+**MCP server** for LLM agents.
 
-## 🚀 Quick Start
+## Feature Matrix
 
-MORF can be up and running in seconds using Docker or the included run script:
+| Capability | What MORF does |
+|---|---|
+| **Dual-platform artifact recon** | Scans Android `.apk` (apktool decompile → smali + resources) and iOS `.ipa` (unzip + pure-Go Mach-O parse of the binary, incl. Swift/Obj-C/C strings, frameworks, entitlements, URL schemes, native `.so`/Flutter/asset/config content). |
+| **Shared detection core with platform scoping** | One YAML-pattern engine (`detect/`) compiled to a combined ripgrep regex. Patterns are scoped `android` / `ios` / `any`, so iOS-only rules never fire on Android and vice-versa. |
+| **Deterministic precision engine** | `precision.go` computes Shannon entropy + structure per candidate and assigns a tier (`drop` / `info` / `keep`) and a `[0,1]` score. Conservative: only clear false positives are dropped. |
+| **Opt-in live verification** | Read-only provider checks (default OFF). 11 providers — GitHub, GitLab, Slack, Stripe, Google/GCP, Twilio, SendGrid, npm, Cloudflare, Mailgun, DigitalOcean — plus **AWS SigV4 STS `GetCallerIdentity`** pairing. Status: `active` / `inactive` / `unknown` / `unchecked`. |
+| **SARIF 2.1.0 output** | `report/sarif.go` emits schema-valid SARIF. Tier → level (`keep`=error, `info`=note). Secret values are masked in the report. |
+| **OWASP MASVS mapping** | Findings carry a MASVS control id (`MASVS-STORAGE-1`, `-STORAGE-2`, `-CRYPTO-1`, `-NETWORK-1`) surfaced in SARIF rule `tags` + a `masvsId` property. See [docs/MASVS.md](docs/MASVS.md). |
+| **`morf scan` / `morf gate` CLI** | CI-friendly contract with policy exit codes (`0` pass, `4` policy hit, `1` operational error) and `--fail-on=none\|any\|verified\|keep`. Full flag/CI reference in [docs/CI.md](docs/CI.md). |
+| **`morf mcp` agent server** | Stdio MCP server exposing `scan_file`, `list_patterns`, `verify_secret`, `explain_finding` — all outputs masked, no DB/Redis/HTTP needed. |
+| **Scalable service** | Redis reliable queue (DLQ + reaper), worker pool, normalized MySQL (GORM), API-key auth + rate limiting, Prometheus/Grafana, S3 or local storage, K8s/KEDA manifests. |
+| **Web UI (React 19)** | React 19 + Vite + Tailwind frontend: drag-and-drop upload, live scan stepper, findings by tier/platform, `/compare` diff, PDF export. |
+| **Runtime pattern management** | `/api/patterns` CRUD + UI — add a detection without a code change. |
+| **At-rest secret protection** | Discovered values are stored masked by default; optional AES-256-GCM at rest; stable identity via keyed HMAC **fingerprint** (never plaintext). |
+
+## Quick Start
+
+MORF runs as a Docker Compose stack: **MySQL + Redis + Go backend + React frontend**.
+
+> **Apple Silicon (arm64):** the backend Dockerfile defaults to `amd64`; the emulated
+> amd64 binary SIGSEGVs under Rosetta. On Apple Silicon you **must** build native arm64
+> using an override that sets `platform: linux/arm64` and `TARGETARCH=arm64`.
 
 ```bash
-# Clone the repository and enter directory
 git clone https://github.com/amrudesh1/morf && cd morf
 
-# Option 1: Using the run script (recommended)
-chmod +x run.sh && ./run.sh
+# x86-64 hosts:
+docker compose up -d --build
 
-# Option 2: Using Docker Compose
-docker-compose up --build
+# Apple Silicon (arm64) — with a local override that pins the arch:
+docker compose -f docker-compose.yml -f <arm64-override>.yml up -d --build morf-backend frontend
 ```
 
-Then simply visit **[http://localhost](http://localhost)** in your browser and upload an APK or IPA file to begin analysis!
+Then open the UI and upload an `.apk` or `.ipa`:
 
-<br>
+- **Frontend:** http://localhost/
+- **Backend API:** http://localhost:9092/api
+- **Health:** http://localhost:9092/api/health
 
-## 🔍 Key Features
+Configuration lives in `.env` (copy from [`.env.example`](.env.example)); every value has a
+local-development fallback baked into `docker-compose.yml`, so `docker compose up` works
+without one. Any real deployment MUST override the credentials.
 
-MORF offers comprehensive security analysis capabilities for mobile applications:
+## CLI Usage (`morf scan` / `morf gate`)
 
-| Feature | Description |
-|---------|-------------|
-| **🔐 Secret & API Key Detection** | Automatically discovers hardcoded credentials, API keys, and tokens throughout the application code and resources |
-| **📱 Component Analysis** | Extracts activities, services, receivers, and content providers, highlighting security risks in app structure |
-| **🛡️ Permission Analysis** | Identifies overprivileged applications and highlights dangerous permission combinations |
-| **🔗 Deeplink Inspection** | Maps URL schemes and deeplink patterns that could potentially be exploited |
-| **📊 Metadata Collection** | Gathers extensive app metadata for security assessment and threat modeling |
-| **📜 Version Comparison** | Tracks security changes between app versions to identify fixes and regressions |
+The same scan + precision + verify pipeline the worker runs is available as a CLI, built
+for CI. [docs/CI.md](docs/CI.md) is the canonical command contract and ships reusable
+recipes for GitHub Actions, GitLab, Jenkins, CircleCI, and pre-commit.
 
-<br>
+```bash
+# Scan an artifact, emit SARIF, fail (exit 4) only on a live-verified secret:
+morf scan app.apk --sarif --out morf.sarif --fail-on=verified --verify
 
-## 🏗️ Architecture
+# Report-only JSON, never fail the build:
+morf scan app.ipa --format=json --fail-on=none
 
-MORF combines a Go backend with an Angular frontend for powerful analysis with an intuitive interface:
+# Build-diff gate: fail only on NEW secrets vs a committed baseline of accepted fingerprints
+morf gate app.apk --baseline morf-baseline.json --fail-on=verified
 
-<p align="center">
-  <img src="https://github.com/amrudesh1/MORF/assets/20198748/f5bcdbbf-68ea-41bc-9c12-3f6d07e9049d" width="800" alt="MORF Architecture"/>
-</p>
+# First run / accept the current state as the baseline:
+morf gate app.apk --baseline morf-baseline.json --update-baseline
+```
 
-<br>
+**Exit codes:** `0` = nothing at/above the `--fail-on` threshold · `4` = policy violation
+(CI gates on this) · `1` = operational error (bad file, tool missing). `--fail-on` levels:
+`verified` (only confirmed-live secrets), `keep` (any precision-kept finding), `any` (any
+finding), `none` (report-only). All SARIF/JSON values are masked.
 
-## 📋 Common Use Cases
+## MCP Agent Server (`morf mcp`)
+
+`morf mcp` runs a standalone **stdio MCP server** so an LLM agent can scan and reason about
+mobile artifacts. It needs no DB, Redis, or HTTP server — it drives the leaf packages
+in-process.
+
+```bash
+morf mcp   # speaks MCP over stdin/stdout
+```
+
+Tools exposed (every output masked):
+
+- `scan_file` — scan an `.apk`/`.ipa` and return tiered findings.
+- `list_patterns` — enumerate the loaded detection patterns.
+- `verify_secret` — run the opt-in read-only verification on a candidate.
+- `explain_finding` — explain a finding, including its MASVS control.
+
+## SARIF & OWASP MASVS Output
+
+MORF emits **SARIF 2.1.0** (`report/sarif.go`, `EncodeSARIF`) targeting the canonical
+schema. The precision tier maps to the SARIF result level — `keep` → `error`, `info` →
+`note` — and the report masks every secret value.
+
+Detection patterns carry an OWASP **MASVS** control id that flows into each SARIF rule's
+`tags` and a `masvsId` property, and into `explain_finding`. Current coverage is grounded
+in the live patterns: **MASVS-STORAGE-1** (hardcoded secrets/keys), **MASVS-STORAGE-2**,
+**MASVS-CRYPTO-1** (crypto material), **MASVS-NETWORK-1** (cleartext/endpoint exposure).
+See [docs/MASVS.md](docs/MASVS.md) for the mapping and an honest "not yet mapped" list.
+
+## Security Posture
+
+MORF is built to be safe to run against real production artifacts:
+
+- **Verification is default-OFF.** Live provider checks only run with `--verify` or
+  `MORF_ENABLE_VERIFICATION=true`, and every check is **read-only** (e.g. AWS STS
+  `GetCallerIdentity`, never a mutating call).
+- **Masking everywhere.** SARIF, the `/results` API, MCP tool outputs, and logs mask
+  secret values. `MaskResultJSON` fails **closed** — an unparseable payload errors rather
+  than leaking.
+- **No plaintext at rest by default.** Discovered values persist masked; set
+  `MORF_SECRET_ENCRYPTION_KEY` to store AES-256-GCM ciphertext instead.
+- **Fingerprint-only identity.** Dedup and the build-diff gate key on a stable keyed-HMAC
+  `crypto.Fingerprint`, never the raw value — a baseline file is committable and a DB
+  exfiltration cannot confirm guessed secrets (set `MORF_FINGERPRINT_SALT` in production).
+- **Fail-closed auth.** API-key auth is on by default; scan/pattern/results routes require
+  a key even when the toggle is relaxed.
+
+The full strategic assessment lives in [docs/SECURITY_ROADMAP.md](docs/SECURITY_ROADMAP.md).
+
+## Architecture
+
+MORF is a **Go 1.24 backend** with a **React 19 + Vite + Tailwind** frontend. The backend
+is a scalable service — Redis reliable queue + worker pool, normalized MySQL (GORM),
+API-key auth, Prometheus/Grafana, S3/local storage, and K8s/KEDA manifests — and the same
+leaf packages (`detect`, `precision`, `verify`, `report`, `gate`) run in-process for the
+CLI and MCP modes.
+
+Scan data flow: `upload → Redis queue → worker → decompile/parse → detect → precision →
+verify (opt-in) → persist (protected) → results / SARIF`.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the component map and diagrams, and
+[docs/DEMO.md](docs/DEMO.md) for the booth demo.
+
+## Common Use Cases
 
 | Use Case | Description |
-|----------|-------------|
-| **🕵️ Security Audits** | Pre-release scanning to identify security issues before apps reach production |
-| **🔍 Competitive Analysis** | Understand security implementations in competitor applications |
-| **⚙️ CI/CD Integration** | Automate security checks in your build pipeline with MORF's CLI capabilities |
-| **👨‍🏫 Security Education** | Train developers on secure mobile development using real-world examples |
+|---|---|
+| **Pre-release artifact audits** | Scan the exact `.apk`/`.ipa` you ship, not the source tree. |
+| **CI/CD secret gate** | `morf gate` fails a build only on new secrets vs an accepted baseline. |
+| **GitHub Code Scanning** | Upload MORF SARIF to the Security tab; findings carry MASVS ids. |
+| **Agent-driven triage** | Point an LLM agent at `morf mcp` to scan and explain findings. |
+| **Competitive / research recon** | Understand secret hygiene and structure of any shipped app. |
 
-<br>
+## What's New in v2
 
-## 📦 Installation
+- Dual **APK + IPA** artifact recon from a shared, platform-scoped detection core.
+- Deterministic **precision engine** (entropy/structure tiering) — noise cut from
+  hundreds of raw hits to a handful of clean findings.
+- Opt-in **live verification** (11 providers + AWS STS).
+- **SARIF 2.1.0** + OWASP **MASVS** output.
+- `morf scan` / `morf gate` **CLI** with policy exit codes + reusable CI recipes.
+- `morf mcp` **agent server**.
+- **React 19** web UI, PDF export, `/compare` scan diffing.
+- Scalable service: Redis queue + worker pool, normalized MySQL, Prometheus/Grafana,
+  K8s/KEDA.
 
-### Prerequisites
+## Conference Recognition
 
-- **Docker** (recommended for simplest installation)
-- Alternatively: **Go** and **Node.js** for development setup
+**BlackHat Arsenal 2026** — MORF returns to Arsenal with its v2 posture: dual APK+IPA
+binary recon, *verified* (not merely detected) secrets, and SARIF/MASVS CI output.
 
-### Method 1: Docker (Recommended)
+<details>
+<summary>Previous appearances</summary>
 
-**For macOS users**, see [README-LOCAL.md](README-LOCAL.md) for detailed local development guide.
+- **BlackHat Asia 2023** — Arsenal debut ([link](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292))
+- **BlackHat US 2023** — Arsenal ([link](https://www.blackhat.com/us-23/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-32370))
+- **BlackHat Europe 2024** — Arsenal ([link](https://www.blackhat.com/eu-24/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-42172))
+- **BlackHat Asia 2025** — Arsenal ([link](https://www.blackhat.com/asia-25/arsenal/schedule/#morf---mobile-reconnaissance-framework-43910))
 
-```bash
-# Clone the repository
-git clone https://github.com/amrudesh1/morf
-cd MORF
+</details>
 
-# Start all services (MySQL, Redis, Backend, Frontend)
-./run-local.sh start
-
-# Or using docker-compose directly
-docker-compose up -d
-```
-
-**Services will be available at:**
-- Frontend: http://localhost
-- Backend API: http://localhost:9092/api
-- Health Check: http://localhost:9092/api/health
-
-**Common commands:**
-```bash
-./run-local.sh start    # Start all services
-./run-local.sh stop     # Stop all services
-./run-local.sh status   # Check service status
-./run-local.sh logs     # View logs
-```
-
-### Method 2: Run Script
-
-```bash
-git clone https://github.com/amrudesh1/morf
-cd morf
-chmod +x run.sh
-./run.sh
-```
-
-### Environment Configuration
-
-MORF requires the `DATABASE_URL` environment variable to connect to your database:
-
-```bash
-# macOS/Linux
-export DATABASE_URL="root@tcp(localhost:3306)/Secrets?charset=utf8mb4&parseTime=True&loc=Local"
-
-# Windows (CMD)
-set DATABASE_URL=root@tcp(localhost:3306)/Secrets?charset=utf8mb4&parseTime=True&loc=Local
-
-# Windows (PowerShell)
-$env:DATABASE_URL = "root@tcp(localhost:3306)/Secrets?charset=utf8mb4&parseTime=True&loc=Local"
-```
-
-> **Note**: Docker Compose will automatically use the environment variables set on your host machine.
-
-<br>
-
-## 🖥️ Usage
-
-### Web Interface
-
-After starting MORF, access the intuitive web interface at [http://localhost](http://localhost) and follow these steps:
-
-1. Upload your APK or IPA file using the drag-and-drop interface
-2. Wait for MORF to process and analyze the application
-3. Explore the detailed results, including:
-   - Discovered secrets and API keys
-   - Component security analysis
-   - Permission assessment
-   - Deeplink mapping
-   - Comprehensive metadata
-
-> **📱 iOS (.ipa) uploads:** MORF accepts iOS app archives (`.ipa`) alongside
-> Android `.apk` files at the same upload endpoint. For an `.ipa`, MORF unzips
-> the `Payload/<App>.app/` tree, parses the `Info.plist` (XML or binary) for
-> bundle metadata and URL schemes, and analyses the Mach-O executable with
-> [`go-macho`](https://github.com/blacktop/go-macho) — enumerating sections by
-> name to extract Swift/Objective-C/C strings and running the same secret
-> patterns used for Android. FairPlay-encrypted (App Store) binaries are
-> detected via the Mach-O `cryptid` and flagged; supply a **decrypted** `.ipa`
-> for full binary coverage. See
-> [`morf/docs/IOS_SCANNING.md`](morf/docs/IOS_SCANNING.md) for the architecture
-> and [`morf/ios/testdata/`](morf/ios/testdata/) for the smoke-test fixtures.
-
-### Command Line Interface
-
-MORF also provides a powerful CLI for automation and integration:
-
-```bash
-# Basic scan with console output
-./morf cli --apk-path=/path/to/app.apk
-
-```
-
-<br>
-
-## 🏆 Conference Recognition
-
-### Conference Appearances
-
-<table>
-<tr>
-<td align="center" width="50%">
-<h3>BlackHat Asia 2023</h3>
-<p>MORF was presented at the Arsenal section, showcasing its capabilities in mobile application security analysis and secret detection.</p>
-<p><a href="https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292">View Presentation</a></p>
-</td>
-<td align="center" width="50%">
-<h3>BlackHat US 2023</h3>
-<p>MORF was featured at BlackHat US 2023 Arsenal, demonstrating advanced mobile security reconnaissance techniques to security professionals.</p>
-<p><a href="https://www.blackhat.com/us-23/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-32370">View Presentation</a></p>
-</td>
-</tr>
-<tr>
-<td align="center" width="50%">
-<h3>BlackHat Europe 2024</h3>
-<p>MORF continues to gain recognition with its selection for BlackHat Europe 2024 Arsenal, highlighting its ongoing development and relevance in mobile security.</p>
-<p><a href="https://www.blackhat.com/eu-24/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-42172">View Presentation</a></p>
-</td>
-<td align="center" width="50%">
-<h3>BlackHat Asia 2025</h3>
-<p>Looking ahead, MORF has been selected for BlackHat Asia 2025 Arsenal, demonstrating its continued evolution and importance in the mobile security landscape.</p>
-<p><a href="https://www.blackhat.com/asia-25/arsenal/schedule/#morf---mobile-reconnaissance-framework-43910">View Presentation</a></p>
-</td>
-</tr>
-</table>
-
-<br>
-
-## 🛣️ Development Roadmap
-
-<div style="background-color: #f0f8ff; padding: 20px; border-radius: 8px; border-left: 5px solid #4caf50; margin-bottom: 20px;">
-<h3>✅ v1.0 - Initial Release</h3>
-<ul>
-<li>APK scanning and analysis</li>
-<li>Secret detection</li>
-<li>Basic web interface</li>
-</ul>
-</div>
-
-<div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; border-left: 5px solid #9e9e9e; margin-bottom: 20px;">
-<h3>⏳ v1.1 - Enhanced iOS Support</h3>
-<ul>
-<li>Improved IPA analysis</li>
-<li>iOS-specific pattern detection</li>
-<li>Swift/Objective-C code scanning</li>
-</ul>
-</div>
-
-<div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; border-left: 5px solid #9e9e9e; margin-bottom: 20px;">
-<h3>⏳ v1.2 - Reporting Enhancements</h3>
-<ul>
-<li>PDF export functionality</li>
-<li>Compliance reporting</li>
-<li>Historical comparison views</li>
-</ul>
-</div>
-
-<div style="background-color: #f9f9f9; padding: 20px; border-radius: 8px; border-left: 5px solid #9e9e9e; margin-bottom: 20px;">
-<h3>⏳ v2.0 - Advanced Analysis</h3>
-<ul>
-<li>Machine learning-based vulnerability detection</li>
-<li>Dynamic code analysis</li>
-<li>Advanced threat modeling</li>
-</ul>
-</div>
-
-<br>
-
-## 👨‍💻 Authors
+## Authors
 
 <div align="center">
 
@@ -292,24 +236,20 @@ MORF also provides a powerful CLI for automation and integration:
 
 </div>
 
-<br>
+## License
 
-## 📄 License
+MORF is released under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-MORF is released under the MIT License. See the [LICENSE](LICENSE) file for more details.
+## Acknowledgments
 
-<br>
-
-## 🙏 Acknowledgments
-
-- [**Secrets Patterns Database**](https://github.com/mazen160/secrets-patterns-db) - Pattern database used by MORF for secret detection
-- **Open Source Security Community** - For inspiration, feedback and support
-- **All Contributors** - Everyone who has contributed code, feedback, and ideas to the MORF project
+- [**Secrets Patterns Database**](https://github.com/mazen160/secrets-patterns-db) — a curated source of secret detection patterns.
+- [**go-macho**](https://github.com/blacktop/go-macho) — pure-Go Mach-O parsing behind the iOS module.
+- **Open Source Security Community** — for inspiration, feedback, and support.
 
 ---
 
 <div align="center">
-  <a href="#morf">
+  <a href="#morf---mobile-reconnaissance-framework">
     <img src="https://img.shields.io/badge/back%20to%20top-%E2%86%A9-blue?style=for-the-badge" alt="Back to top" />
   </a>
 </div>

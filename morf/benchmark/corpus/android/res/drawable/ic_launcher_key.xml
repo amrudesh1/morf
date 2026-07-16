@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DECOY placed in res/drawable: NOISE-1 excludes res/drawable*, so this
+     AWS-shaped token must NEVER surface at all (not even pre-precision).
+     Its presence guards the exclude-glob behavior. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android">
+    <path android:name="__MORF_BENCH_AWS_DECOY__" android:fillColor="#FF0000"/>
+</vector>

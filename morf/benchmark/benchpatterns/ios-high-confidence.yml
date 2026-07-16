@@ -1,0 +1,32 @@
+patterns:
+  # ---------------------------------------------------------------------------
+  # iOS-scoped curated patterns. The "ios-" filename prefix makes detect's
+  # platform scoping (detect.patternApplies) run these ONLY in an ios scan and
+  # skip them in an android scan, so the benchmark exercises platform scoping
+  # for free. Names match the production ios rule names verbatim.
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: JSON Web Token (JWT)
+      regex: "eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Private Key Block
+      regex: "-----BEGIN[ A-Z0-9]* PRIVATE KEY-----"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Firebase Database URL
+      regex: "https://[a-z0-9\\-]+\\.firebaseio\\.com"
+      confidence: medium
+      enabled: true
+  - pattern:
+      name: iOS Google Reversed Client ID Scheme
+      regex: "com\\.googleusercontent\\.apps\\.[0-9]+-[0-9A-Za-z_]{32}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: iOS Keychain Access Group
+      regex: "[A-Z0-9]{10}\\.[a-zA-Z0-9]+(\\.[a-zA-Z0-9\\-]+)+"
+      confidence: low
+      enabled: true

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.morf.benchmark.app</string>
+
+    <!-- TRUE POSITIVE (keep): a real bearer JWT embedded in the app plist. -->
+    <key>AuthToken</key>
+    <string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6InN2YyIsImlhdCI6MTUxNjIzOTAyMn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U</string>
+
+    <!-- INFO (public by design): Firebase Realtime Database URL. -->
+    <key>FirebaseDatabaseURL</key>
+    <string>https://morf-benchmark-app.firebaseio.com</string>
+
+    <!-- INFO (public by design): Google reversed client id URL scheme. -->
+    <key>CFBundleURLSchemes</key>
+    <string>com.googleusercontent.apps.123456789012-abcdefghijklmnopqrstuvwxyz012345</string>
+</dict>
+</plist>
