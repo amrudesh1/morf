@@ -531,7 +531,15 @@ func ScanCorpusText(ctx context.Context, jobID string, roots []string, platform 
 // factored out of scanCorpusWithOpts so the arg shaping (the -a/--text toggle,
 // exclude ordering, root placement) is unit-testable without shelling out to rg.
 func buildRgArgs(patternFilePath string, excludeGlobs, existing []string, opts ScanOptions) []string {
-	base := []string{"-n", "--file", patternFilePath, "--multiline"}
+	// NOTE: we intentionally do NOT pass --multiline. The corpus is line-oriented
+	// (iOS strings are flattened so CR/LF never span a line; smali/resources are
+	// line files), and no pattern needs cross-line matching. Under --multiline,
+	// ripgrep lets `.*`/`.+` span the ENTIRE file — on a large concatenated corpus
+	// (e.g. a 100 MB+ iOS string dump) that turns a per-line scan into a
+	// whole-file near-quadratic one, which made large real apps take many minutes.
+	// Line-bounded matching is both far faster and more correct here (a secret
+	// never legitimately spans a line in this corpus). PERF-1.
+	base := []string{"-n", "--file", patternFilePath}
 	if opts.Text {
 		// -a/--text: scan binary files as text so NUL-laden artifacts (.so,
 		// resources.arsc, kernel_blob.bin, index.android.bundle) are searched

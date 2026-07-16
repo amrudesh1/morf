@@ -20,10 +20,10 @@ func TestBuildRgArgs(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "text off is unchanged historical arg list",
+			name: "text off is the line-bounded (no --multiline) arg list",
 			opts: ScanOptions{},
 			want: []string{
-				"-n", "--file", patternFile, "--multiline",
+				"-n", "--file", patternFile,
 				"-g", "!**/res/drawable*/**",
 				"/ws/source", "/ws/appres",
 			},
@@ -32,7 +32,7 @@ func TestBuildRgArgs(t *testing.T) {
 			name: "text on inserts -a and -o before excludes",
 			opts: ScanOptions{Text: true},
 			want: []string{
-				"-n", "--file", patternFile, "--multiline", "-a", "-o",
+				"-n", "--file", patternFile, "-a", "-o",
 				"-g", "!**/res/drawable*/**",
 				"/ws/source", "/ws/appres",
 			},
@@ -41,7 +41,7 @@ func TestBuildRgArgs(t *testing.T) {
 			name: "extra excludes appended after defaults, before roots",
 			opts: ScanOptions{Text: true, ExtraExcludes: []string{"-g", "!**/smali*/**"}},
 			want: []string{
-				"-n", "--file", patternFile, "--multiline", "-a", "-o",
+				"-n", "--file", patternFile, "-a", "-o",
 				"-g", "!**/res/drawable*/**",
 				"-g", "!**/smali*/**",
 				"/ws/source", "/ws/appres",
