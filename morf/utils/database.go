@@ -119,6 +119,11 @@ func CheckDuplicateInDB(db *gorm.DB, apkPath string) (bool, string) {
 	// Associations are already populated by the Preload chain above.
 	secretModelArray := make([]models.SecretModel, 0, len(secret.SecretFindings))
 	for _, finding := range secret.SecretFindings {
+		// finding.SecretString is the AT-REST protected value (AES-256-GCM
+		// ciphertext or a masked preview) written by crypto.ProtectAtRest, never
+		// plaintext, so the reconstructed duplicate-cache payload carries no raw
+		// secret. Value-identity de-dup happens in-memory pre-persistence, so no
+		// decryption is needed here.
 		sm := models.SecretModel{
 			Type:             finding.Type,
 			LineNo:           finding.LineNo,

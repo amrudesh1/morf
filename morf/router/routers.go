@@ -1352,7 +1352,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		c.JSON(statusCode, response)
 	})
 
-	router.POST("/jira", func(ctx *gin.Context) {
+	router.POST("/jira", MaxBodyBytesMiddleware(maxBodyBytes()), func(ctx *gin.Context) {
 		requestID := ctx.GetString("request_id")
 		requestBody := models.JiraModel{}
 		if err := ctx.ShouldBindBodyWith(&requestBody, binding.JSON); err != nil {
@@ -1386,7 +1386,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		}()
 	})
 
-	router.POST("/slackscan", func(ctx *gin.Context) {
+	router.POST("/slackscan", MaxBodyBytesMiddleware(maxBodyBytes()), func(ctx *gin.Context) {
 		requestID := ctx.GetString("request_id")
 		requestBody := models.SlackData{}
 		if err := ctx.ShouldBindBodyWith(&requestBody, binding.JSON); err != nil {
@@ -1495,7 +1495,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.POST("/patterns/:filename/test", func(c *gin.Context) {
+	router.POST("/patterns/:filename/test", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		filename := c.Param("filename")
 		requestID := c.GetString("request_id")
 
@@ -1558,7 +1558,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.POST("/patterns/:filename", func(c *gin.Context) {
+	router.POST("/patterns/:filename", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		filename := c.Param("filename")
 		requestID := c.GetString("request_id")
 
@@ -1603,7 +1603,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.PUT("/patterns/:filename/patterns", func(c *gin.Context) {
+	router.PUT("/patterns/:filename/patterns", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		filename := c.Param("filename")
 		requestID := c.GetString("request_id")
 
@@ -1638,7 +1638,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.PATCH("/patterns/:filename/patterns/:patternName", func(c *gin.Context) {
+	router.PATCH("/patterns/:filename/patterns/:patternName", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		filename := c.Param("filename")
 		patternName := c.Param("patternName")
 		requestID := c.GetString("request_id")
@@ -1682,7 +1682,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.DELETE("/patterns/:filename/patterns/:patternName", func(c *gin.Context) {
+	router.DELETE("/patterns/:filename/patterns/:patternName", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		filename := c.Param("filename")
 		patternName := c.Param("patternName")
 		requestID := c.GetString("request_id")
@@ -1718,7 +1718,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.PATCH("/patterns/:filename/patterns/:patternName/enable", func(c *gin.Context) {
+	router.PATCH("/patterns/:filename/patterns/:patternName/enable", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		filename := c.Param("filename")
 		patternName := c.Param("patternName")
 		requestID := c.GetString("request_id")
@@ -1766,7 +1766,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.POST("/patterns", func(c *gin.Context) {
+	router.POST("/patterns", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		requestID := c.GetString("request_id")
 
 		var requestBody struct {
@@ -1811,7 +1811,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		})
 	})
 
-	router.DELETE("/patterns/:filename", func(c *gin.Context) {
+	router.DELETE("/patterns/:filename", MaxBodyBytesMiddleware(maxBodyBytes()), func(c *gin.Context) {
 		filename := c.Param("filename")
 		requestID := c.GetString("request_id")
 
