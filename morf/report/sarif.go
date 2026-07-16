@@ -144,6 +144,35 @@ func maskSecret(value string) string {
 	return head + "…" + tail
 }
 
+// MaskResultJSON walks a stored scan-result envelope
+// ({"data":{"secrets":[{"secretString":...},...]}}) and replaces every
+// secretString with a masked preview (same masking used in the SARIF export),
+// preserving all other fields and structure. It is used to keep raw secret
+// values out of the /results JSON API by default.
+//
+// It fails CLOSED: if the payload cannot be parsed as JSON it returns an error
+// and NO bytes, so a masking failure can never fall through to leaking the raw
+// payload. Callers should drop the result field (or 500) on error rather than
+// returning the unmasked input.
+func MaskResultJSON(raw []byte) ([]byte, error) {
+	var env map[string]any
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if data, ok := env["data"].(map[string]any); ok {
+		if secrets, ok := data["secrets"].([]any); ok {
+			for _, s := range secrets {
+				if m, ok := s.(map[string]any); ok {
+					if v, ok := m["secretString"].(string); ok {
+						m["secretString"] = maskSecret(v)
+					}
+				}
+			}
+		}
+	}
+	return json.Marshal(env)
+}
+
 // EncodeSARIF renders the given findings as a SARIF 2.1.0 JSON document for the
 // scanned artifact. target identifies the scanned bundle (file name / package
 // id), platform is "android" or "ios", and secrets are the enriched findings to

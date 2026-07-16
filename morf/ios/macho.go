@@ -43,15 +43,15 @@ const stringMinLen = 4
 // match. Covers C strings, read-only constant pools (where most literals live),
 // CFStrings, ObjC metadata, and the Swift5 reflection family.
 var interestingSectionNames = map[string]bool{
-	"__cstring":       true, // C string literals
-	"__const":         true, // read-only constant pool (often embedded strings)
-	"__rodata":        true, // read-only data (Go and some C/C++ toolchains) — literals live here
-	"__oslogstring":   true, // os_log format strings (can embed interpolated secrets)
-	"__cfstring":      true, // CFString literal structs (scanned raw / NUL-split)
-	"__objc_methname": true, // ObjC selector/method names
+	"__cstring":        true, // C string literals
+	"__const":          true, // read-only constant pool (often embedded strings)
+	"__rodata":         true, // read-only data (Go and some C/C++ toolchains) — literals live here
+	"__oslogstring":    true, // os_log format strings (can embed interpolated secrets)
+	"__cfstring":       true, // CFString literal structs (scanned raw / NUL-split)
+	"__objc_methname":  true, // ObjC selector/method names
 	"__objc_classname": true, // ObjC class names
-	"__objc_methtype": true, // ObjC method type encodings
-	"__objc_selrefs":  true, // ObjC selector references
+	"__objc_methtype":  true, // ObjC method type encodings
+	"__objc_selrefs":   true, // ObjC selector references
 	// The __swift5_* family. __swift5_reflstr holds human-readable reflection
 	// strings (field/type names); the others are metadata but can still carry
 	// embedded C strings, so we NUL-split them defensively.

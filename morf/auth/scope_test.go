@@ -81,16 +81,21 @@ func TestNormalizeScopes(t *testing.T) {
 }
 
 // TestAPIKeyAuthSelective covers S-2: when global auth is OFF (enforceAll=false)
-// non-sensitive routes pass through unauthenticated, but the sensitive SSRF /
-// pattern-mutation routes are still challenged. When enforceAll=true everything
-// is challenged. (No DB needed: a missing key is rejected before any lookup.)
+// genuinely non-sensitive routes (scan/upload) pass through unauthenticated, but
+// (a) the sensitive SSRF / pattern-mutation routes and (b) the result-reading
+// routes that expose discovered secrets (/results, /secrets, /compare) are still
+// challenged. When enforceAll=true everything is challenged. (No DB needed: a
+// missing key is rejected before any lookup.)
 func TestAPIKeyAuthSelective(t *testing.T) {
 	build := func(enforceAll bool) *gin.Engine {
 		r := gin.New()
 		g := r.Group("/api")
 		g.Use(APIKeyAuthSelective(enforceAll))
 		ok := func(c *gin.Context) { c.String(http.StatusOK, "ok") }
+		g.POST("/upload", ok)
 		g.GET("/results/:jobID", ok)
+		g.GET("/secrets", ok)
+		g.GET("/compare/:a/:b", ok)
 		g.POST("/jira", ok)
 		g.POST("/patterns/:filename", ok)
 		g.GET("/patterns", ok)
@@ -104,12 +109,24 @@ func TestAPIKeyAuthSelective(t *testing.T) {
 	}
 
 	off := build(false)
-	if code := do(off, http.MethodGet, "/api/results/abc"); code != http.StatusOK {
-		t.Errorf("global-off non-sensitive GET /results = %d, want 200 (pass-through)", code)
+	// Genuinely non-sensitive routes still pass through when global auth is off.
+	if code := do(off, http.MethodPost, "/api/upload"); code != http.StatusOK {
+		t.Errorf("global-off non-sensitive POST /upload = %d, want 200 (pass-through)", code)
 	}
 	if code := do(off, http.MethodGet, "/api/patterns"); code != http.StatusOK {
 		t.Errorf("global-off GET /patterns (read) = %d, want 200 (pass-through)", code)
 	}
+	// Result-reading routes expose found secrets → challenged even with auth off.
+	if code := do(off, http.MethodGet, "/api/results/abc"); code != http.StatusUnauthorized {
+		t.Errorf("global-off GET /results = %d, want 401 (result data is protected)", code)
+	}
+	if code := do(off, http.MethodGet, "/api/secrets"); code != http.StatusUnauthorized {
+		t.Errorf("global-off GET /secrets = %d, want 401 (result data is protected)", code)
+	}
+	if code := do(off, http.MethodGet, "/api/compare/a/b"); code != http.StatusUnauthorized {
+		t.Errorf("global-off GET /compare = %d, want 401 (result data is protected)", code)
+	}
+	// Sensitive SSRF / mutation routes remain challenged.
 	if code := do(off, http.MethodPost, "/api/jira"); code != http.StatusUnauthorized {
 		t.Errorf("global-off sensitive POST /jira = %d, want 401", code)
 	}
@@ -118,6 +135,9 @@ func TestAPIKeyAuthSelective(t *testing.T) {
 	}
 
 	on := build(true)
+	if code := do(on, http.MethodPost, "/api/upload"); code != http.StatusUnauthorized {
+		t.Errorf("global-on POST /upload = %d, want 401 (all enforced)", code)
+	}
 	if code := do(on, http.MethodGet, "/api/results/abc"); code != http.StatusUnauthorized {
 		t.Errorf("global-on GET /results = %d, want 401 (all enforced)", code)
 	}

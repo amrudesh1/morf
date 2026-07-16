@@ -4,9 +4,22 @@ on:
   push:
   pull_request:
 
+# Least-privilege default; jobs that upload SARIF opt into security-events: write.
+permissions:
+  contents: read
+
+env:
+  # Single source of truth for the build toolchain. The module targets go 1.25
+  # (see morf/go.mod); pin CI to the same major so `gofmt`/vet/build/test agree.
+  GO_VERSION: "1.25"
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Blocking gate: formatting, vet, build, and the race detector. These are
+  # deterministic and currently clean, so they fail the build on regression.
+  # ---------------------------------------------------------------------------
   backend:
-    name: Backend (build, vet, test)
+    name: Backend (fmt, vet, build, race)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,8 +31,16 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: morf/go.sum
+
+      - name: gofmt (check formatting)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-clean:"; echo "$unformatted"
+            exit 1
+          fi
 
       - name: go vet
         run: go vet ./...
@@ -27,13 +48,44 @@ jobs:
       - name: go build
         run: go build ./...
 
-      - name: go test
-        run: go test ./...
+      - name: go test -race
+        run: go test -race ./...
 
+  # ---------------------------------------------------------------------------
+  # Blocking gate: dependency + stdlib vulnerability scan. Module-level vulns
+  # are kept at zero; stdlib currency is guaranteed by building with the pinned
+  # Go toolchain above. govulncheck only reports vulns actually reachable from
+  # our code, so it is a true signal, not noise.
+  # ---------------------------------------------------------------------------
+  govulncheck:
+    name: Vulnerability scan (govulncheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: morf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: morf/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  # ---------------------------------------------------------------------------
+  # Blocking gate: integration tests against real MySQL + Redis. No longer
+  # continue-on-error — a broken queue/DB path must fail the build.
+  # ---------------------------------------------------------------------------
   backend-integration:
     name: Backend integration tests
     runs-on: ubuntu-latest
-    continue-on-error: true
     defaults:
       run:
         working-directory: morf
@@ -70,14 +122,89 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: morf/go.sum
 
       - name: go test (integration)
         run: go test -tags integration ./tests/...
 
+  # ---------------------------------------------------------------------------
+  # Advisory: golangci-lint. There is a known legacy backlog (mostly unchecked
+  # errors). Runs on every push so the backlog is visible, but does NOT block
+  # the build (continue-on-error) until the backlog is triaged. Flip to blocking
+  # by removing continue-on-error once it reports clean.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (golangci-lint · advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: morf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: morf/go.sum
+
+      - name: Install golangci-lint (v2)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.12.2/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
+
+      - name: Run golangci-lint
+        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=5m ./..."
+
+  # ---------------------------------------------------------------------------
+  # Advisory SAST: gosec. Runs in no-fail mode and publishes findings to the
+  # GitHub Security tab as SARIF (dogfooding the same format MORF emits). The
+  # SARIF upload is best-effort so repos without GitHub Code Security still pass.
+  # ---------------------------------------------------------------------------
+  sast:
+    name: SAST (gosec → SARIF · advisory)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    defaults:
+      run:
+        working-directory: morf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: morf/go.sum
+
+      - name: Install gosec
+        run: |
+          curl -sfL https://raw.githubusercontent.com/securego/gosec/master/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin"
+
+      - name: Run gosec
+        run: "$(go env GOPATH)/bin/gosec -no-fail -fmt sarif -out gosec.sarif ./..."
+
+      - name: Upload gosec SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: morf/gosec.sarif
+          category: gosec
+
+  # ---------------------------------------------------------------------------
+  # Blocking gate: frontend type-check + production build (Vite/React). No test
+  # runner is configured, so this validates the build (tsc --noEmit runs inside
+  # `npm run build`).
+  # ---------------------------------------------------------------------------
   frontend:
-    name: Frontend (build, test)
+    name: Frontend (build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -99,19 +226,55 @@ jobs:
       - name: npm run build
         run: npm run build
 
-      - name: npm test
-        continue-on-error: true
-        run: npm test -- --watch=false --browsers=ChromeHeadless
-
+  # ---------------------------------------------------------------------------
+  # Blocking: multi-arch image build (amd64 + arm64) validates the arm64 path
+  # that previously SIGSEGV'd. Advisory: Trivy image scan → SARIF to Security.
+  # ---------------------------------------------------------------------------
   docker:
-    name: Docker image build
+    name: Docker image (multi-arch build + Trivy)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: docker build
-        run: docker build --build-arg TARGETARCH=amd64 ./morf
+      # Cross-arch build validation (no push). Proves both arches compile+link.
+      - name: Build multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./morf
+          platforms: linux/amd64,linux/arm64
+          push: false
+
+      # Load a single-arch image locally so Trivy can scan its filesystem.
+      - name: Build amd64 image (load for scan)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./morf
+          load: true
+          tags: morf:ci-scan
+
+      - name: Trivy image scan (SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        continue-on-error: true
+        with:
+          image-ref: morf:ci-scan
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: trivy.sarif
+          category: trivy

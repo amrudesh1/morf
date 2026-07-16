@@ -29,6 +29,7 @@ import (
 	"morf/queue"
 	"morf/router"
 	"morf/utils"
+	"morf/version"
 	"morf/worker"
 	"net/http"
 	"os"
@@ -146,6 +147,15 @@ var rootCmd = &cobra.Command{
 	Long:  `A tool to scan mobile applications for sensitive information`,
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the MORF version and build metadata",
+	Long:  `Print the semantic version, git commit, and build date stamped into the binary at release time.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(version.String())
+	},
+}
+
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Run MORF as a web server",
@@ -232,6 +242,7 @@ func init() {
 
 	rootCmd.AddCommand(cmd.GetCliCmd())
 	rootCmd.AddCommand(cmd.GetAPIKeyCmd())
+	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(apiOnlyCmd)
 	rootCmd.AddCommand(workerCmd)

@@ -43,14 +43,18 @@ spec:
         prometheus.io/path: "/api/metrics"  # app exposes metrics at /api/metrics, not /metrics
     spec:
       # Pod-level security baseline — mirrors the stable deployment. App runs as
-      # non-root uid 1000 (see Dockerfile) with the RuntimeDefault seccomp profile.
+      # non-root uid 1000 (see Dockerfile) with the custom seccomp-apktool.json
+      # allowlist. PREREQUISITE: apply k8s/seccomp-installer.yaml (installs the
+      # profile on every node). Fallback: swap the two Localhost blocks for
+      # `type: RuntimeDefault` on clusters without the installer.
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
         seccompProfile:
-          type: RuntimeDefault
+          type: Localhost
+          localhostProfile: seccomp-apktool.json
       # Initialize the database schema before the canary container starts, instead
       # of AutoMigrate-on-boot. Mirrors the stable deployment's migrate initContainer.
       initContainers:
@@ -77,8 +81,10 @@ spec:
           capabilities:
             drop:
             - ALL
+          # Custom allowlist profile (see pod-level note + k8s/seccomp-installer.yaml).
           seccompProfile:
-            type: RuntimeDefault
+            type: Localhost
+            localhostProfile: seccomp-apktool.json
         ports:
         - containerPort: 9092
           name: http

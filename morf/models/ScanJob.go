@@ -44,7 +44,7 @@ type ScanJob struct {
 	CompletedAt      *time.Time `json:"completed_at,omitempty"`
 	FailedAt         *time.Time `json:"failed_at,omitempty"`
 	Error            string     `json:"error,omitempty"`
-	Phase            string     `json:"phase,omitempty"` // Coarse in-progress stage for the UI stepper (unpacking|parsing|scanning|compiling). Advisory; written via SetJobPhase, never through ToMap.
+	Phase            string     `json:"phase,omitempty"`  // Coarse in-progress stage for the UI stepper (unpacking|parsing|scanning|compiling). Advisory; written via SetJobPhase, never through ToMap.
 	Result           string     `json:"result,omitempty"` // JSON string
 	WorkerID         string     `json:"worker_id,omitempty"`
 	RetryCount       int        `json:"retry_count"`

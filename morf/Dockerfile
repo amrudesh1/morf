@@ -34,19 +34,20 @@ RUN apt-get update && \
 # Create tools directory
 RUN mkdir -p /app/tools
 
-# Download apktool with SHA256 verification.
-# The expected SHA256 must be supplied at build time as APKTOOL_SHA256.
-# If empty (no override), we still download but skip verification with a loud
-# warning. If provided, mismatch is fatal (no silent fallback).
-ARG APKTOOL_SHA256=""
-RUN curl -fL -o /app/tools/apktool.jar \
+# Download apktool with MANDATORY SHA256 verification.
+# APKTOOL_SHA256 defaults to the verified checksum of the pinned APKTOOL_VERSION
+# (2.9.3, 23254968 bytes — computed from the official GitHub release asset).
+# Verification is ALWAYS enforced: a mismatch, or an empty checksum, is fatal.
+# This closes the poisoned-jar supply-chain gap (a tampered download can no
+# longer be silently accepted). When bumping APKTOOL_VERSION, update this SHA.
+ARG APKTOOL_SHA256="7956eb04194300ce0d0a84ad18771eebc94b89fb8d1ddcce8ea4c056818646f4"
+RUN if [ -z "${APKTOOL_SHA256}" ]; then \
+        echo "FATAL: APKTOOL_SHA256 is empty — refusing to build without an integrity check." >&2; \
+        exit 1; \
+    fi && \
+    curl -fL -o /app/tools/apktool.jar \
         "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar" && \
-    if [ -n "${APKTOOL_SHA256}" ]; then \
-        echo "${APKTOOL_SHA256}  /app/tools/apktool.jar" | sha256sum -c -; \
-    else \
-        echo "WARNING: APKTOOL_SHA256 not provided — skipping integrity check. Pass --build-arg APKTOOL_SHA256=<sha256> to enforce."; \
-        sha256sum /app/tools/apktool.jar; \
-    fi
+    echo "${APKTOOL_SHA256}  /app/tools/apktool.jar" | sha256sum -c -
 
 # Note: apkanalyzer.jar is included in the repo (already present)
 # Copy it from the build context if needed, otherwise it will be copied from repo

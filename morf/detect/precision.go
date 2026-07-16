@@ -97,9 +97,9 @@ var (
 // publicTypes are real-but-public-by-design identifiers: they ship in every
 // build and are recon signal, not a leaked secret. They are downgraded to info.
 var publicTypes = map[string]bool{
-	"Google Cloud Platform OAuth":         true,
+	"Google Cloud Platform OAuth":          true,
 	"iOS Google Reversed Client ID Scheme": true,
-	"Firebase Database URL":               true,
+	"Firebase Database URL":                true,
 }
 
 // classifyPrecision returns the tier verdict and the [0,1] score for a finding.

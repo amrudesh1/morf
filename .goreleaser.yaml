@@ -1,0 +1,94 @@
+# GoReleaser configuration for MORF.
+#
+# Scope: this builds the cross-platform `morf` BINARY (useful as a standalone
+# CLI scanner), archives, checksums, per-artifact SBOMs (Syft), and cosign
+# keyless signatures, then publishes a GitHub release. The full Docker IMAGE
+# (which needs the apktool/java/ripgrep runtime) is built, pushed, signed, and
+# SBOM-attested separately by .github/workflows/release.yml using buildx +
+# cosign, because that runtime is far larger than a goreleaser-copy image.
+#
+# Validate locally with:  goreleaser check
+# Dry-run a release with:  goreleaser release --snapshot --clean
+version: 2
+
+project_name: morf
+
+builds:
+  - id: morf
+    # The Go module lives under morf/ (module name "morf"), not the repo root.
+    dir: morf
+    main: .
+    binary: morf
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X morf/version.Version={{ .Version }}
+      - -X morf/version.Commit={{ .Commit }}
+      - -X morf/version.Date={{ .Date }}
+
+archives:
+  - id: morf
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: morf/patterns/*
+        dst: patterns
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Per-artifact SBOMs (CycloneDX) via Syft. Requires `syft` on PATH in CI.
+sboms:
+  - id: archives
+    artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.sbom.cdx.json"
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
+
+# Keyless (Sigstore) signing of the checksums file — which transitively covers
+# every released artifact. Requires cosign on PATH and ambient OIDC
+# (id-token: write) in GitHub Actions; no long-lived private key.
+signs:
+  - id: cosign-keyless
+    cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  # Owner/name are inferred from GITHUB_REPOSITORY in Actions. Draft the release
+  # so a human publishes it after eyeballing the artifacts + signatures.
+  draft: true
+  prerelease: auto
+  name_template: "MORF {{ .Tag }}"
