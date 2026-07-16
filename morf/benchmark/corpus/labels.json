@@ -1,0 +1,23 @@
+{
+  "description": "Ground truth for the MORF precision/recall benchmark corpus. Each entry is keyed by (platform, secretType, fileBasename): the harness attributes a detect finding to the entry with the same platform, SecretType and file basename. expect=true means a planted true positive that SHOULD be reported; expect=false means false-positive bait that ApplyPrecision should drop. expectedTier (\"keep\"|\"info\"|\"\") pins the post-precision tier for retained findings; \"\" means don't-care. Unmatched decoys (git SHAs, UUIDs, base64 blobs, placeholder strings, natural-language values, res/drawable AWS bait) are intentionally NOT listed: they must never surface as findings at all, so any finding that maps to no entry is scored as a false positive.",
+  "labels": [
+    { "platform": "android", "secretType": "AWS API Key",                 "fileBasename": "Config.smali",         "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "Stripe API Key",              "fileBasename": "Config.smali",         "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "GitHub",                      "fileBasename": "Config.smali",         "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "Google API Key",              "fileBasename": "strings.xml",          "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "Slack Token",                 "fileBasename": "strings.xml",          "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "SendGrid API Key",            "fileBasename": "sendgrid.properties",  "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "AWS API Key",                 "fileBasename": "kernel_blob.bin",      "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "Google API Key",              "fileBasename": "libsecret.so",         "expect": true,  "expectedTier": "keep" },
+    { "platform": "android", "secretType": "Google Cloud Platform OAuth", "fileBasename": "strings.xml",          "expect": true,  "expectedTier": "info" },
+    { "platform": "android", "secretType": "RSA private key",             "fileBasename": "keystore.pem",         "expect": false, "expectedTier": "" },
+
+    { "platform": "ios", "secretType": "JSON Web Token (JWT)",                  "fileBasename": "Info.plist",       "expect": true,  "expectedTier": "keep" },
+    { "platform": "ios", "secretType": "Firebase Database URL",                 "fileBasename": "Info.plist",       "expect": true,  "expectedTier": "info" },
+    { "platform": "ios", "secretType": "iOS Google Reversed Client ID Scheme", "fileBasename": "Info.plist",       "expect": true,  "expectedTier": "info" },
+    { "platform": "ios", "secretType": "iOS Keychain Access Group",            "fileBasename": "App.entitlements", "expect": true,  "expectedTier": "info" },
+    { "platform": "ios", "secretType": "JSON Web Token (JWT)",                  "fileBasename": "config.json",      "expect": false, "expectedTier": "" },
+    { "platform": "ios", "secretType": "iOS Keychain Access Group",            "fileBasename": "config.json",      "expect": false, "expectedTier": "" },
+    { "platform": "ios", "secretType": "Private Key Block",                    "fileBasename": "AppCore.bin",      "expect": false, "expectedTier": "" }
+  ]
+}

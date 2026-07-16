@@ -1,0 +1,51 @@
+patterns:
+  # ---------------------------------------------------------------------------
+  # Curated, cross-platform high-confidence secret patterns used by the MORF
+  # precision/recall benchmark. This is a deliberately small, non-overlapping
+  # subset of the production rules (patterns/high-confidence.yml) so that every
+  # planted true-positive maps to exactly one rule and the ground-truth manifest
+  # stays unambiguous. Names match the production rule names verbatim so the
+  # benchmark exercises the real detect.PatternCache attribution path.
+  #
+  # "platform:" is intentionally omitted so these apply to android, ios and any.
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: AWS API Key
+      regex: "AKIA[0-9A-Z]{16}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Google API Key
+      regex: "AIza[0-9A-Za-z\\-_]{35}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Stripe API Key
+      regex: "sk_live_[0-9a-zA-Z]{24}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: GitHub
+      regex: "(ghp|gho|ghu|ghs|ghr)_[0-9a-zA-Z]{36}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Slack Token
+      regex: "xox[baprs]-[0-9a-zA-Z]{10,48}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: SendGrid API Key
+      regex: "SG\\.[A-Za-z0-9_\\-]{22}\\.[A-Za-z0-9_\\-]{43}"
+      confidence: high
+      enabled: true
+  - pattern:
+      name: Google Cloud Platform OAuth
+      regex: "[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com"
+      confidence: low
+      enabled: true
+  - pattern:
+      name: RSA private key
+      regex: "-----BEGIN RSA PRIVATE KEY-----"
+      confidence: high
+      enabled: true

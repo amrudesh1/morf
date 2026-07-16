@@ -1,0 +1,5 @@
+{
+  "note": "decoy container: none of these should survive ApplyPrecision",
+  "idp_cert_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsIng1YyI6WyJNSUlDMXpDQ0FiK2dBd0lCQWciXX0.eyJpc3MiOiJodHRwczovL2V4YW1wbGUuaWRwIiwiYXVkIjoiYXBwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+  "benign_keychain_group": "ABCDE12345.com.googleapis.com"
+}

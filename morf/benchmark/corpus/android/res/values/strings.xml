@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- TRUE POSITIVE: Google API key in strings.xml (res/values is scanned). -->
+    <string name="google_api_key">__MORF_BENCH_GOOGLE__</string>
+
+    <!-- TRUE POSITIVE: Slack bot token. -->
+    <string name="slack_token">__MORF_BENCH_SLACK__</string>
+
+    <!-- INFO (public by design): GCP OAuth client id ships in every build. -->
+    <string name="gcp_oauth">123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com</string>
+
+    <!-- DECOY: placeholder values that match NO fixed-prefix rule; must never
+         surface as findings at all (unmatched noise). -->
+    <string name="api_key_placeholder">YOUR_API_KEY_HERE</string>
+    <string name="example_key">REPLACE_WITH_REAL_KEY</string>
+
+    <!-- DECOY: an Android resource id integer, pure noise. -->
+    <integer name="anim_duration">2130903040</integer>
+
+    <!-- DECOY: a base64 image blob fragment, not a credential. -->
+    <string name="icon_b64">iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ</string>
+</resources>

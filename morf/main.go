@@ -230,7 +230,11 @@ func init() {
 			TimestampFormat: "2006-01-02 15:04:05",
 		})
 	}
-	log.SetOutput(os.Stdout)
+	// Logs go to STDERR so stdout stays clean for machine-readable command
+	// output (e.g. `morf scan --format sarif`, `morf benchmark --json` piped to
+	// a file). Container/K8s log collectors read both streams, so server/worker
+	// log capture is unaffected. CLI-8.
+	log.SetOutput(os.Stderr)
 	log.SetLevel(log.InfoLevel)
 
 	// TODO(observability): wire full OpenTelemetry tracing (spans across the
@@ -243,6 +247,8 @@ func init() {
 	rootCmd.AddCommand(cmd.GetCliCmd())
 	rootCmd.AddCommand(cmd.GetScanCmd())
 	rootCmd.AddCommand(cmd.GetGateCmd())
+	rootCmd.AddCommand(cmd.GetFetchCmd())
+	rootCmd.AddCommand(cmd.GetBenchCmd())
 	rootCmd.AddCommand(cmd.GetAPIKeyCmd())
 	rootCmd.AddCommand(cmd.GetMCPCmd())
 	rootCmd.AddCommand(versionCmd)
