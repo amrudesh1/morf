@@ -124,6 +124,17 @@ func StartIOSExtraction(ctx context.Context, ipaPath string, jobCtx *utils.JobCo
 		}
 	}
 
+	// Append any embedded JSON config discovered under the app bundle (e.g.
+	// Firebase's GoogleService-Info.json / google-services.json, or any bundled
+	// *.json), so hardcoded keys in embedded JSON config are scanned too.
+	// collectFilesWithSuffix recurses the whole bundle, so nested JSON inside
+	// .appex / .framework / resource bundles is picked up for free.
+	for _, p := range collectFilesWithSuffix(up.AppBundlePath, ".json") {
+		if aErr := AppendJSONCorpus(corpusPath, p); aErr != nil {
+			log.WithFields(log.Fields{"job_id": jobCtx.JobID, "json": p, "error": aErr.Error()}).Debug("Skipping unreadable embedded JSON")
+		}
+	}
+
 	// 4. Frameworks / dylibs + architectures + entitlements.
 	fws := EnumerateFrameworks(jobCtx.JobID, up)
 	meta.Frameworks = marshalJSON(FrameworkNames(fws))

@@ -1,0 +1,535 @@
+# Breadth-expansion secret patterns: cloud, CI/CD, SaaS, payments, comms, AI,
+# database URIs, and mobile-relevant tokens. All cross-platform tokens, so
+# file-level platform is left unset (defaults to "any" -> applies to every scan).
+#
+# Enabled patterns are anchored by a distinctive literal prefix (or a bounded
+# assignment context) plus length bounds. A first pass shipped some loose
+# keyword-proximity / weak-prefix generics (e.g. "twilio.{0,20}<hex>",
+# "E<79>", "00<40>"); those have been DISABLED (enabled: false) as noise, and a
+# few borderline ones downgraded to confidence: low so the precision engine
+# info-tiers them. All regexes (enabled or not) are validated to compile under
+# the live ripgrep default (Rust regex) engine AND RE2 AND in the wrapped
+# combined-union alternation. See scripts/validate_patterns.sh.
+#
+# File-level MASVS default; individual patterns override with their own masvs:.
+masvs: MASVS-STORAGE-1
+patterns:
+  # -------------------------------------------------------------------------
+  # Source control / CI (STORAGE-1)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: GitHub Fine-Grained PAT
+      regex: "github_pat_[0-9a-zA-Z_]{82}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: GitHub App Installation Token
+      regex: "ghs_[0-9a-zA-Z]{36}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: GitLab Pipeline Trigger Token
+      regex: "glptt-[0-9a-f]{40}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: GitLab Runner Registration
+      regex: "GR1348941[0-9a-zA-Z_\\-]{20}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: GitLab Feed Token
+      regex: "glft-[0-9a-zA-Z_\\-]{20}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: GitLab OAuth App Secret
+      regex: "gloas-[0-9a-zA-Z_\\-]{64}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: CircleCI PAT
+      regex: "CCIPAT_[0-9a-zA-Z]{22}_[0-9a-f]{40}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: NPM Access Token
+      regex: "npm_[0-9a-zA-Z]{36}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: PyPI Upload Token Long
+      regex: "pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\\-]{50,1000}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Docker Hub PAT
+      regex: "dckr_pat_[a-zA-Z0-9_\\-]{27}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Terraform Cloud Token
+      regex: "[A-Za-z0-9]{14}\\.atlasv1\\.[A-Za-z0-9_\\-]{60,70}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # Cloud providers (STORAGE-1)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: Google Service Account Key ID
+      regex: "\"private_key_id\": \"[0-9a-f]{40}\""
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: GCP API Key Restricted
+      regex: "AIzaSy[0-9A-Za-z\\-_]{33}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: AWS Session Token Prefix
+      regex: "ASIA[0-9A-Z]{16}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: AWS Account Id Assumed Role
+      regex: "arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9_+=,.@\\-/]{1,64}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Azure Storage Account Key
+      regex: "AccountKey=[A-Za-z0-9+/]{86}=="
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Azure SAS Token
+      regex: "sig=[A-Za-z0-9%]{43,53}%3D"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Azure AD Client Secret
+      regex: "[0-9a-zA-Z._~\\-]{3}[0-9A-Za-z._~\\-]{31,34}Q~[0-9A-Za-z._~\\-]{3}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: DigitalOcean PAT
+      regex: "dop_v1_[a-f0-9]{64}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: DigitalOcean OAuth Token
+      regex: "doo_v1_[a-f0-9]{64}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: DigitalOcean Refresh Token
+      regex: "dor_v1_[a-f0-9]{64}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Heroku Platform API Key
+      regex: "HRKU-[0-9a-zA-Z_\\-]{40}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: HashiCorp Vault Token
+      regex: "hvs\\.[A-Za-z0-9_\\-]{90,120}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: HashiCorp Vault Batch Token
+      regex: "hvb\\.[A-Za-z0-9_\\-]{90,150}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # Observability / ops (STORAGE-1)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: Datadog API Key Assigned
+      regex: "dd[_-]?api[_-]?key[\"']?\\s*[:=]\\s*[\"'][0-9a-f]{32}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Datadog App Key
+      regex: "dd[_-]?app[_-]?key[\"']?\\s*[:=]\\s*[\"'][0-9a-f]{40}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Grafana Cloud Token
+      regex: "glc_[A-Za-z0-9_+/=]{32,200}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Grafana Service Account
+      regex: "glsa_[A-Za-z0-9]{32}_[0-9a-f]{8}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Sentry Auth Token
+      regex: "sntrys_[A-Za-z0-9_=+/]{60,72}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Sentry DSN
+      regex: "https://[0-9a-f]{32}@[a-z0-9\\-]+\\.ingest\\.sentry\\.io/[0-9]{5,}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: New Relic License Key
+      regex: "NRAK-[A-Z0-9]{27}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: New Relic Ingest Key
+      regex: "[a-f0-9]{40}NRAL"
+      confidence: low
+      masvs: MASVS-STORAGE-1
+      # 40-hex prefix collides with SHA-1/commit hashes; kept but low-confidence so
+      # the precision engine info-tiers it rather than surfacing as a finding.
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # Payments (CRYPTO-1 for secrets, STORAGE-1 for ids)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: Stripe Webhook Secret
+      regex: "whsec_[A-Za-z0-9]{32,48}"
+      confidence: high
+      masvs: MASVS-CRYPTO-1
+      enabled: true
+  - pattern:
+      name: Stripe Publishable Live
+      regex: "pk_live_[0-9a-zA-Z]{24,99}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: PayPal Client Secret
+      regex: "E[A-Za-z0-9_\\-]{79}"
+      confidence: medium
+      masvs: MASVS-CRYPTO-1
+      # NOISE: anchored on a single literal 'E' + 79 chars => matches any ~80-char
+      # base64/token starting with E. Disabled pending a distinctive anchor.
+      enabled: false
+  - pattern:
+      name: Square Sandbox Token
+      regex: "EAAA[A-Za-z0-9_\\-]{60}"
+      confidence: high
+      masvs: MASVS-CRYPTO-1
+      enabled: true
+  - pattern:
+      name: Adyen API Key
+      regex: "AQE[A-Za-z0-9/+]{60,120}"
+      confidence: high
+      masvs: MASVS-CRYPTO-1
+      # NOISE: 3-char prefix + 60+ base64 => any long base64 blob starting "AQE".
+      enabled: false
+  - pattern:
+      name: Razorpay Key Id
+      regex: "rzp_(live|test)_[A-Za-z0-9]{14}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Plaid Client Secret
+      regex: "access-(sandbox|development|production)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+      confidence: high
+      masvs: MASVS-CRYPTO-1
+      enabled: true
+  - pattern:
+      name: Coinbase API Key
+      regex: "[a-zA-Z0-9]{16}:[a-zA-Z0-9]{64}"
+      confidence: low
+      masvs: MASVS-STORAGE-1
+      # Loose (bare charclass + length, only anchored by the colon shape); flagged
+      # in the design as noise-prone. Disabled pending context-anchoring.
+      enabled: false
+  - pattern:
+      name: Shippo Token
+      regex: "shippo_(live|test)_[a-f0-9]{40}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # Comms / email / messaging (NETWORK-1)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: Twilio Auth Token Assigned
+      regex: "twilio.{0,20}[0-9a-f]{32}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      # NOISE: keyword-proximity generic (fires on "twilio" near any 32-hex).
+      # The distinctive Twilio SK... key is already covered in high-confidence.yml.
+      enabled: false
+  - pattern:
+      name: SendGrid Full Key
+      regex: "SG\\.[A-Za-z0-9_\\-]{22}\\.[A-Za-z0-9_\\-]{43}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+  - pattern:
+      name: Mailgun Signing Key
+      regex: "[0-9a-f]{32}-[0-9a-f]{8}-[0-9a-f]{8}"
+      confidence: low
+      masvs: MASVS-NETWORK-1
+      # Bare hex 32-8-8 shape collides with trace/UUID-ish ids; low-confidence.
+      enabled: true
+  - pattern:
+      name: Mailjet Basic Auth
+      regex: "mailjet.{0,20}[0-9a-f]{32}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      # NOISE: keyword-proximity generic (fires on "mailjet" near any 32-hex).
+      enabled: false
+  - pattern:
+      name: Intercom Access Token
+      regex: "dG9r[A-Za-z0-9+/=]{40,80}"
+      confidence: medium
+      masvs: MASVS-NETWORK-1
+      enabled: true
+  - pattern:
+      name: Discord Bot Token
+      regex: "[MNO][A-Za-z0-9_\\-]{23}\\.[A-Za-z0-9_\\-]{6}\\.[A-Za-z0-9_\\-]{27}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+  - pattern:
+      name: Discord Client Secret
+      regex: "discord.{0,20}[A-Za-z0-9_\\-]{32}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      # NOISE: keyword-proximity generic. The Discord Bot Token (distinctive
+      # 3-segment format) above stays enabled.
+      enabled: false
+  - pattern:
+      name: Telegram Bot Token
+      regex: "[0-9]{8,10}:AA[0-9A-Za-z_\\-]{33}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+  - pattern:
+      name: Twitter Bearer Token
+      regex: "AAAAAAAAAA[A-Za-z0-9%]{50,120}"
+      confidence: medium
+      masvs: MASVS-NETWORK-1
+      enabled: true
+  - pattern:
+      name: Slack App Config Token
+      regex: "xoxe\\.xox[bp]-[0-9]-[A-Za-z0-9\\-]{160,200}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+  - pattern:
+      name: Slack Refresh Token
+      regex: "xoxe-[0-9]-[A-Za-z0-9\\-]{140,160}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # SaaS / productivity (STORAGE-1)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: Linear API Key
+      regex: "lin_api_[0-9A-Za-z]{40}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Notion Integration Token
+      regex: "secret_[A-Za-z0-9]{43}"
+      confidence: low
+      masvs: MASVS-STORAGE-1
+      # "secret_" is a very common variable stem; low-confidence so it is
+      # info-tiered rather than surfaced as a high finding.
+      enabled: true
+  - pattern:
+      name: Airtable PAT
+      regex: "pat[a-zA-Z0-9]{14}\\.[a-f0-9]{64}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Asana PAT
+      regex: "[0-9]/[0-9]{16}:[a-f0-9]{32}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Dropbox Long-Lived Token
+      regex: "sl\\.[A-Za-z0-9_\\-]{130,152}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Dropbox App Secret
+      regex: "dropbox.{0,20}[a-z0-9]{15}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      # NOISE: keyword-proximity generic (only 15 lowalnum chars). The distinctive
+      # Dropbox Long-Lived Token (sl. prefix) above stays enabled.
+      enabled: false
+  - pattern:
+      name: Box Developer Token
+      regex: "box.{0,20}[a-zA-Z0-9]{32}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      # NOISE: the substring "sandbox" triggers the "box" anchor; fires on any
+      # config mentioning sandbox near a 32-char id.
+      enabled: false
+  - pattern:
+      name: Atlassian API Token
+      regex: "ATATT3[A-Za-z0-9_\\-=]{180,220}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Atlassian OAuth Token
+      regex: "ATCTT3[A-Za-z0-9_\\-=]{180,220}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Okta API Token
+      regex: "00[a-zA-Z0-9_\\-]{40}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      # NOISE: anchored on literal "00" + 40 chars => matches git hashes/build ids.
+      enabled: false
+  - pattern:
+      name: Auth0 Client Secret
+      regex: "auth0.{0,20}[A-Za-z0-9_\\-]{40,80}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      # NOISE: keyword-proximity generic (fires on "auth0" near any 40+ char token).
+      enabled: false
+
+  # -------------------------------------------------------------------------
+  # AI providers (STORAGE-1)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: OpenAI API Key
+      regex: "sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: OpenAI Project Key
+      regex: "sk-proj-[A-Za-z0-9_\\-]{74,200}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Anthropic API Key
+      regex: "sk-ant-api03-[A-Za-z0-9_\\-]{93}AA"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Hugging Face Token
+      regex: "hf_[A-Za-z0-9]{34}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Replicate API Token
+      regex: "r8_[A-Za-z0-9]{37}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # Database / broker URIs (STORAGE-2) -- anchored by scheme + user:pass@host
+  # shape, so they only fire on real connection strings.
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: MongoDB SRV URI
+      regex: "mongodb\\+srv://[^:@\\s]{3,40}:[^@\\s]{6,64}@[a-z0-9.\\-]+\\.mongodb\\.net"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+  - pattern:
+      name: MongoDB Standard URI
+      regex: "mongodb://[^:@\\s]{3,40}:[^@\\s]{6,64}@[a-zA-Z0-9.\\-]+:[0-9]{2,5}"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+  - pattern:
+      name: PostgreSQL URI
+      regex: "postgres(ql)?://[^:@\\s]{3,40}:[^@\\s]{6,64}@[a-zA-Z0-9.\\-]+:[0-9]{2,5}"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+  - pattern:
+      name: MySQL URI Credentials
+      regex: "mysql://[^:@\\s]{3,40}:[^@\\s]{6,64}@[a-zA-Z0-9.\\-]+:[0-9]{2,5}"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+  - pattern:
+      name: Redis URI Credentials
+      regex: "redis://[^:@\\s]{0,40}:[^@\\s]{6,64}@[a-zA-Z0-9.\\-]+:[0-9]{2,5}"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+  - pattern:
+      name: AMQP URI Credentials
+      regex: "amqps?://[^:@\\s]{3,40}:[^@\\s]{6,64}@[a-zA-Z0-9.\\-]+"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+  - pattern:
+      name: Cloudinary URL
+      regex: "cloudinary://[0-9]{9,20}:[A-Za-z0-9_\\-]{20,40}@[a-z0-9\\-]+"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  # -------------------------------------------------------------------------
+  # Firebase / mobile-relevant (STORAGE-1)
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: Firebase FCM v1 Key
+      regex: "AAAA[A-Za-z0-9_\\-]{7}:APA91[A-Za-z0-9_\\-]{130,140}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Firebase Web API Key Assigned
+      regex: "apiKey[\"']?\\s*[:=]\\s*[\"']AIza[0-9A-Za-z\\-_]{35}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
