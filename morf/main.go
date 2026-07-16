@@ -244,6 +244,7 @@ func init() {
 	rootCmd.AddCommand(cmd.GetScanCmd())
 	rootCmd.AddCommand(cmd.GetGateCmd())
 	rootCmd.AddCommand(cmd.GetAPIKeyCmd())
+	rootCmd.AddCommand(cmd.GetMCPCmd())
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(apiOnlyCmd)
