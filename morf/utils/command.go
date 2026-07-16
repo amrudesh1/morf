@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -131,18 +132,51 @@ func RunWithContextStream(ctx context.Context, onLine func(line []byte) error, n
 	}
 	applyMemoryLimitBestEffort(cmd.Process.Pid)
 
-	scanner := bufio.NewScanner(stdoutPipe)
-	// Grow the max token size to 4MB so long lines do not abort the scan.
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	var callbackErr error
-	for scanner.Scan() {
-		if cbErr := onLine(scanner.Bytes()); cbErr != nil {
-			callbackErr = cbErr
+	// SCAN-crash: use a bufio.Reader (not bufio.Scanner) so a single pathological
+	// line can never abort the whole scan. When ripgrep runs with -a/--text over
+	// packed binaries (native .so, resources.arsc, RN/Flutter bundles), a match on
+	// a newline-sparse region can produce a multi-megabyte "line". bufio.Scanner
+	// returns ErrTooLong on such input and stops — which previously turned one
+	// oversized native lib into a whole-job failure that also discarded valid
+	// text-pass findings. Here we accumulate each line up to maxLineBytes and
+	// truncate (never error) beyond it, so a hit near the start of a huge binary
+	// line is still delivered and the scan always completes.
+	const maxLineBytes = 8 * 1024 * 1024
+	reader := bufio.NewReaderSize(stdoutPipe, 256*1024)
+	var (
+		callbackErr error
+		scanErr     error
+		lineBuf     []byte
+	)
+	for {
+		frag, isPrefix, readErr := reader.ReadLine()
+		if len(frag) > 0 {
+			if n := len(lineBuf); n < maxLineBytes {
+				if room := maxLineBytes - n; len(frag) > room {
+					frag = frag[:room]
+				}
+				lineBuf = append(lineBuf, frag...)
+			}
+			// Beyond maxLineBytes: drop the fragment (truncate the line) rather
+			// than growing unbounded or erroring.
+		}
+		if !isPrefix {
+			// A full logical line has been assembled (ReadLine strips the newline).
+			if len(lineBuf) > 0 {
+				if cbErr := onLine(lineBuf); cbErr != nil {
+					callbackErr = cbErr
+					break
+				}
+				lineBuf = lineBuf[:0]
+			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				scanErr = readErr
+			}
 			break
 		}
 	}
-	scanErr := scanner.Err()
 
 	if callbackErr != nil {
 		// Stop the child (whole group) so Wait can return promptly.

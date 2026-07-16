@@ -1,0 +1,220 @@
+/*
+Copyright [2023] [Amrudesh Balakrishnan]
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package apk
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"morf/utils"
+)
+
+// jobCtxForDir builds a JobContext whose workspace is an isolated temp dir so a
+// test never touches the real /tmp/morf/jobs tree. Workspace is an exported
+// field and GetSourceDir/GetResDir derive from it, so overriding it reroutes the
+// whole output/apk subtree.
+func jobCtxForDir(t *testing.T, id string) *utils.JobContext {
+	t.Helper()
+	jc := utils.NewJobContextForID(id)
+	jc.Workspace = t.TempDir()
+	return jc
+}
+
+// TestAndroidBinaryRoots asserts the binary-safe pass roots at the "-r" apktool
+// output tree (GetSourceDir), which carries lib/, assets/, unknown/,
+// resources.arsc and any top-level google-services.json. Existence filtering is
+// deferred to detect.ScanCorpusText, so the helper returns the root regardless
+// of whether the subtrees have been created yet.
+func TestAndroidBinaryRoots(t *testing.T) {
+	jc := jobCtxForDir(t, "job-roots")
+	got := androidBinaryRoots(jc)
+	want := []string{jc.GetSourceDir()}
+	if !slices.Equal(got, want) {
+		t.Fatalf("androidBinaryRoots() = %v, want %v", got, want)
+	}
+}
+
+// TestAndroidBinaryExcludes pins the excludes that keep the --text pass from
+// re-scanning the smali/res/original trees already covered by the text pass.
+func TestAndroidBinaryExcludes(t *testing.T) {
+	got := androidBinaryExcludes()
+	want := []string{
+		"-g", "!**/smali*/**",
+		"-g", "!**/res/**",
+		"-g", "!**/original/**",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("androidBinaryExcludes() = %v, want %v", got, want)
+	}
+}
+
+// writeTestPatterns drops a minimal patterns YAML into a temp dir and points
+// MORF_PATTERNS_DIR at it. The single high-confidence pattern (AWS example key)
+// is enough to prove the new roots are scanned. The fresh file's ModTime is
+// newer than any earlier build, so detect's per-platform cache rebuilds.
+func writeTestPatterns(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	yaml := `patterns:
+  - pattern:
+      name: AWS Access Key
+      regex: "AKIA[0-9A-Z]{16}"
+      confidence: high
+      enabled: true
+`
+	if err := os.WriteFile(filepath.Join(dir, "test-secrets.yml"), []byte(yaml), 0644); err != nil {
+		t.Fatalf("write patterns: %v", err)
+	}
+	t.Setenv("MORF_PATTERNS_DIR", dir)
+}
+
+// TestStartScanE_ScansBinaryArtifacts is the end-to-end regression for Android
+// binary coverage: a well-formed AWS key is planted inside a fake native .so, a
+// Flutter asset blob and a google-services.json under apktool's unknown/ bucket,
+// each surrounded by NUL bytes so ripgrep would treat them as binary and skip
+// them without the --text pass. StartScanE must find the key in every artifact.
+func TestStartScanE_ScansBinaryArtifacts(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep (rg) not installed; skipping scan integration test")
+	}
+	writeTestPatterns(t)
+
+	jc := jobCtxForDir(t, "job-binscan")
+	src := jc.GetSourceDir()
+
+	const planted = "AKIAIOSFODNN7EXAMPLE" // canonical AWS example key
+	// Wrap the planted key in NUL bytes so the files register as binary and are
+	// skipped unless ripgrep is invoked with -a/--text (the load-bearing gap).
+	blob := func(s string) []byte {
+		return append([]byte("\x00\x00head\x00"+s+"\x00tail\x00\x00"), 0x00)
+	}
+
+	files := map[string][]byte{
+		filepath.Join(src, "lib", "arm64-v8a", "libsecret.so"):            blob(planted),
+		filepath.Join(src, "assets", "flutter_assets", "kernel_blob.bin"): blob(planted),
+		filepath.Join(src, "unknown", "google-services.json"):             blob(planted),
+		filepath.Join(src, "resources.arsc"):                              blob(planted),
+		// A smali file also containing the key: it must NOT contribute an extra
+		// finding from the binary pass (excluded), only from the text pass.
+		filepath.Join(src, "smali", "com", "app", "Config.smali"): []byte("const-string v0, \"" + planted + "\"\n"),
+	}
+	for path, data := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	// GetResDir must exist so the text pass root survives stat-filtering.
+	if err := os.MkdirAll(jc.GetResDir(), 0755); err != nil {
+		t.Fatalf("mkdir resdir: %v", err)
+	}
+
+	secrets, err := StartScanE(context.Background(), jc)
+	if err != nil {
+		t.Fatalf("StartScanE returned error: %v", err)
+	}
+	if len(secrets) == 0 {
+		t.Fatal("no secrets found; expected the planted key in native/asset/config artifacts")
+	}
+
+	// Collect the set of files that yielded the planted key.
+	hitFiles := map[string]bool{}
+	for _, s := range secrets {
+		if s.SecretString == planted {
+			hitFiles[filepath.Base(s.FileLocation)] = true
+		}
+	}
+
+	// Every binary artifact must have been scanned via the --text pass.
+	wantBinaryHits := []string{"libsecret.so", "kernel_blob.bin", "google-services.json", "resources.arsc"}
+	for _, name := range wantBinaryHits {
+		if !hitFiles[name] {
+			t.Errorf("planted key not found in %s (binary --text pass missed it); hits=%v", name, hitFiles)
+		}
+	}
+
+	// The smali file is found once by the text pass; the binary pass must exclude
+	// smali, so it is not double-counted from the binary root.
+	smaliCount := 0
+	for _, s := range secrets {
+		if s.SecretString == planted && filepath.Base(s.FileLocation) == "Config.smali" {
+			smaliCount++
+		}
+	}
+	if smaliCount != 1 {
+		t.Errorf("smali key found %d times, want exactly 1 (binary pass should exclude smali)", smaliCount)
+	}
+}
+
+// TestStartScanE_LargeNewlineSparseBinary is the regression for the giant-line
+// crash: real native libraries (libflutter.so, libapp.so, RN/ML blobs) have
+// multi-megabyte newline-sparse regions, so ripgrep's --text pass emits a single
+// enormous "line". The old bufio.Scanner (4MB cap) returned "token too long" on
+// such input, which aborted the whole Android scan AND discarded the valid
+// text-pass findings. This plants a key inside a >5MB newline-free .so and
+// asserts the scan (a) does not error and (b) still finds the planted key, so a
+// large native lib can never fail the job or lose findings.
+func TestStartScanE_LargeNewlineSparseBinary(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep (rg) not installed; skipping large-binary regression test")
+	}
+	writeTestPatterns(t)
+
+	jc := jobCtxForDir(t, "job-largebin")
+	src := jc.GetSourceDir()
+	const planted = "AKIAIOSFODNN7EXAMPLE"
+
+	// Build a >5MB newline-free blob: NUL padding, the planted key, then a long
+	// run of non-newline bytes so the whole file is one giant "line" to ripgrep.
+	var buf bytes.Buffer
+	buf.WriteString("\x00\x00head\x00" + planted + "\x00")
+	filler := bytes.Repeat([]byte("A"), 6*1024*1024) // 6 MB, no newlines
+	buf.Write(filler)
+
+	soPath := filepath.Join(src, "lib", "arm64-v8a", "libapp.so")
+	if err := os.MkdirAll(filepath.Dir(soPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(soPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("write large .so: %v", err)
+	}
+	if err := os.MkdirAll(jc.GetResDir(), 0755); err != nil {
+		t.Fatalf("mkdir resdir: %v", err)
+	}
+
+	secrets, err := StartScanE(context.Background(), jc)
+	if err != nil {
+		t.Fatalf("StartScanE errored on a large newline-sparse .so (the crash regression): %v", err)
+	}
+	found := false
+	for _, s := range secrets {
+		if s.SecretString == planted && filepath.Base(s.FileLocation) == "libapp.so" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("planted key not found in the >5MB .so; hits=%v", secrets)
+	}
+}

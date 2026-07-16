@@ -502,9 +502,60 @@ func (c *PatternCache) FindingsForLine(fileLocation string, lineNo int, content 
 // Only roots that exist as directories are scanned; when none exist the scan is
 // a no-op returning an empty slice (not an error).
 func ScanCorpus(ctx context.Context, jobID string, roots []string, platform string) ([]models.SecretModel, error) {
+	return scanCorpusWithOpts(ctx, jobID, roots, platform, ScanOptions{})
+}
+
+// ScanOptions tunes a single scanCorpusWithOpts pass without changing the
+// stable ScanCorpus signature. Text enables ripgrep's -a/--text so packed
+// binary artifacts (native .so libraries, resources.arsc, Flutter kernel blobs,
+// React-Native bundles) are scanned instead of skipped as binary; ExtraExcludes
+// are additional ripgrep "-g","!glob" pairs appended after the default
+// asset/binary-resource excludes (used to keep the binary pass from re-scanning
+// the already-text-scanned smali/res/original trees).
+type ScanOptions struct {
+	Text          bool
+	ExtraExcludes []string
+}
+
+// ScanCorpusText is the binary-safe sibling of ScanCorpus: it runs ripgrep with
+// -a/--text so native libraries, resources.arsc and bundled assets (which
+// ripgrep would otherwise skip as binary) are searched. extraExcludes are extra
+// "-g","!glob" pairs appended after the default excludes so the caller can keep
+// this pass from re-scanning roots already covered by the text pass. Attribution,
+// precision and sanitize are identical to ScanCorpus (SCAN-1/RECALL/PRECISION).
+func ScanCorpusText(ctx context.Context, jobID string, roots []string, platform string, extraExcludes []string) ([]models.SecretModel, error) {
+	return scanCorpusWithOpts(ctx, jobID, roots, platform, ScanOptions{Text: true, ExtraExcludes: extraExcludes})
+}
+
+// buildRgArgs assembles the ripgrep argument list for a corpus scan. It is
+// factored out of scanCorpusWithOpts so the arg shaping (the -a/--text toggle,
+// exclude ordering, root placement) is unit-testable without shelling out to rg.
+func buildRgArgs(patternFilePath string, excludeGlobs, existing []string, opts ScanOptions) []string {
+	base := []string{"-n", "--file", patternFilePath, "--multiline"}
+	if opts.Text {
+		// -a/--text: scan binary files as text so NUL-laden artifacts (.so,
+		// resources.arsc, kernel_blob.bin, index.android.bundle) are searched
+		// rather than silently skipped by ripgrep's binary detection.
+		//
+		// -o/--only-matching: emit only the matched secret, not the whole line.
+		// Packed binaries have newline-sparse regions, so a whole-line match can
+		// span megabytes; -o keeps each emitted token down to the secret itself,
+		// which is both the correct SecretString for a binary hit and the primary
+		// guard against pathological line lengths (the stream reader truncates as
+		// a backstop).
+		base = append(base, "-a", "-o")
+	}
+	args := append(base, excludeGlobs...)
+	args = append(args, opts.ExtraExcludes...)
+	args = append(args, existing...)
+	return args
+}
+
+func scanCorpusWithOpts(ctx context.Context, jobID string, roots []string, platform string, opts ScanOptions) ([]models.SecretModel, error) {
 	log.WithFields(log.Fields{
 		"job_id":   jobID,
 		"platform": normalizePlatform(platform),
+		"text":     opts.Text,
 	}).Info("Starting batch pattern scan")
 
 	patternCache, err := GetPatternCache(jobID, platform)
@@ -570,12 +621,12 @@ func ScanCorpus(ctx context.Context, jobID string, roots []string, platform stri
 		"-g", "!**/res/animator*/**",
 		"-g", "!**/res/font*/**",
 	}
-	args := append([]string{"-n", "--file", patternFilePath, "--multiline"}, excludeGlobs...)
-	args = append(args, existing...)
+	args := buildRgArgs(patternFilePath, excludeGlobs, existing, opts)
 
 	log.WithFields(log.Fields{
 		"job_id": jobID,
 		"roots":  existing,
+		"text":   opts.Text,
 	}).Info("Running batch pattern scan with ripgrep")
 
 	// SCAN-7 / SCAN-2mem: build the result slice incrementally from streamed

@@ -267,11 +267,28 @@ func StartScan(jobCtx *utils.JobContext) []models.SecretModel {
 // wrapper only assembles the APK-specific search roots (SCAN-2) and hands them
 // to detect.ScanCorpus, keeping the Android pipeline behavior unchanged.
 func StartScanE(ctx context.Context, jobCtx *utils.JobContext) ([]models.SecretModel, error) {
-	// SCAN-2: search both decompiled sources and decoded resources.
-	roots := []string{jobCtx.GetSourceDir(), jobCtx.GetResDir()}
+	// SCAN-2: text pass over decompiled sources (smali) and decoded resources.
 	// PLATFORM-SCOPE: Android scan → only "android"/"any" patterns run (iOS-only
 	// rules like "iOS Keychain Access Group" are excluded).
-	return detect.ScanCorpus(ctx, jobCtx.JobID, roots, "android")
+	roots := []string{jobCtx.GetSourceDir(), jobCtx.GetResDir()}
+	textSecrets, err := detect.ScanCorpus(ctx, jobCtx.JobID, roots, "android")
+	if err != nil {
+		return nil, err
+	}
+
+	// SCAN-2 (binary coverage): native libraries (lib/**/*.so), bundled assets
+	// (Flutter flutter_assets/ blobs, React-Native index.android.bundle), the
+	// compiled resources.arsc and embedded config JSON (google-services.json)
+	// are binary and would be skipped by ripgrep's binary detection, so a second
+	// --text pass is required. SCAN-1: a failure here is surfaced, never treated
+	// as "no secrets". Downstream SanitizeSecrets dedups across the two passes.
+	binRoots := androidBinaryRoots(jobCtx)
+	binSecrets, binErr := detect.ScanCorpusText(ctx, jobCtx.JobID, binRoots, "android", androidBinaryExcludes())
+	if binErr != nil {
+		return nil, binErr
+	}
+
+	return append(textSecrets, binSecrets...), nil
 }
 
 // SanitizeSecrets deduplicates findings and logs only non-sensitive metadata.
