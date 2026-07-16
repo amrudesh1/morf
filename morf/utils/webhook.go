@@ -28,11 +28,41 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"syscall"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 )
+
+// Webhook signature header names. A receiver verifies authenticity by
+// recomputing HMAC-SHA256 over the canonical string
+// (timestamp + "." + raw_body) with the shared secret and comparing, in
+// constant time, against SignatureHeader. See VerifyWebhookSignature.
+const (
+	// SignatureHeader carries "sha256=<hex>" — the HMAC-SHA256 of the canonical
+	// signing string.
+	SignatureHeader = "X-MORF-Signature"
+	// SignatureTimestampHeader carries the unix-seconds timestamp that is bound
+	// into the signature to provide replay protection.
+	SignatureTimestampHeader = "X-MORF-Signature-Timestamp"
+	// signaturePrefix prefixes the hex digest so the algorithm is explicit and
+	// future schemes can be distinguished.
+	signaturePrefix = "sha256="
+)
+
+// resolveWebhookSecret returns the secret to sign a delivery with. A per-job
+// secret always wins; when it is empty the server-wide MORF_WEBHOOK_SECRET
+// environment variable is used as a fallback so deliveries can be signed by
+// default. When neither is set the returned string is empty and the delivery
+// is sent unsigned (no signature headers), preserving the previous behaviour.
+func resolveWebhookSecret(perJobSecret string) string {
+	if perJobSecret != "" {
+		return perJobSecret
+	}
+	return os.Getenv("MORF_WEBHOOK_SECRET")
+}
 
 // isDisallowedIP reports whether ip points at a non-routable or internal
 // destination that a webhook must never be allowed to reach. This blocks SSRF
@@ -191,10 +221,16 @@ func deliverWebhookWithContext(ctx context.Context, webhookURL string, secret st
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "MORF-Webhook/1.0")
 
-	// Add signature if secret is provided
-	if secret != "" {
-		signature := generateWebhookSignature(secret, payloadJSON)
-		req.Header.Set("X-MORF-Signature", signature)
+	// Sign the delivery when a secret is available. The per-job secret takes
+	// precedence; otherwise the server-wide MORF_WEBHOOK_SECRET is used. When
+	// neither is set the delivery is sent unsigned (no signature headers),
+	// preserving the historical behaviour so receivers that do not expect a
+	// signature are unaffected.
+	if signingSecret := resolveWebhookSecret(secret); signingSecret != "" {
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		signature := generateWebhookSignature(signingSecret, timestamp, payloadJSON)
+		req.Header.Set(SignatureTimestampHeader, timestamp)
+		req.Header.Set(SignatureHeader, signature)
 	}
 
 	log.WithFields(log.Fields{
@@ -253,11 +289,44 @@ func DeliverWebhookWithRetryCtx(ctx context.Context, webhookURL string, secret s
 	}, config)
 }
 
-// generateWebhookSignature generates HMAC-SHA256 signature for webhook payload
-func generateWebhookSignature(secret string, payload []byte) string {
+// canonicalSigningString builds the exact byte sequence that is fed to HMAC:
+// the timestamp, a literal '.' separator, then the raw request body. Binding
+// the timestamp into the signed material gives receivers a value they can use
+// to reject stale/replayed deliveries. The body bytes are the exact bytes sent
+// on the wire, so a receiver can reproduce this string byte-for-byte.
+func canonicalSigningString(timestamp string, body []byte) []byte {
+	buf := make([]byte, 0, len(timestamp)+1+len(body))
+	buf = append(buf, timestamp...)
+	buf = append(buf, '.')
+	buf = append(buf, body...)
+	return buf
+}
+
+// generateWebhookSignature generates the HMAC-SHA256 signature for a webhook
+// delivery over the canonical signing string (timestamp + "." + body). The
+// result is "sha256=" followed by the lowercase hex digest.
+func generateWebhookSignature(secret string, timestamp string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(payload)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	mac.Write(canonicalSigningString(timestamp, body))
+	return signaturePrefix + hex.EncodeToString(mac.Sum(nil))
+}
+
+// VerifyWebhookSignature reports whether sigHeader is a valid HMAC-SHA256
+// signature for body given the shared secret and the timestamp that was sent
+// alongside it (the value of the X-MORF-Signature-Timestamp header).
+//
+// It recomputes "sha256=" + hex(HMAC-SHA256(secret, timestamp + "." + body))
+// and compares it against sigHeader using a constant-time comparison
+// (crypto/hmac.Equal) so verification does not leak timing information about
+// where a mismatch occurred. An empty secret or empty signature header always
+// returns false. This helper is exported so receivers and tests can verify a
+// delivery without re-implementing the scheme.
+func VerifyWebhookSignature(body []byte, sigHeader string, timestamp string, secret string) bool {
+	if secret == "" || sigHeader == "" {
+		return false
+	}
+	expected := generateWebhookSignature(secret, timestamp, body)
+	return hmac.Equal([]byte(expected), []byte(sigHeader))
 }
 
 // MaskURLForLogging masks sensitive parts of URL for logging

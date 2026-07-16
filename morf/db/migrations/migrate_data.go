@@ -19,6 +19,7 @@ package migrations
 import (
 	"encoding/json"
 	"fmt"
+	"morf/crypto"
 	"morf/models"
 
 	log "github.com/sirupsen/logrus"
@@ -161,13 +162,17 @@ func BackfillNormalized(gormDB *gorm.DB) error {
 					continue
 				}
 				for _, sm := range row.SecretModel {
+					// AT-REST protection: store ciphertext/masked preview plus a
+					// deterministic fingerprint identity, never the plaintext
+					// value (mirrors the primary write in db.insertSecretsSync).
 					findings = append(findings, models.SecretFinding{
 						SecretID:         secretID,
 						Type:             sm.Type,
 						LineNo:           sm.LineNo,
 						FileLocation:     sm.FileLocation,
 						SecretType:       sm.SecretType,
-						SecretString:     sm.SecretString,
+						SecretString:     crypto.ProtectAtRest(sm.SecretString),
+						Fingerprint:      crypto.Fingerprint(sm.SecretString),
 						SecretConfidence: sm.SecretConfidence,
 					})
 				}

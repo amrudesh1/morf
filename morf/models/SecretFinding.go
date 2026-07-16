@@ -31,6 +31,14 @@ type SecretFinding struct {
 	SecretString     string `json:"secretString" gorm:"column:secret_string;type:text;not null"`
 	SecretConfidence string `json:"secretConfidence" gorm:"column:secret_confidence;type:ENUM('high','medium','low');index:idx_secret_confidence;not null;default:'low'"`
 
+	// Fingerprint is a deterministic keyed HMAC-SHA256 hex digest of the raw
+	// secret value (crypto.Fingerprint), stored so a stable per-value identity
+	// survives AT-REST protection: SecretString holds AES-256-GCM ciphertext or
+	// a masked preview (never plaintext), while Fingerprint carries the identity
+	// used for de-duplication and build-diff comparison. Nullable so rows
+	// written before migration 010 persist without a value. Populated on write.
+	Fingerprint string `json:"fingerprint,omitempty" gorm:"column:fingerprint;size:64;index:idx_secret_fingerprint"`
+
 	// Precision / verification / compliance enrichment. Nullable so pre-existing
 	// rows (and findings not yet processed by the precision/verification stages)
 	// persist without a value. Mirrors the matching fields on models.SecretModel

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"morf/crypto"
 	"morf/models"
 	"morf/utils"
 	"os"
@@ -192,6 +193,7 @@ var migrationNames = []string{
 	"007_ios_support.sql",
 	"008_add_gorm_timestamps.sql",
 	"009_precision_verification.sql",
+	"010_secret_fingerprint.sql",
 }
 
 // connectToDatabase attempts to establish a database connection
@@ -692,24 +694,7 @@ func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.I
 			if len(secret.SecretModel) > 0 {
 				findings := make([]models.SecretFinding, 0, len(secret.SecretModel))
 				for _, secretModel := range secret.SecretModel {
-					finding := models.SecretFinding{
-						SecretID:         newSecret.ID,
-						Type:             secretModel.Type,
-						LineNo:           secretModel.LineNo,
-						FileLocation:     secretModel.FileLocation,
-						SecretType:       secretModel.SecretType,
-						SecretString:     secretModel.SecretString,
-						SecretConfidence: secretModel.SecretConfidence,
-						// Precision/verification/compliance enrichment (nullable).
-						Tier:               secretModel.Tier,
-						VerificationStatus: secretModel.VerificationStatus,
-						MASVSID:            secretModel.MASVSID,
-					}
-					if secretModel.Score != 0 {
-						score := secretModel.Score
-						finding.Score = &score
-					}
-					findings = append(findings, finding)
+					findings = append(findings, buildSecretFinding(newSecret.ID, secretModel))
 				}
 				if err := tx.CreateInBatches(findings, 100).Error; err != nil {
 					return fmt.Errorf("failed to create secret findings for %s: %w", secret.APKHash, err)
@@ -916,6 +901,38 @@ func GetSecretsPage(limit, offset int) []models.Secrets {
 
 	log.Infof("Found %d secrets (page)", len(secrets))
 	return secrets
+}
+
+// buildSecretFinding constructs a normalized SecretFinding row from an
+// in-memory SecretModel, applying AT-REST protection to the secret value: the
+// raw value is NEVER persisted. secret_string is set to crypto.ProtectAtRest
+// (AES-256-GCM ciphertext when MORF_SECRET_ENCRYPTION_KEY is configured, else a
+// masked preview) and the fingerprint column carries crypto.Fingerprint, the
+// deterministic per-value identity used for de-duplication and build-diff
+// comparison. In-memory SanitizeSecrets de-dup already ran on the plaintext
+// earlier in the scan pipeline, so collapsing identical values does not depend
+// on this transform. Kept as a pure function so the write-time protection is
+// unit-testable without a live database.
+func buildSecretFinding(secretID uint, secretModel models.SecretModel) models.SecretFinding {
+	finding := models.SecretFinding{
+		SecretID:         secretID,
+		Type:             secretModel.Type,
+		LineNo:           secretModel.LineNo,
+		FileLocation:     secretModel.FileLocation,
+		SecretType:       secretModel.SecretType,
+		SecretString:     crypto.ProtectAtRest(secretModel.SecretString),
+		Fingerprint:      crypto.Fingerprint(secretModel.SecretString),
+		SecretConfidence: secretModel.SecretConfidence,
+		// Precision/verification/compliance enrichment (nullable).
+		Tier:               secretModel.Tier,
+		VerificationStatus: secretModel.VerificationStatus,
+		MASVSID:            secretModel.MASVSID,
+	}
+	if secretModel.Score != 0 {
+		score := secretModel.Score
+		finding.Score = &score
+	}
+	return finding
 }
 
 // convertSecretToOldFormat converts a normalized Secret (with its relationships
