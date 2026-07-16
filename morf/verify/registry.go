@@ -61,11 +61,17 @@ type registryEntry struct {
 func defaultRegistry(c *client) []registryEntry {
 	return []registryEntry{
 		{match: "github", verifier: &githubVerifier{c: c}},
+		{match: "gitlab", verifier: &gitlabVerifier{c: c}},
 		{match: "slack", verifier: &slackVerifier{c: c}},
 		{match: "stripe", verifier: &stripeVerifier{c: c}},
 		{match: "google", verifier: &googleVerifier{c: c}},
 		{match: "gcp", verifier: &googleVerifier{c: c}},
 		{match: "twilio", verifier: &twilioVerifier{c: c}},
+		{match: "sendgrid", verifier: &sendgridVerifier{c: c}},
+		{match: "npm", verifier: &npmVerifier{c: c}},
+		{match: "cloudflare", verifier: &cloudflareVerifier{c: c}},
+		{match: "mailgun", verifier: &mailgunVerifier{c: c}},
+		{match: "digitalocean", verifier: &digitalOceanVerifier{c: c}},
 		{match: "aws", verifier: &awsVerifier{c: c}},
 	}
 }

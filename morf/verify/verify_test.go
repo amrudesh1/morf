@@ -18,8 +18,10 @@ package verify
 
 import (
 	"context"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,6 +30,9 @@ import (
 
 	"morf/models"
 )
+
+// hexEncode is a tiny test helper for asserting on signing-key bytes.
+func hexEncode(b []byte) string { return hex.EncodeToString(b) }
 
 // newTestClient builds a client with an unthrottled limiter and no timeout
 // pressure so tests exercise verifier logic, not the rate limiter.
@@ -291,12 +296,392 @@ func TestGoogleVerifier(t *testing.T) {
 func TestAWSVerifier_NeverContactsNetwork(t *testing.T) {
 	c := newTestClient()
 	v := &awsVerifier{c: c}
-	got, err := v.Verify(context.Background(), "AKIAEXAMPLE")
+	got, err := v.Verify(context.Background(), "AKIAIOSFODNN7EXAMPLE")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != statusUnknown {
 		t.Fatalf("AWS access key ID alone must be unknown, got %q", got)
+	}
+}
+
+// fakeSTSHandler returns an httptest handler that asserts the request is a
+// signed, read-only GET and responds per the given mode.
+func fakeSTSHandler(t *testing.T, mode string) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		assertNoMutation(t, r.Method)
+		q := r.URL.Query()
+		if q.Get("Action") != "GetCallerIdentity" {
+			t.Fatalf("expected GetCallerIdentity action, got %q", q.Get("Action"))
+		}
+		if q.Get("X-Amz-Signature") == "" {
+			t.Fatal("expected an X-Amz-Signature query param")
+		}
+		if q.Get("X-Amz-Algorithm") != "AWS4-HMAC-SHA256" {
+			t.Fatalf("unexpected algorithm %q", q.Get("X-Amz-Algorithm"))
+		}
+		if !strings.HasPrefix(q.Get("X-Amz-Credential"), "AKIA") {
+			t.Fatalf("expected credential to start with the access key id, got %q", q.Get("X-Amz-Credential"))
+		}
+		switch mode {
+		case "active":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>arn:aws:iam::123456789012:user/x</Arn></GetCallerIdentityResult></GetCallerIdentityResponse>`))
+		case "invalid":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`<ErrorResponse><Error><Code>InvalidClientTokenId</Code></Error></ErrorResponse>`))
+		case "badsig":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`<ErrorResponse><Error><Code>SignatureDoesNotMatch</Code></Error></ErrorResponse>`))
+		default: // "error"
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}
+}
+
+func TestAWSVerifier_VerifyPair(t *testing.T) {
+	cases := []struct {
+		name   string
+		mode   string
+		expect string
+	}{
+		{"active", "active", statusActive},
+		{"inactive_invalid_token", "invalid", statusInactive},
+		{"inactive_bad_signature", "badsig", statusInactive},
+		{"unknown_server_error", "error", statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(fakeSTSHandler(t, tc.mode))
+			defer srv.Close()
+
+			c := newTestClient()
+			awsSTSBase = srv.URL
+			defer func() { awsSTSBase = "https://sts.amazonaws.com" }()
+
+			v := &awsVerifier{c: c}
+			got, err := v.verifyPair(context.Background(),
+				"AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// TestAWSPairing_AttemptedWhenSecretPresent verifies the batch pre-pass pairs an
+// AKIA id with a co-located 40-char secret and issues a signed STS call.
+func TestAWSPairing_AttemptedWhenSecretPresent(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		fakeSTSHandler(t, "active")(w, r)
+	}))
+	defer srv.Close()
+
+	c := newTestClient()
+	awsSTSBase = srv.URL
+	defer func() { awsSTSBase = "https://sts.amazonaws.com" }()
+	reg := defaultRegistry(c)
+
+	in := []models.SecretModel{
+		{SecretType: "AWS Access Key ID", SecretString: "AKIAIOSFODNN7EXAMPLE", FileLocation: "a.txt", LineNo: 10},
+		{SecretType: "AWS Secret Key", SecretString: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", FileLocation: "a.txt", LineNo: 11},
+	}
+	out := verifyWithRegistry(context.Background(), in, reg)
+	if out[0].VerificationStatus != statusActive {
+		t.Fatalf("expected AKIA finding active, got %q", out[0].VerificationStatus)
+	}
+	if atomic.LoadInt32(&hits) == 0 {
+		t.Fatal("expected the STS endpoint to be contacted")
+	}
+}
+
+// TestAWSPairing_AloneIsUnknown verifies an AKIA id with no candidate secret in
+// the batch stays unknown and makes NO network call.
+func TestAWSPairing_AloneIsUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("no network call expected for a lone AKIA id: %s", r.URL)
+	}))
+	defer srv.Close()
+
+	c := newTestClient()
+	awsSTSBase = srv.URL
+	defer func() { awsSTSBase = "https://sts.amazonaws.com" }()
+	reg := defaultRegistry(c)
+
+	in := []models.SecretModel{
+		{SecretType: "AWS Access Key ID", SecretString: "AKIAIOSFODNN7EXAMPLE", FileLocation: "a.txt", LineNo: 10},
+	}
+	out := verifyWithRegistry(context.Background(), in, reg)
+	if out[0].VerificationStatus != statusUnknown {
+		t.Fatalf("expected unknown for lone AKIA id, got %q", out[0].VerificationStatus)
+	}
+}
+
+// TestAWSPairing_WrongSecretInactive verifies that when the only candidate
+// secret is rejected by STS the AKIA finding is inactive, not a false active.
+func TestAWSPairing_WrongSecretInactive(t *testing.T) {
+	srv := httptest.NewServer(fakeSTSHandler(t, "invalid"))
+	defer srv.Close()
+
+	c := newTestClient()
+	awsSTSBase = srv.URL
+	defer func() { awsSTSBase = "https://sts.amazonaws.com" }()
+	reg := defaultRegistry(c)
+
+	in := []models.SecretModel{
+		{SecretType: "AWS Access Key ID", SecretString: "AKIAIOSFODNN7EXAMPLE", FileLocation: "a.txt", LineNo: 10},
+		{SecretType: "AWS Secret Key", SecretString: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", FileLocation: "a.txt", LineNo: 11},
+	}
+	out := verifyWithRegistry(context.Background(), in, reg)
+	if out[0].VerificationStatus != statusInactive {
+		t.Fatalf("expected inactive for rejected pair, got %q", out[0].VerificationStatus)
+	}
+}
+
+// TestSigV4_SigningKeyDeterministic checks the signing-key derivation against
+// the published AWS SigV4 test vector so signing correctness is verified offline
+// without any network. See AWS docs "Examples of how to derive a signing key".
+func TestSigV4_SigningKeyDeterministic(t *testing.T) {
+	// AWS-published vector: secret "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+	// date 20150830, region us-east-1, service iam.
+	key := sigv4SigningKey("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20150830", "us-east-1", "iam")
+	got := hexEncode(key)
+	const want = "c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9"
+	if got != want {
+		t.Fatalf("signing key mismatch:\n got %s\nwant %s", got, want)
+	}
+
+	// Determinism: same inputs yield the same request signature twice.
+	now := time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC)
+	r1, err := buildSTSGetCallerIdentityRequest(context.Background(), "https://sts.amazonaws.com", "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", now)
+	if err != nil {
+		t.Fatalf("build request 1: %v", err)
+	}
+	r2, err := buildSTSGetCallerIdentityRequest(context.Background(), "https://sts.amazonaws.com", "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", now)
+	if err != nil {
+		t.Fatalf("build request 2: %v", err)
+	}
+	s1 := r1.URL.Query().Get("X-Amz-Signature")
+	s2 := r2.URL.Query().Get("X-Amz-Signature")
+	if s1 == "" || s1 != s2 {
+		t.Fatalf("signature not deterministic: %q vs %q", s1, s2)
+	}
+}
+
+// --- New single-request providers -------------------------------------------
+
+func TestGitlabVerifier(t *testing.T) {
+	cases := []struct {
+		code   int
+		expect string
+	}{
+		{http.StatusOK, statusActive},
+		{http.StatusUnauthorized, statusInactive},
+		{http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertNoMutation(t, r.Method)
+			if r.URL.Path != "/api/v4/user" {
+				t.Fatalf("unexpected path %q", r.URL.Path)
+			}
+			w.WriteHeader(tc.code)
+		}))
+		c := newTestClient()
+		gitlabAPIBase = srv.URL
+		v := &gitlabVerifier{c: c}
+		got, err := v.Verify(context.Background(), "glpat-tok")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != tc.expect {
+			t.Fatalf("code %d: expected %q, got %q", tc.code, tc.expect, got)
+		}
+	}
+}
+
+func TestSendgridVerifier(t *testing.T) {
+	cases := []struct {
+		code   int
+		expect string
+	}{
+		{http.StatusOK, statusActive},
+		{http.StatusUnauthorized, statusInactive},
+		{http.StatusBadGateway, statusUnknown},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertNoMutation(t, r.Method)
+			if r.URL.Path != "/v3/scopes" {
+				t.Fatalf("unexpected path %q", r.URL.Path)
+			}
+			w.WriteHeader(tc.code)
+		}))
+		c := newTestClient()
+		sendgridAPIBase = srv.URL
+		v := &sendgridVerifier{c: c}
+		got, err := v.Verify(context.Background(), "SG.tok")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != tc.expect {
+			t.Fatalf("code %d: expected %q, got %q", tc.code, tc.expect, got)
+		}
+	}
+}
+
+func TestNpmVerifier(t *testing.T) {
+	cases := []struct {
+		code   int
+		expect string
+	}{
+		{http.StatusOK, statusActive},
+		{http.StatusUnauthorized, statusInactive},
+		{http.StatusTooManyRequests, statusUnknown},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertNoMutation(t, r.Method)
+			if r.URL.Path != "/-/whoami" {
+				t.Fatalf("unexpected path %q", r.URL.Path)
+			}
+			w.WriteHeader(tc.code)
+		}))
+		c := newTestClient()
+		npmAPIBase = srv.URL
+		v := &npmVerifier{c: c}
+		got, err := v.Verify(context.Background(), "npm_tok")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != tc.expect {
+			t.Fatalf("code %d: expected %q, got %q", tc.code, tc.expect, got)
+		}
+	}
+}
+
+func TestCloudflareVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		body   string
+		expect string
+	}{
+		{"active", http.StatusOK, `{"success":true,"result":{"status":"active"}}`, statusActive},
+		{"inactive_body", http.StatusOK, `{"success":false,"result":{"status":"disabled"}}`, statusInactive},
+		{"inactive_401", http.StatusUnauthorized, ``, statusInactive},
+		{"unknown_5xx", http.StatusInternalServerError, ``, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/client/v4/user/tokens/verify" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				w.WriteHeader(tc.code)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			cloudflareAPIBase = srv.URL
+			v := &cloudflareVerifier{c: c}
+			got, err := v.Verify(context.Background(), "cf-tok")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+func TestMailgunVerifier(t *testing.T) {
+	cases := []struct {
+		code   int
+		expect string
+	}{
+		{http.StatusOK, statusActive},
+		{http.StatusUnauthorized, statusInactive},
+		{http.StatusBadGateway, statusUnknown},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertNoMutation(t, r.Method)
+			if r.URL.Path != "/v3/domains" {
+				t.Fatalf("unexpected path %q", r.URL.Path)
+			}
+			user, _, ok := r.BasicAuth()
+			if !ok || user != "api" {
+				t.Fatalf("expected basic-auth user 'api', got %q ok=%v", user, ok)
+			}
+			w.WriteHeader(tc.code)
+		}))
+		c := newTestClient()
+		mailgunAPIBase = srv.URL
+		v := &mailgunVerifier{c: c}
+		got, err := v.Verify(context.Background(), "key-abc")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != tc.expect {
+			t.Fatalf("code %d: expected %q, got %q", tc.code, tc.expect, got)
+		}
+	}
+}
+
+func TestDigitalOceanVerifier(t *testing.T) {
+	cases := []struct {
+		code   int
+		expect string
+	}{
+		{http.StatusOK, statusActive},
+		{http.StatusUnauthorized, statusInactive},
+		{http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertNoMutation(t, r.Method)
+			if r.URL.Path != "/v2/account" {
+				t.Fatalf("unexpected path %q", r.URL.Path)
+			}
+			w.WriteHeader(tc.code)
+		}))
+		c := newTestClient()
+		digitalOceanAPIBase = srv.URL
+		v := &digitalOceanVerifier{c: c}
+		got, err := v.Verify(context.Background(), "dop_v1_tok")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != tc.expect {
+			t.Fatalf("code %d: expected %q, got %q", tc.code, tc.expect, got)
+		}
+	}
+}
+
+func TestNewProviders_RegisteredInLookup(t *testing.T) {
+	c := newTestClient()
+	reg := defaultRegistry(c)
+	for _, st := range []string{
+		"GitLab Feed Token", "SendGrid API Key", "NPM Access Token",
+		"Cloudflare API Token", "Mailgun API Key", "DigitalOcean PAT",
+	} {
+		if lookup(reg, st) == nil {
+			t.Fatalf("expected a verifier for %q", st)
+		}
 	}
 }
 
@@ -410,8 +795,37 @@ func TestHashSecret_DoesNotEqualRawSecret(t *testing.T) {
 // swapEndpoints points every provider base at base and returns a restore func.
 func swapEndpoints(base string) func() {
 	pg, ps, pst, pgo, pt := githubAPIBase, slackAPIBase, stripeAPIBase, googleAPIBase, twilioAPIBase
+	pgl, psg, pnpm, pcf, pmg, pdo, paws := gitlabAPIBase, sendgridAPIBase, npmAPIBase, cloudflareAPIBase, mailgunAPIBase, digitalOceanAPIBase, awsSTSBase
 	githubAPIBase, slackAPIBase, stripeAPIBase, googleAPIBase, twilioAPIBase = base, base, base, base, base
+	gitlabAPIBase, sendgridAPIBase, npmAPIBase, cloudflareAPIBase, mailgunAPIBase, digitalOceanAPIBase, awsSTSBase = base, base, base, base, base, base, base
 	return func() {
 		githubAPIBase, slackAPIBase, stripeAPIBase, googleAPIBase, twilioAPIBase = pg, ps, pst, pgo, pt
+		gitlabAPIBase, sendgridAPIBase, npmAPIBase, cloudflareAPIBase, mailgunAPIBase, digitalOceanAPIBase, awsSTSBase = pgl, psg, pnpm, pcf, pmg, pdo, paws
+	}
+}
+
+// TestAWSPairing_ASIATemporaryKeyIsUnknown locks in the fix that temporary
+// (ASIA) credentials are NOT paired/signed: they additionally require a session
+// token a static scan cannot recover, so signing with just id+secret would 403
+// and be misread as "inactive". They must stay "unknown" and make no STS call,
+// even when a plausible 40-char secret is co-located.
+func TestAWSPairing_ASIATemporaryKeyIsUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("no STS call expected for an ASIA temporary key: %s", r.URL)
+	}))
+	defer srv.Close()
+
+	c := newTestClient()
+	awsSTSBase = srv.URL
+	defer func() { awsSTSBase = "https://sts.amazonaws.com" }()
+	reg := defaultRegistry(c)
+
+	in := []models.SecretModel{
+		{SecretType: "AWS Session Token Prefix", SecretString: "ASIAIOSFODNN7EXAMPLE", FileLocation: "a.txt", LineNo: 10},
+		{SecretType: "AWS Secret", SecretString: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY0", FileLocation: "a.txt", LineNo: 11},
+	}
+	out := verifyWithRegistry(context.Background(), in, reg)
+	if out[0].VerificationStatus != statusUnknown {
+		t.Fatalf("expected unknown for ASIA temporary key, got %q", out[0].VerificationStatus)
 	}
 }
