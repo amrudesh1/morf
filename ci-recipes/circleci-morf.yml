@@ -1,0 +1,63 @@
+# =============================================================================
+# MORF scan — CircleCI config template (orb-free)
+# =============================================================================
+# Mirrors the MORF composite GitHub Action's GATE-THEN-UPLOAD ordering:
+#
+#   1. Scan   — `morf scan ... --fail-on` runs; its exit code is CAPTURED
+#               (`|| SCAN_CODE=$?`) so a policy violation does not abort the
+#               job before the report is stored.
+#   2. Upload — the SARIF is persisted via `store_artifacts` (downloadable
+#               from the CircleCI UI). This runs unconditionally (`when: always`)
+#               so it happens even if the gate later fails.
+#   3. Gate   — `morf gate` re-checks the report, then the captured scan exit
+#               code fails the job LAST, after the artifact is stored.
+#
+# Copy this into .circleci/config.yml (or `include` it) and set the APK env
+# var / pin the MORF image to a released tag. See docs/CI.md for the
+# `morf scan` / `morf gate` command contract.
+# =============================================================================
+
+version: 2.1
+
+jobs:
+  morf-scan:
+    docker:
+      # Pinned MORF image — replace OWNER/REPO and tag with a release.
+      - image: ghcr.io/OWNER/REPO:latest
+    environment:
+      APK: "app/build/outputs/apk/release/app-release.apk"
+      MORF_FAIL_ON: "verified"
+      MORF_VERIFY: "true"
+      MORF_SARIF: "morf.sarif"
+    steps:
+      - checkout
+      # ---- STEP 1: SCAN (capture exit code, do not abort) ------------------
+      - run:
+          name: "MORF scan"
+          command: |
+            set +e
+            echo "MORF scanning ${APK} (fail-on=${MORF_FAIL_ON}, verify=${MORF_VERIFY})"
+            morf scan "${APK}" --sarif --out "${MORF_SARIF}" --fail-on="${MORF_FAIL_ON}" --verify="${MORF_VERIFY}"
+            echo $? > .morf_scan_code
+            set -e
+      # ---- STEP 2: UPLOAD (always, so findings survive a failing gate) -----
+      - store_artifacts:
+          path: morf.sarif
+          destination: morf.sarif
+      # ---- STEP 3: GATE (runs last; blocking) ------------------------------
+      - run:
+          name: "MORF policy gate"
+          command: |
+            # The captured `morf scan` exit code is the policy signal
+            # (4 = violation at the --fail-on threshold, 0 = passed).
+            SCAN_CODE="$(cat .morf_scan_code)"
+            if [ "$SCAN_CODE" -ne 0 ]; then
+              echo "MORF policy gate failed: scan exited ${SCAN_CODE} (threshold ${MORF_FAIL_ON})."
+              exit 1
+            fi
+            echo "MORF policy gate passed."
+
+workflows:
+  security:
+    jobs:
+      - morf-scan

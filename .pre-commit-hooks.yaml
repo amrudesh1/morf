@@ -1,0 +1,26 @@
+# =============================================================================
+# MORF pre-commit hook definitions.
+#
+# Consumers reference this repo from their own .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/OWNER/REPO   # this repository
+#       rev: v1.0.0                            # pin a released tag
+#       hooks:
+#         - id: morf-scan
+#           args: ["--fail-on=verified"]
+#
+# The hook runs the MORF scan+gate contract on any staged .apk / .ipa file.
+# See docs/CI.md for the `morf scan` / `morf gate` command contract.
+# =============================================================================
+- id: morf-scan
+  name: MORF secret scan
+  description: "Scan staged mobile artifacts (.apk/.ipa) with MORF and gate on policy."
+  entry: ci-recipes/pre-commit-morf.sh
+  language: script
+  # Only fire on mobile build artifacts.
+  files: '\.(apk|ipa)$'
+  pass_filenames: true
+  # Serialize: MORF scans are heavy; avoid parallel invocations clobbering
+  # the shared SARIF output path.
+  require_serial: true

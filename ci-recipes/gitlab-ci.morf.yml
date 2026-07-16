@@ -1,0 +1,73 @@
+# =============================================================================
+# MORF scan — GitLab CI template
+# =============================================================================
+# Mirrors the MORF composite GitHub Action's GATE-THEN-UPLOAD ordering:
+#
+#   1. Scan   — `morf scan ... --fail-on` runs and its exit code is captured
+#               (`|| SCAN_CODE=$?`) so a policy violation does not abort the
+#               job before the report is produced/published.
+#   2. Upload — the SARIF is exposed as a GitLab artifact (both a downloadable
+#               file and, via `reports.sast`, ingested into GitLab's native
+#               Security dashboard). This always runs because step 1 did not
+#               hard-fail.
+#   3. Gate   — `morf gate` re-checks the report and the captured scan exit
+#               code fails the job LAST, after the report is already published.
+#
+# Usage: include this file and set the APK variable (path to the artifact),
+# or `extends: .morf_scan` in your own job. Pin MORF_IMAGE to a released tag.
+# See docs/CI.md for the `morf scan` / `morf gate` command contract.
+# =============================================================================
+
+variables:
+  # Pinned MORF image. Replace OWNER/REPO and the tag with a released version.
+  MORF_IMAGE: "ghcr.io/OWNER/REPO:latest"
+  # Path to the mobile artifact to scan (.apk / .ipa). Override per project.
+  APK: "app/build/outputs/apk/release/app-release.apk"
+  # Minimum finding tier that fails the gate.
+  MORF_FAIL_ON: "verified"
+  # Live-verify candidate secrets before reporting.
+  MORF_VERIFY: "true"
+  # SARIF output path.
+  MORF_SARIF: "gl-morf.sarif"
+
+morf-scan:
+  stage: test
+  image:
+    name: "$MORF_IMAGE"
+    entrypoint: [""]
+  script:
+    # ---- STEP 1: SCAN (capture exit code, do not abort) --------------------
+    - |
+      set +e
+      echo "MORF scanning ${APK} (fail-on=${MORF_FAIL_ON}, verify=${MORF_VERIFY})"
+      morf scan "${APK}" --sarif --out "${MORF_SARIF}" --fail-on="${MORF_FAIL_ON}" --verify="${MORF_VERIFY}"
+      SCAN_CODE=$?
+      echo "$SCAN_CODE" > .morf_scan_code
+      set -e
+    # ---- STEP 3: GATE (runs last; artifacts below publish the report) ------
+    # The captured `morf scan` exit code is the policy signal
+    # (4 = violation at the --fail-on threshold, 0 = passed).
+    - |
+      SCAN_CODE="$(cat .morf_scan_code)"
+      if [ "$SCAN_CODE" -ne 0 ]; then
+        echo "MORF policy gate failed: scan exited ${SCAN_CODE} (threshold ${MORF_FAIL_ON})."
+        exit 1
+      fi
+      echo "MORF policy gate passed."
+  # ---- STEP 2: UPLOAD ------------------------------------------------------
+  # `artifacts` are collected even when the job fails (on_failure), so the
+  # SARIF reaches GitLab's Security dashboard before/independent of the gate.
+  artifacts:
+    when: always
+    paths:
+      - "$MORF_SARIF"
+    reports:
+      # GitLab-native SAST ingestion (SARIF is accepted for the sast report).
+      sast: "$MORF_SARIF"
+  rules:
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_BRANCH"
+
+# Reusable base a downstream job can `extends:` instead of copying the job.
+.morf_scan:
+  extends: morf-scan

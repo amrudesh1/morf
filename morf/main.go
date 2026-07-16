@@ -241,6 +241,8 @@ func init() {
 	// be traced to its scan logs by request_id without a tracing backend.
 
 	rootCmd.AddCommand(cmd.GetCliCmd())
+	rootCmd.AddCommand(cmd.GetScanCmd())
+	rootCmd.AddCommand(cmd.GetGateCmd())
 	rootCmd.AddCommand(cmd.GetAPIKeyCmd())
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(serverCmd)
