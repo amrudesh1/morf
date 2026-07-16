@@ -1,0 +1,162 @@
+# =============================================================================
+# MORF Scan — reusable composite GitHub Action
+# =============================================================================
+# Runs a MORF secret/artifact scan against a mobile build (.apk / .ipa),
+# emits SARIF, publishes it to the GitHub Security tab, and then gates the
+# job on the scan's policy result.
+#
+# GATE-THEN-UPLOAD ORDERING (important — do not reorder):
+#   1. Scan        — runs `morf scan ... --fail-on=<level>` with
+#                    continue-on-error semantics. Its exit code is CAPTURED,
+#                    not propagated, so a policy violation does NOT abort the
+#                    job before the SARIF has been published.
+#   2. Upload      — best-effort `upload-sarif`. Also continue-on-error, so
+#                    repos WITHOUT GitHub Code Security still pass this step.
+#                    Because the scan did not hard-fail, this step always runs
+#                    and the findings always reach the Security tab.
+#   3. Gate        — the LAST step. Re-reads the captured scan exit code and
+#                    fails the job iff the scan reported a policy violation.
+#                    This mirrors the repo's gosec `-no-fail` scan + best-effort
+#                    upload pattern (.github/workflows/ci.yml `sast` job), but
+#                    adds an explicit enforcing gate at the end.
+#
+# The end result: findings are ALWAYS uploaded (even on violation), and the
+# job status still reflects the policy outcome.
+#
+# CALLER REQUIREMENT: the job invoking this action must grant
+#   permissions:
+#     contents: read
+#     security-events: write
+# (as the repo's `sast` and `docker` jobs already declare) so that the SARIF
+# upload can write to the Security tab.
+#
+# The `morf scan` and `morf gate` subcommands used here are implemented in this
+# same change set (see docs/CI.md for the command contract).
+# =============================================================================
+
+name: "MORF Scan"
+description: "Scan a mobile artifact with MORF, publish SARIF, and gate on policy."
+
+inputs:
+  artifact:
+    description: "Path to the mobile artifact to scan (.apk or .ipa)."
+    required: true
+  fail-on:
+    description: >-
+      Policy level that fails the gate. One of: none | any | verified | keep.
+      "verified" (default) fails only on secrets confirmed live; "keep" fails
+      on any precision-kept finding; "any" fails on any finding; "none" never
+      fails (report-only).
+    required: false
+    default: "verified"
+  verify:
+    description: >-
+      Whether MORF should actively verify candidate secrets (live checks)
+      before reporting them. "true" or "false".
+    required: false
+    default: "true"
+  sarif-file:
+    description: "Path the scan writes its SARIF report to."
+    required: false
+    default: "morf.sarif"
+  category:
+    description: "SARIF category used when uploading to the Security tab."
+    required: false
+    default: "morf"
+  upload-sarif:
+    description: >-
+      Whether to upload the SARIF to the GitHub Security tab. Set to "false"
+      on platforms/repos without GitHub Code Security.
+    required: false
+    default: "true"
+  morf-image:
+    description: >-
+      Container image providing the `morf` binary (e.g.
+      ghcr.io/OWNER/REPO:vX.Y.Z). When set, the action runs morf via this
+      image. When empty, `morf` is expected to already be on PATH (built or
+      installed by an earlier step in the caller's job).
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    # -------------------------------------------------------------------------
+    # STEP 1 — SCAN (continue-on-error semantics)
+    #
+    # Composite-action steps cannot use `continue-on-error:` directly, so the
+    # equivalent is achieved by trapping the exit code in shell: the scan may
+    # exit non-zero on a policy violation, but we record that in an output and
+    # let the workflow proceed to the upload. `set +e` guarantees the step
+    # itself does not abort here.
+    # -------------------------------------------------------------------------
+    - name: MORF scan (advisory — exit code captured)
+      id: scan
+      shell: bash
+      env:
+        MORF_ARTIFACT: ${{ inputs.artifact }}
+        MORF_FAIL_ON: ${{ inputs.fail-on }}
+        MORF_VERIFY: ${{ inputs.verify }}
+        MORF_SARIF: ${{ inputs.sarif-file }}
+        MORF_IMAGE: ${{ inputs.morf-image }}
+      run: |
+        set +e
+        if [ -n "${MORF_IMAGE}" ]; then
+          MORF="docker run --rm -v ${PWD}:/work -w /work ${MORF_IMAGE} morf"
+        else
+          MORF="morf"
+        fi
+
+        echo "::group::morf scan ${MORF_ARTIFACT}"
+        ${MORF} scan "${MORF_ARTIFACT}" \
+          --sarif \
+          --out "${MORF_SARIF}" \
+          --fail-on="${MORF_FAIL_ON}" \
+          --verify="${MORF_VERIFY}"
+        code=$?
+        echo "::endgroup::"
+
+        echo "exit-code=${code}" >> "${GITHUB_OUTPUT}"
+        if [ "${code}" -ne 0 ]; then
+          echo "MORF scan reported a policy violation (exit ${code}); findings will still be uploaded before the job is gated."
+        else
+          echo "MORF scan passed policy (exit 0)."
+        fi
+        # Do NOT propagate the failure here — the gate step (STEP 3) does that
+        # AFTER the SARIF has been uploaded.
+        exit 0
+
+    # -------------------------------------------------------------------------
+    # STEP 2 — UPLOAD SARIF (best-effort)
+    #
+    # `continue-on-error: true` keeps repos without GitHub Code Security green.
+    # Runs regardless of the scan's policy outcome because STEP 1 exited 0.
+    # -------------------------------------------------------------------------
+    - name: Upload MORF SARIF
+      if: ${{ inputs.upload-sarif == 'true' }}
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: ${{ inputs.category }}
+
+    # -------------------------------------------------------------------------
+    # STEP 3 — GATE (blocking, runs last)
+    #
+    # Fails the job iff the scan (STEP 1) reported a policy violation. Because
+    # this is the final step, the SARIF has already been published, so a failed
+    # gate never hides findings from the Security tab. The captured `morf scan`
+    # exit code IS the policy signal (exit 4 = policy violation at the --fail-on
+    # threshold; exit 0 = passed; exit 1 = operational error).
+    # -------------------------------------------------------------------------
+    - name: MORF policy gate
+      shell: bash
+      env:
+        MORF_SCAN_CODE: ${{ steps.scan.outputs.exit-code }}
+        MORF_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        if [ "${MORF_SCAN_CODE}" -ne 0 ]; then
+          echo "::error::MORF policy gate failed: scan exited ${MORF_SCAN_CODE} (threshold: ${MORF_FAIL_ON})."
+          exit 1
+        fi
+        echo "MORF policy gate passed."

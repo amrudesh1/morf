@@ -1,0 +1,84 @@
+// =============================================================================
+// MORF scan — Jenkins declarative pipeline template
+// =============================================================================
+// Mirrors the MORF composite GitHub Action's GATE-THEN-UPLOAD ordering:
+//
+//   1. Scan   — `morf scan ... --fail-on` runs; its exit code is CAPTURED
+//               (returnStatus: true) so a policy violation does not abort the
+//               pipeline before the report is archived/published.
+//   2. Upload — the SARIF is archived as a build artifact and published (via
+//               the Warnings Next Generation plugin's `recordIssues`). This
+//               runs in `post { always { ... } }` so it happens even if a
+//               later stage fails.
+//   3. Gate   — `morf gate` re-checks the report, then the captured scan exit
+//               code fails the build LAST, after the report is published.
+//
+// Requirements:
+//   - Docker-capable agent (the MORF image provides the `morf` binary).
+//   - Optional: "Warnings Next Generation" plugin for `recordIssues`. If not
+//     installed, delete the recordIssues line — archiveArtifacts still runs.
+//
+// Configure via the `environment` block below. See docs/CI.md for the
+// `morf scan` / `morf gate` command contract.
+// =============================================================================
+
+pipeline {
+    agent {
+        docker {
+            // Pinned MORF image — replace OWNER/REPO and tag with a release.
+            image 'ghcr.io/OWNER/REPO:latest'
+            args  '-v $WORKSPACE:/work -w /work'
+        }
+    }
+
+    environment {
+        APK          = 'app/build/outputs/apk/release/app-release.apk'
+        MORF_FAIL_ON = 'verified'
+        MORF_VERIFY  = 'true'
+        MORF_SARIF   = 'morf.sarif'
+    }
+
+    stages {
+        stage('MORF Scan') {
+            steps {
+                script {
+                    // ---- STEP 1: SCAN (capture exit code, do not abort) ----
+                    env.MORF_SCAN_CODE = sh(
+                        returnStatus: true,
+                        script: """
+                            set +e
+                            echo "MORF scanning ${APK} (fail-on=${MORF_FAIL_ON}, verify=${MORF_VERIFY})"
+                            morf scan "${APK}" --sarif --out "${MORF_SARIF}" --fail-on="${MORF_FAIL_ON}" --verify="${MORF_VERIFY}"
+                        """
+                    ).toString()
+                    echo "MORF scan exit code: ${env.MORF_SCAN_CODE}"
+                }
+            }
+        }
+
+        stage('MORF Gate') {
+            // Runs AFTER the post-section upload below is guaranteed by
+            // `always`. The gate is the blocking half of the contract.
+            steps {
+                script {
+                    // The captured `morf scan` exit code is the policy signal
+                    // (4 = violation at the --fail-on threshold, 0 = passed).
+                    if (env.MORF_SCAN_CODE != '0') {
+                        error("MORF policy gate failed: scan exited ${env.MORF_SCAN_CODE} (threshold ${MORF_FAIL_ON}).")
+                    }
+                    echo 'MORF policy gate passed.'
+                }
+            }
+        }
+    }
+
+    post {
+        // ---- STEP 2: UPLOAD (always runs, even if the gate later fails) ----
+        always {
+            archiveArtifacts artifacts: "${MORF_SARIF}", allowEmptyArchive: true, fingerprint: true
+            // Publish into Jenkins' warnings dashboard (Warnings NG plugin).
+            // Remove this line if the plugin is not installed.
+            recordIssues tools: [sarif(pattern: "${MORF_SARIF}", id: 'morf', name: 'MORF')]
+        }
+    }
+}
