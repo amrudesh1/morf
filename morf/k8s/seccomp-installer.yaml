@@ -1,0 +1,92 @@
+# -----------------------------------------------------------------------------
+# Custom seccomp profile installer (DaemonSet)
+#
+# The MORF deployments reference a Localhost seccomp profile
+# (localhostProfile: seccomp-apktool.json). Kubernetes resolves Localhost
+# profiles from the kubelet's seccomp directory ON EACH NODE
+# (default: /var/lib/kubelet/seccomp/). This DaemonSet copies the profile onto
+# every node so the pods can start; it must be applied BEFORE (or with) the
+# deployments, or pods referencing the profile will fail with
+# CreateContainerError until the file is present.
+#
+# PREREQUISITE — create the ConfigMap from the repo's profile (keeps a single
+# source of truth; do NOT hand-copy the JSON here where it can drift):
+#
+#     kubectl create configmap morf-seccomp \
+#       --from-file=seccomp-apktool.json=morf/seccomp/seccomp-apktool.json \
+#       -n kube-system
+#
+# Then:  kubectl apply -f morf/k8s/seccomp-installer.yaml
+#
+# Fallback: clusters that cannot install a node-local profile can keep the
+# deployments on `type: RuntimeDefault` (see the commented block in
+# deployment.yaml / canary-deployment.yaml) — a safe, weaker baseline.
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: morf-seccomp-installer
+  namespace: kube-system
+  labels:
+    app: morf-seccomp-installer
+spec:
+  selector:
+    matchLabels:
+      app: morf-seccomp-installer
+  template:
+    metadata:
+      labels:
+        app: morf-seccomp-installer
+    spec:
+      # The installer's only job is to drop a file on the host and idle. It runs
+      # once per node. Tolerate all taints so control-plane nodes are covered too.
+      tolerations:
+      - operator: Exists
+      initContainers:
+      - name: install-profile
+        image: busybox:1.36
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          mkdir -p /host-seccomp
+          cp /profile/seccomp-apktool.json /host-seccomp/seccomp-apktool.json
+          chmod 0644 /host-seccomp/seccomp-apktool.json
+          echo "installed seccomp-apktool.json to kubelet seccomp dir"
+        securityContext:
+          # Writing under /var/lib/kubelet requires root on the host path; scope
+          # is limited to copying one file, then the init container exits.
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: profile
+          mountPath: /profile
+          readOnly: true
+        - name: kubelet-seccomp
+          mountPath: /host-seccomp
+      containers:
+      # Pause container keeps the DaemonSet pod Running after the profile is
+      # installed (a DaemonSet needs a long-lived container). It does nothing.
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65535
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: profile
+        configMap:
+          name: morf-seccomp
+      - name: kubelet-seccomp
+        hostPath:
+          path: /var/lib/kubelet/seccomp
+          type: DirectoryOrCreate

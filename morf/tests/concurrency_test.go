@@ -43,7 +43,7 @@ func TestConcurrentWorkspaceIsolation(t *testing.T) {
 			defer wg.Done()
 
 			jobCtx := utils.NewJobContext()
-			
+
 			// Verify workspace is unique
 			mu.Lock()
 			if workspaces[jobCtx.Workspace] {
@@ -64,7 +64,7 @@ func TestConcurrentWorkspaceIsolation(t *testing.T) {
 			fs := jobCtx.GetFS()
 			inputDir := jobCtx.GetInputDir()
 			outputDir := jobCtx.GetOutputDir()
-			
+
 			// Try to create a file in input dir to verify it exists
 			testFile, err := fs.Create(inputDir + "/test.txt")
 			if err != nil {
@@ -73,7 +73,7 @@ func TestConcurrentWorkspaceIsolation(t *testing.T) {
 			}
 			testFile.Close()
 			fs.Remove(inputDir + "/test.txt")
-			
+
 			// Try to create a file in output dir to verify it exists
 			testFile2, err := fs.Create(outputDir + "/test.txt")
 			if err != nil {
@@ -148,4 +148,3 @@ func TestConcurrentAPKUploads(t *testing.T) {
 	// For now, we'll create a placeholder test
 	t.Skip("Requires HTTP server setup")
 }
-

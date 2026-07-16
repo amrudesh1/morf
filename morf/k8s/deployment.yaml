@@ -36,16 +36,21 @@ spec:
         prometheus.io/path: "/api/metrics"
     spec:
       # Pod-level security baseline. App runs as non-root uid 1000 (see Dockerfile)
-      # and uses the RuntimeDefault seccomp profile (stricter than unconfined; a
-      # safe starting point — tighten to the custom seccomp/seccomp-apktool.json
-      # profile once validated). Container-level context (below) hardens further.
+      # and uses the custom seccomp/seccomp-apktool.json allowlist (defaultAction
+      # SCMP_ACT_ERRNO — far stricter than RuntimeDefault, purpose-built for the
+      # untrusted-APK sandbox). PREREQUISITE: apply k8s/seccomp-installer.yaml so
+      # the profile exists on every node's kubelet seccomp dir; otherwise pods
+      # fail with CreateContainerError.
+      # Fallback for clusters without the installer: replace the two Localhost
+      # blocks below with `type: RuntimeDefault` (safe, weaker baseline).
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
         seccompProfile:
-          type: RuntimeDefault
+          type: Localhost
+          localhostProfile: seccomp-apktool.json
       # Initialize the database schema before the main container starts.
       # Replaces the previous AutoMigrate-on-every-boot, which serialized
       # under load and risked schema-lock issues.
@@ -73,8 +78,10 @@ spec:
           capabilities:
             drop:
             - ALL
+          # Custom allowlist profile (see pod-level note + k8s/seccomp-installer.yaml).
           seccompProfile:
-            type: RuntimeDefault
+            type: Localhost
+            localhostProfile: seccomp-apktool.json
         ports:
         - containerPort: 9092
           name: http

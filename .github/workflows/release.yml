@@ -1,0 +1,113 @@
+name: Release
+
+# Fires on a semver tag push (e.g. v1.2.3). Produces:
+#  - signed cross-platform binaries + archives + checksums + SBOMs (GoReleaser)
+#  - a multi-arch (amd64+arm64) Docker image on GHCR, with an SBOM + SLSA
+#    provenance attestation (buildx) and a cosign keyless signature.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Binaries, archives, checksums, SBOMs, cosign-signed checksums, GH release.
+  # ---------------------------------------------------------------------------
+  goreleaser:
+    name: Binaries (GoReleaser)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub release
+      id-token: write   # cosign keyless (Fulcio/Rekor) OIDC
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for the changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: morf/go.sum
+
+      - name: Install Syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Multi-arch image → GHCR, with SBOM + SLSA provenance, cosign-signed.
+  # ---------------------------------------------------------------------------
+  image:
+    name: Image (multi-arch → GHCR, signed)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push to GHCR
+      id-token: write   # cosign keyless OIDC
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build & push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./morf
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # buildx generates and attaches an SBOM + max SLSA provenance
+          # attestation to the pushed image in the registry.
+          sbom: true
+          provenance: mode=max
+
+      - name: Sign image (cosign keyless, by digest)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $TAGS; do
+            repo="${tag%%:*}"
+            cosign sign --yes "${repo}@${DIGEST}"
+          done

@@ -185,3 +185,52 @@ func TestEncodeSARIF_LevelMapping(t *testing.T) {
 		}
 	}
 }
+
+// TestMaskResultJSON verifies the result-envelope masker replaces secretString
+// values with a masked preview, preserves other fields/structure, and fails
+// closed (returns an error, no bytes) on unparseable input.
+func TestMaskResultJSON(t *testing.T) {
+	in := `{"data":{"fileName":"app.apk","packageName":"com.x","secrets":[` +
+		`{"secretType":"AWS API Key","secretString":"AKIAIOSFODNN7EXAMPLE","lineNo":10},` +
+		`{"secretType":"Google API Key","secretString":"AIzaSyD-EXAMPLE"}]}}`
+
+	out, err := MaskResultJSON([]byte(in))
+	if err != nil {
+		t.Fatalf("MaskResultJSON error: %v", err)
+	}
+	var env struct {
+		Data struct {
+			FileName    string `json:"fileName"`
+			PackageName string `json:"packageName"`
+			Secrets     []struct {
+				SecretType   string `json:"secretType"`
+				SecretString string `json:"secretString"`
+				LineNo       int    `json:"lineNo"`
+			} `json:"secrets"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &env); err != nil {
+		t.Fatalf("unmarshal masked output: %v", err)
+	}
+	// Non-secret fields preserved.
+	if env.Data.FileName != "app.apk" || env.Data.PackageName != "com.x" {
+		t.Errorf("metadata not preserved: %+v", env.Data)
+	}
+	if env.Data.Secrets[0].LineNo != 10 || env.Data.Secrets[0].SecretType != "AWS API Key" {
+		t.Errorf("secret metadata not preserved: %+v", env.Data.Secrets[0])
+	}
+	// Raw values must be gone; masked values must be present.
+	for _, s := range env.Data.Secrets {
+		if s.SecretString == "AKIAIOSFODNN7EXAMPLE" || s.SecretString == "AIzaSyD-EXAMPLE" {
+			t.Errorf("secretString was NOT masked: %q", s.SecretString)
+		}
+		if !strings.Contains(s.SecretString, "…") {
+			t.Errorf("masked value missing ellipsis: %q", s.SecretString)
+		}
+	}
+
+	// Fail closed on invalid JSON.
+	if _, err := MaskResultJSON([]byte("not json")); err == nil {
+		t.Error("MaskResultJSON on invalid JSON: want error, got nil")
+	}
+}

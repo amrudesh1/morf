@@ -108,6 +108,19 @@ func isSensitiveAPIPath(c *gin.Context) bool {
 	return false
 }
 
+// isProtectedDataPath reports whether a route exposes discovered secrets or scan
+// results. Reading the secrets MORF extracted from an app is itself sensitive,
+// so this surface must ALWAYS require an authenticated API key — even when the
+// operator disables global auth (MORF_REQUIRE_API_KEY=false) for the scan/upload
+// flow. Without this, turning auth off to ease local scanning would also expose
+// every previously-found secret to any unauthenticated caller.
+func isProtectedDataPath(c *gin.Context) bool {
+	p := c.FullPath()
+	return strings.HasPrefix(p, "/api/results") ||
+		strings.HasPrefix(p, "/api/secrets") ||
+		strings.HasPrefix(p, "/api/compare")
+}
+
 // APIKeyAuthSelective wraps APIKeyAuth for fail-closed defaults (S-2). When
 // enforceAll is true every data route is authenticated. When false (operator set
 // MORF_REQUIRE_API_KEY=false) it still authenticates the sensitive SSRF/pattern
@@ -118,7 +131,7 @@ func isSensitiveAPIPath(c *gin.Context) bool {
 func APIKeyAuthSelective(enforceAll bool) gin.HandlerFunc {
 	inner := APIKeyAuth()
 	return func(c *gin.Context) {
-		if enforceAll || isSensitiveAPIPath(c) {
+		if enforceAll || isSensitiveAPIPath(c) || isProtectedDataPath(c) {
 			inner(c)
 			return
 		}

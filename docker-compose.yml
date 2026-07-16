@@ -4,13 +4,13 @@ services:
     image: mysql:8.0
     container_name: morf-mysql
     environment:
-      # NOTE: The credentials below are LOCAL-DEVELOPMENT defaults only.
-      # Do NOT use them in any real deployment — override via a non-committed
-      # .env file or Docker secrets (e.g. ${MYSQL_ROOT_PASSWORD}).
-      MYSQL_ROOT_PASSWORD: morf_root_password
-      MYSQL_DATABASE: morf
-      MYSQL_USER: morf
-      MYSQL_PASSWORD: morf_password
+      # Credentials come from a non-committed .env file (see .env.example), with
+      # LOCAL-DEVELOPMENT-only fallbacks so `docker compose up` works out of the
+      # box. Real deployments MUST set these in .env or via Docker secrets.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-morf_root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-morf}
+      MYSQL_USER: ${MYSQL_USER:-morf}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-morf_password}
     ports:
       - "3306:3306"
     volumes:
@@ -19,7 +19,7 @@ services:
       # so they must NOT also be fed to MySQL's initdb.d (which would run an
       # incomplete set against an empty schema in the wrong phase).
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmorf_root_password"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"${MYSQL_ROOT_PASSWORD:-morf_root_password}\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,11 +53,14 @@ services:
     ports:
       - "9092:9092"
     environment:
-      # NOTE: DATABASE_URL embeds LOCAL-DEVELOPMENT-only credentials (see the
-      # mysql service above); override via .env / Docker secrets in real use.
-      - DATABASE_URL=morf:morf_password@tcp(mysql:3306)/morf?charset=utf8mb4&parseTime=True&loc=Local
-      - REDIS_URL=redis://redis:6379
-      - MORF_GIN_MODE=debug
+      # DATABASE_URL is assembled from the same MYSQL_* vars as the mysql service
+      # (from .env, with local-dev fallbacks). Override in .env for real use.
+      - DATABASE_URL=${DATABASE_URL:-morf:morf_password@tcp(mysql:3306)/morf?charset=utf8mb4&parseTime=True&loc=Local}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - MORF_GIN_MODE=${MORF_GIN_MODE:-debug}
+      # SEC: mask secret values in the /results JSON API by default (see
+      # router/routers.go). Set MORF_MASK_RESULTS=false only in trusted setups.
+      - MORF_MASK_RESULTS=${MORF_MASK_RESULTS:-true}
     volumes:
       - ./morf/uploads:/app/uploads
       - ./morf/log:/app/log

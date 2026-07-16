@@ -345,7 +345,7 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		router.Use(auth.RateLimitMiddleware())
 		log.Info("API key auth ENABLED on /api data routes (default; set MORF_REQUIRE_API_KEY=false to disable)")
 	} else {
-		log.Warn("API key auth DISABLED globally (MORF_REQUIRE_API_KEY=false); /jira, /slackscan and pattern-mutation routes still require a key")
+		log.Warn("API key auth DISABLED globally (MORF_REQUIRE_API_KEY=false); /jira, /slackscan, pattern-mutation routes AND the result-reading routes (/results, /secrets, /compare) still require a key")
 	}
 
 	// MED-scopes: scope enforcement is wired but OFF by default. There is no
@@ -413,11 +413,25 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			response["phase"] = job.Phase
 		}
 
-		// RESP-1: embed the stored result JSON verbatim via json.RawMessage so it
-		// is serialized without an unmarshal-into-map then re-marshal round-trip,
-		// while preserving the {job_id,status,...,result} envelope clients expect.
+		// SEC: mask secret values in the result envelope by default. The stored
+		// job.Result carries raw secretString values (needed by the worker's
+		// verification pass), but the read API must not hand them back verbatim to
+		// every caller. Masking is on unless an operator explicitly opts out with
+		// MORF_MASK_RESULTS=false (e.g. a trusted internal deployment). On a mask
+		// failure we fail closed: drop the result field rather than leak raw values.
 		if job.Status == models.JobStatusCompleted && job.Result != "" {
-			response["result"] = json.RawMessage(job.Result)
+			if os.Getenv("MORF_MASK_RESULTS") == "false" {
+				response["result"] = json.RawMessage(job.Result)
+			} else if masked, err := report.MaskResultJSON([]byte(job.Result)); err == nil {
+				response["result"] = json.RawMessage(masked)
+			} else {
+				log.WithFields(log.Fields{
+					"request_id": requestID,
+					"job_id":     jobID,
+					"error":      err.Error(),
+				}).Error("Failed to mask result payload; withholding result to avoid leaking raw secrets")
+				response["result_error"] = "result unavailable (masking failed)"
+			}
 		}
 
 		statusCode := http.StatusOK

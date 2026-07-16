@@ -44,7 +44,7 @@ type IOSMetadata struct {
 	ExecutableName   string `json:"executableName" gorm:"column:executable_name;size:255"`
 
 	// Mach-O binary attributes.
-	Architectures string `json:"architectures" gorm:"type:json;column:architectures"` // JSON array of arch names (e.g. ["arm64","x86_64"])
+	Architectures string `json:"architectures" gorm:"type:json;column:architectures"`  // JSON array of arch names (e.g. ["arm64","x86_64"])
 	IsEncrypted   bool   `json:"isEncrypted" gorm:"column:is_encrypted;default:false"` // FairPlay: any LC_ENCRYPTION_INFO(_64) with cryptid != 0
 
 	// Variable-length extracted data, stored as marshalled JSON.
