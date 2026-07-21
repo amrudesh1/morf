@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"morf/models"
+	"morf/version"
 	"strings"
 	"time"
 
@@ -36,7 +37,12 @@ const (
 	ExportFormatCSV       ExportFormat = "csv"
 	ExportFormatPDF       ExportFormat = "pdf"
 	ExportFormatSARIF     ExportFormat = "sarif"     // GitHub Code Scanning, Defender, etc.
-	ExportFormatCycloneDX ExportFormat = "cyclonedx" // SBOM (CycloneDX 1.5 JSON)
+	ExportFormatCycloneDX ExportFormat = "cyclonedx" // SBOM (CycloneDX 1.6 JSON)
+	// ExportFormatCycloneDXSBOM is an alias for ExportFormatCycloneDX; both
+	// route to exportCycloneDX and emit identical CycloneDX 1.6 output. It
+	// exists so callers/tooling that request the more explicit "cyclonedx-sbom"
+	// format string are served the SBOM rather than rejected.
+	ExportFormatCycloneDXSBOM ExportFormat = "cyclonedx-sbom"
 )
 
 // scanResultPayload mirrors the JSON envelope written by the worker into
@@ -61,8 +67,14 @@ type scanResultData struct {
 	SecretCount int                  `json:"secretCount"`
 	Secrets     []models.SecretModel `json:"secrets"`
 	// UsesLibrary is populated only for APKs that declare <uses-library> elements;
-	// exportCycloneDX consumes it as library components.
+	// exportCycloneDX consumes it as a demoted platform-library fallback.
 	UsesLibrary []string `json:"usesLibrary,omitempty"`
+	// SBOMComponents is THE CONTRACT KEY (json "sbomComponents") that the
+	// platform extractors populate in the scan result payload. Each element is
+	// an evidence-bearing CycloneDX 1.6 component (see models.SBOMComponent);
+	// exportCycloneDX maps these directly into the SBOM's components array,
+	// preserving identity methods/confidence, occurrences, hashes and purl.
+	SBOMComponents []models.SBOMComponent `json:"sbomComponents,omitempty"`
 }
 
 // ExportResult exports scan results in the specified format.
@@ -92,7 +104,7 @@ func ExportResult(job *models.ScanJob, format ExportFormat) ([]byte, string, err
 		return exportPDF(job, &result)
 	case ExportFormatSARIF:
 		return exportSARIF(job, &result)
-	case ExportFormatCycloneDX:
+	case ExportFormatCycloneDX, ExportFormatCycloneDXSBOM:
 		return exportCycloneDX(job, &result)
 	default:
 		return nil, "", fmt.Errorf("unsupported export format: %s", format)
@@ -182,47 +194,97 @@ func exportSARIF(job *models.ScanJob, result *scanResultPayload) ([]byte, string
 	return out, "application/sarif+json", nil
 }
 
-// exportCycloneDX exports a minimal CycloneDX 1.5 JSON SBOM derived from the
-// APK's metadata (package, version, libraries). This isn't a full mobile-SBOM
-// (no transitive dependency graph), but it's enough for downstream supply-
-// chain tooling to ingest MORF output.
+// exportCycloneDX exports a CycloneDX 1.6 JSON SBOM.
+//
+// The authoritative component source is result.Data.SBOMComponents — the
+// evidence-bearing components the platform extractors produce (see
+// models.SBOMComponent). Each is mapped to a CycloneDX component object with
+// its full evidence graph: evidence.identity[].field/confidence/concludedValue,
+// each identity's methods[].technique/confidence/value, evidence.occurrences[],
+// content hashes, and purl.
+//
+// MORF characterizes its own output honestly: metadata.properties advertises
+// the SBOM as an "evidence-based-lower-bound", and compositions declares the
+// aggregate "incomplete" for the app assembly — MORF observes what is present
+// in the artifact, it does not resolve a transitive dependency graph.
+//
+// The legacy <uses-library> handling survives only as a FALLBACK for older APK
+// payloads that predate SBOMComponents. Those entries are demoted: they are
+// classified type "platform" (not "library") to signal they are declared
+// platform libraries, not identified third-party components. They are never
+// emitted when real SBOMComponents are present.
+//
+// This function reads only inventory metadata (package id, library/framework
+// names, versions, hashes, paths). It deliberately does NOT read
+// result.Data.Secrets, so no secret value can leak into the SBOM.
 func exportCycloneDX(job *models.ScanJob, result *scanResultPayload) ([]byte, string, error) {
 	pkg := result.Data.PackageName
-	version := result.Data.Version
+	appVersion := result.Data.Version
 
 	if pkg == "" {
 		pkg = job.OriginalFilename
 	}
 
-	components := make([]map[string]interface{}, 0, len(result.Data.UsesLibrary))
-	for _, lib := range result.Data.UsesLibrary {
-		if lib != "" {
-			components = append(components, map[string]interface{}{
-				"type":    "library",
-				"name":    lib,
-				"bom-ref": "lib:" + lib,
-			})
+	var components []map[string]interface{}
+
+	if len(result.Data.SBOMComponents) > 0 {
+		components = make([]map[string]interface{}, 0, len(result.Data.SBOMComponents))
+		for _, c := range result.Data.SBOMComponents {
+			components = append(components, cycloneDXComponent(c))
 		}
+	} else {
+		// Fallback: demote declared platform libraries. Only reached for
+		// legacy payloads with no SBOMComponents.
+		components = make([]map[string]interface{}, 0, len(result.Data.UsesLibrary))
+		for _, lib := range result.Data.UsesLibrary {
+			if lib != "" {
+				components = append(components, map[string]interface{}{
+					"type":    "platform",
+					"name":    lib,
+					"bom-ref": "platform:" + lib,
+				})
+			}
+		}
+	}
+
+	metadataComponent := map[string]interface{}{
+		"type":    "application",
+		"bom-ref": "app",
+		"name":    pkg,
+	}
+	if appVersion != "" {
+		metadataComponent["version"] = appVersion
 	}
 
 	bom := map[string]interface{}{
 		"bomFormat":    "CycloneDX",
-		"specVersion":  "1.5",
+		"specVersion":  "1.6",
 		"version":      1,
 		"serialNumber": "urn:uuid:" + job.ID,
 		"metadata": map[string]interface{}{
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
-			"tools": []map[string]string{
-				{"vendor": "MORF", "name": "morf", "version": "1.0"},
+			"tools": map[string]interface{}{
+				"components": []map[string]interface{}{
+					{
+						"type":      "application",
+						"name":      "morf",
+						"publisher": "MORF - Mobile Reconnaissance Framework",
+						"version":   version.Version,
+					},
+				},
 			},
-			"component": map[string]interface{}{
-				"type":    "application",
-				"name":    pkg,
-				"version": version,
-				"bom-ref": "app:" + pkg,
+			"component": metadataComponent,
+			"properties": []map[string]string{
+				{"name": "morf:sbom:completeness", "value": "evidence-based-lower-bound"},
 			},
 		},
 		"components": components,
+		"compositions": []map[string]interface{}{
+			{
+				"aggregate":  "incomplete",
+				"assemblies": []string{"app"},
+			},
+		},
 	}
 
 	out, err := json.MarshalIndent(bom, "", "  ")
@@ -230,6 +292,83 @@ func exportCycloneDX(job *models.ScanJob, result *scanResultPayload) ([]byte, st
 		return nil, "", fmt.Errorf("failed to marshal CycloneDX: %v", err)
 	}
 	return out, "application/vnd.cyclonedx+json", nil
+}
+
+// cycloneDXComponent maps a single evidence-bearing models.SBOMComponent into a
+// CycloneDX 1.6 component object, preserving the full identity/occurrence
+// evidence graph, hashes and purl. Empty optional sections are omitted so the
+// output stays schema-clean.
+func cycloneDXComponent(c models.SBOMComponent) map[string]interface{} {
+	comp := map[string]interface{}{
+		"type":    c.Type,
+		"bom-ref": c.BomRef,
+		"name":    c.Name,
+	}
+	if c.Version != "" {
+		comp["version"] = c.Version
+	}
+	if c.Group != "" {
+		comp["group"] = c.Group
+	}
+	if c.Scope != "" {
+		comp["scope"] = c.Scope
+	}
+	if c.Purl != "" {
+		comp["purl"] = c.Purl
+	}
+
+	if len(c.Hashes) > 0 {
+		hashes := make([]map[string]string, 0, len(c.Hashes))
+		for _, h := range c.Hashes {
+			hashes = append(hashes, map[string]string{
+				"alg":     h.Alg,
+				"content": h.Content,
+			})
+		}
+		comp["hashes"] = hashes
+	}
+
+	evidence := map[string]interface{}{}
+
+	if len(c.Evidence.Identity) > 0 {
+		identities := make([]map[string]interface{}, 0, len(c.Evidence.Identity))
+		for _, id := range c.Evidence.Identity {
+			methods := make([]map[string]interface{}, 0, len(id.Methods))
+			for _, m := range id.Methods {
+				methods = append(methods, map[string]interface{}{
+					"technique":  m.Technique,
+					"confidence": m.Confidence,
+					"value":      m.Value,
+				})
+			}
+			identity := map[string]interface{}{
+				"field":      id.Field,
+				"confidence": id.Confidence,
+				"methods":    methods,
+			}
+			if id.ConcludedValue != "" {
+				identity["concludedValue"] = id.ConcludedValue
+			}
+			identities = append(identities, identity)
+		}
+		evidence["identity"] = identities
+	}
+
+	if len(c.Evidence.Occurrences) > 0 {
+		occurrences := make([]map[string]interface{}, 0, len(c.Evidence.Occurrences))
+		for _, o := range c.Evidence.Occurrences {
+			occurrences = append(occurrences, map[string]interface{}{
+				"location": o.Location,
+			})
+		}
+		evidence["occurrences"] = occurrences
+	}
+
+	if len(evidence) > 0 {
+		comp["evidence"] = evidence
+	}
+
+	return comp
 }
 
 // exportJSON exports results as JSON (lossless raw round-trip via map).

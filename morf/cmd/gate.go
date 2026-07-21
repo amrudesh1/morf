@@ -133,7 +133,7 @@ func maskGateResult(res gate.GateResult) ([]byte, error) {
 // (optionally rewrite baseline) -> exit code. It returns the exit code so the
 // cobra Run wrapper owns the os.Exit boundary.
 func runGate(ctx context.Context, opts gateOptions, path string, stdout, stderr io.Writer) (int, error) {
-	secrets, _, err := runScanForFile(ctx, path, opts.verify)
+	secrets, _, _, err := runScanForFile(ctx, path, opts.verify)
 	if err != nil {
 		return exitOperational, err
 	}

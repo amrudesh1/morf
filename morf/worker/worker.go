@@ -726,6 +726,16 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 	metadataHandler.AddMetadataToResponse(result, &secret)
 	resourceHandler.AddResourceDataToResponse(result)
 
+	// SBOM: enumerate native libs (lib/<abi>/*.so + hashes) and detected runtimes
+	// into the result payload under the "sbomComponents" contract key the
+	// CycloneDX exporter reads. Mirrors the iOS path; without this the async
+	// (/upload -> worker -> /export) SBOM would always be empty.
+	if data, ok := result["data"].(gin.H); ok {
+		if comps := apk.CollectSBOMComponents(jobCtx); len(comps) > 0 {
+			data["sbomComponents"] = comps
+		}
+	}
+
 	return result, nil
 }
 
@@ -802,7 +812,7 @@ func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error
 	// observable alongside the APK tool metrics.
 	_ = w.queue.SetJobPhase(job.ID, "scanning")
 	extractStart := time.Now()
-	secretsModels, iosMeta, extractErr := ios.StartIOSExtraction(ctx, localPath, jobCtx)
+	secretsModels, iosMeta, iosSBOM, extractErr := ios.StartIOSExtraction(ctx, localPath, jobCtx)
 	extractDur := time.Since(extractStart)
 	timings["extract_ms"] = extractDur.Milliseconds()
 	// The pipeline internally runs unzip -> macho parse -> plist parse; attribute
@@ -867,6 +877,13 @@ func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error
 	iosHandler := response.NewIOSMetadataHandler(iosMeta)
 	result := apiHandler.CreateSuccessResponse()
 	iosHandler.AddMetadataToResponse(result)
+
+	// SBOM: thread the per-app component inventory into the result payload under
+	// the "sbomComponents" contract key the CycloneDX exporter reads. Without
+	// this the export falls through to the empty legacy fallback.
+	if data, ok := result["data"].(gin.H); ok && len(iosSBOM) > 0 {
+		data["sbomComponents"] = iosSBOM
+	}
 
 	return result, nil
 }

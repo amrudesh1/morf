@@ -98,7 +98,7 @@ func TestEvaluateAndRenderExitCodes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := scanOptions{format: "sarif", failOn: tc.failOn, target: "app.apk", platform: "android"}
-			_, summary, code, err := evaluateAndRender(opts, tc.secrets)
+			_, summary, code, err := evaluateAndRender(opts, tc.secrets, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -111,7 +111,7 @@ func TestEvaluateAndRenderExitCodes(t *testing.T) {
 
 func TestEvaluateAndRenderInvalidFailOn(t *testing.T) {
 	opts := scanOptions{format: "sarif", failOn: "nope"}
-	_, _, code, err := evaluateAndRender(opts, nil)
+	_, _, code, err := evaluateAndRender(opts, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid fail-on")
 	}
@@ -123,7 +123,7 @@ func TestEvaluateAndRenderInvalidFailOn(t *testing.T) {
 func TestEvaluateAndRenderSARIFFormat(t *testing.T) {
 	secrets := []models.SecretModel{finding("aws-key", "AKIAEXAMPLE1234567890", "active", "keep")}
 	opts := scanOptions{format: "sarif", failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestEvaluateAndRenderJSONFormatMasksSecret(t *testing.T) {
 	const raw = "AKIAEXAMPLE1234567890"
 	secrets := []models.SecretModel{finding("aws-key", raw, "active", "keep")}
 	opts := scanOptions{format: "json", failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestEvaluateAndRenderSarifAliasOverridesFormat(t *testing.T) {
 	secrets := []models.SecretModel{finding("aws-key", "AKIAEXAMPLE1234567890", "active", "keep")}
 	// format says json but --sarif alias must win.
 	opts := scanOptions{format: "json", sarif: true, failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,5 +177,38 @@ func TestEvaluateAndRenderSarifAliasOverridesFormat(t *testing.T) {
 	}
 	if _, ok := doc["$schema"]; !ok {
 		t.Errorf("--sarif alias did not produce SARIF output")
+	}
+}
+
+// TestEvaluateAndRenderSBOMFormat guards the CLI SBOM output path: with
+// --format cyclonedx-sbom, evaluateAndRender emits a CycloneDX 1.6 document
+// built from the provided components (not the secret findings), and always
+// exits 0 (an inventory is not gated by --fail-on).
+func TestEvaluateAndRenderSBOMFormat(t *testing.T) {
+	sbom := []models.SBOMComponent{
+		models.NewFrameworkComponent("Alamofire", "5.4.3", "Payload/App.app/Frameworks/Alamofire.framework"),
+		models.NewNativeLibComponent("libssl.so", []string{"arm64-v8a"}, "deadbeef"),
+	}
+	opts := scanOptions{format: "cyclonedx-sbom", target: "app.ipa", platform: "ios", failOn: "verified"}
+	out, summary, code, err := evaluateAndRender(opts, nil, sbom)
+	if err != nil {
+		t.Fatalf("evaluateAndRender: %v", err)
+	}
+	if code != exitOK {
+		t.Errorf("SBOM exit code = %d, want %d (inventory is never gated)", code, exitOK)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("output not JSON: %v", err)
+	}
+	if doc["specVersion"] != "1.6" || doc["bomFormat"] != "CycloneDX" {
+		t.Errorf("not CycloneDX 1.6: bomFormat=%v specVersion=%v", doc["bomFormat"], doc["specVersion"])
+	}
+	comps, _ := doc["components"].([]any)
+	if len(comps) != 2 {
+		t.Errorf("components = %d, want 2 (Alamofire + libssl)", len(comps))
+	}
+	if !strings.Contains(summary, "2 component") {
+		t.Errorf("summary missing component count: %q", summary)
 	}
 }

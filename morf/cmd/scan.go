@@ -84,30 +84,36 @@ type scanOptions struct {
 // in-process plumbing (identical order to worker.go). It is the only part that
 // needs java/apktool at runtime; the decision logic lives in evaluateAndRender
 // so it can be tested without those tools.
-func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.SecretModel, string, error) {
+func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.SecretModel, []models.SBOMComponent, string, error) {
 	lower := strings.ToLower(path)
 
 	jobCtx := utils.NewJobContext()
 	if err := jobCtx.CreateWorkspace(); err != nil {
-		return nil, "", fmt.Errorf("create workspace: %w", err)
+		return nil, nil, "", fmt.Errorf("create workspace: %w", err)
 	}
 	defer jobCtx.CleanupWorkspace()
 
 	var secrets []models.SecretModel
+	var sbom []models.SBOMComponent
 	var platform string
 	var err error
 	switch {
 	case strings.HasSuffix(lower, ".apk"):
 		platform = "android"
 		secrets, err = apk.StartSecScanE(ctx, path, jobCtx)
+		// Native-lib + runtime SBOM components are enumerated from the decompiled
+		// tree the scan just produced (best-effort; nil when none).
+		if err == nil {
+			sbom = apk.CollectSBOMComponents(jobCtx)
+		}
 	case strings.HasSuffix(lower, ".ipa"):
 		platform = "ios"
-		secrets, _, err = ios.StartIOSExtraction(ctx, path, jobCtx)
+		secrets, _, sbom, err = ios.StartIOSExtraction(ctx, path, jobCtx)
 	default:
-		return nil, "", fmt.Errorf("file must be .apk or .ipa")
+		return nil, nil, "", fmt.Errorf("file must be .apk or .ipa")
 	}
 	if err != nil {
-		return nil, platform, err
+		return nil, nil, platform, err
 	}
 
 	// Identical post-processing to worker.go (Android 696-697 / iOS 827-828).
@@ -120,7 +126,7 @@ func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.S
 	}
 	secrets = verify.VerifySecrets(ctx, secrets)
 
-	return secrets, platform, nil
+	return secrets, sbom, platform, nil
 }
 
 // renderFindings serialises findings in the requested format. The JSON path
@@ -162,17 +168,55 @@ func renderFindings(format, target, platform string, secrets []models.SecretMode
 	}
 }
 
+// renderSBOM builds the CycloneDX 1.6 SBOM document for the scanned artifact,
+// reusing the exact exporter the /results/:jobID/export?format=cyclonedx route
+// uses (so CLI and API produce identical SBOMs). The components carry their own
+// evidence/confidence; this just wraps them in the payload envelope the exporter
+// consumes and stamps the artifact name as the app root.
+func renderSBOM(target, platform string, sbom []models.SBOMComponent) ([]byte, error) {
+	if sbom == nil {
+		sbom = []models.SBOMComponent{}
+	}
+	env := map[string]any{
+		"data": map[string]any{
+			"fileName":       target,
+			"platform":       platform,
+			"sbomComponents": sbom,
+		},
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return nil, err
+	}
+	job := &models.ScanJob{OriginalFilename: target, Result: string(raw)}
+	out, _, err := utils.ExportResult(job, utils.ExportFormatCycloneDX)
+	return out, err
+}
+
 // evaluateAndRender is the pure, testable core: given already-enriched findings
 // and the resolved options, it produces the output bytes, the human summary, and
 // the process exit code. It performs NO scanning and NO I/O beyond formatting,
 // so tests can drive it with a hand-built []models.SecretModel.
-func evaluateAndRender(opts scanOptions, secrets []models.SecretModel) (out []byte, summary string, exitCode int, err error) {
+func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []models.SBOMComponent) (out []byte, summary string, exitCode int, err error) {
 	format := opts.format
 	if opts.sarif {
 		format = "sarif"
 	}
 	if format == "" {
 		format = "sarif"
+	}
+
+	// SBOM output is a component INVENTORY, not a findings gate: emit the
+	// CycloneDX 1.6 document and always exit 0 (no --fail-on policy applies to an
+	// inventory). Reuses the same exporter the /export route uses.
+	switch strings.ToLower(format) {
+	case "cyclonedx-sbom", "cyclonedx":
+		rendered, rerr := renderSBOM(opts.target, opts.platform, sbom)
+		if rerr != nil {
+			return nil, "", exitOperational, rerr
+		}
+		summary = fmt.Sprintf("MORF SBOM: %d component(s) [%s] (evidence-based inventory)", len(sbom), opts.platform)
+		return rendered, summary, exitOK, nil
 	}
 
 	policy, perr := scanFailOn(opts.failOn)
@@ -238,7 +282,7 @@ func writeOutput(opts scanOptions, w io.Writer, data []byte) error {
 // It returns the exit code so the cobra Run wrapper can call os.Exit, keeping the
 // os.Exit boundary out of the tested logic.
 func runScan(ctx context.Context, opts scanOptions, path string, stdout, stderr io.Writer) (int, error) {
-	secrets, platform, err := runScanForFile(ctx, path, opts.verify)
+	secrets, sbom, platform, err := runScanForFile(ctx, path, opts.verify)
 	if err != nil {
 		return exitOperational, err
 	}
@@ -247,7 +291,7 @@ func runScan(ctx context.Context, opts scanOptions, path string, stdout, stderr 
 		opts.target = filepath.Base(path)
 	}
 
-	out, summary, code, err := evaluateAndRender(opts, secrets)
+	out, summary, code, err := evaluateAndRender(opts, secrets, sbom)
 	if err != nil {
 		return exitOperational, err
 	}
@@ -289,7 +333,7 @@ MORF_ENABLE_VERIFICATION=true) to make read-only liveness checks.`,
 
 	scanCmd.Flags().BoolVar(&opts.sarif, "sarif", false, "Emit SARIF (alias for --format sarif)")
 	scanCmd.Flags().StringVar(&opts.out, "out", "", "Write output to this path (default stdout)")
-	scanCmd.Flags().StringVar(&opts.format, "format", "sarif", "Output format: json|sarif")
+	scanCmd.Flags().StringVar(&opts.format, "format", "sarif", "Output format: json|sarif|cyclonedx-sbom")
 	scanCmd.Flags().BoolVar(&opts.verify, "verify", false, "Enable live (read-only) verification of findings")
 	scanCmd.Flags().StringVar(&opts.failOn, "fail-on", "verified", "Gate threshold: none|any|verified|keep")
 

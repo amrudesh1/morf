@@ -108,8 +108,13 @@ func machoIsEncrypted(f *macho.File) bool {
 // Decoding goes through howett.net/plist, which auto-detects binary vs XML
 // plist encodings, so both bplist00 and XML Info.plist files are handled.
 type InfoPlist struct {
-	BundleIdentifier string   `plist:"CFBundleIdentifier"`
-	BundleVersion    string   `plist:"CFBundleVersion"`
+	BundleIdentifier string `plist:"CFBundleIdentifier"`
+	BundleVersion    string `plist:"CFBundleVersion"`
+	// ShortVersion is CFBundleShortVersionString, the human-facing marketing
+	// version (e.g. "5.9.0"). For an embedded *.framework this is the value the
+	// SBOM records as the component version; it is more meaningful than the
+	// build-number CFBundleVersion for supply-chain identification.
+	ShortVersion     string   `plist:"CFBundleShortVersionString"`
 	ExecutableName   string   `plist:"CFBundleExecutable"`
 	MinimumOSVersion string   `plist:"MinimumOSVersion"`
 	URLSchemes       []string `plist:"-"`

@@ -190,7 +190,7 @@ func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.S
 		secrets, err = apk.StartSecScanE(ctx, path, jobCtx)
 	case strings.HasSuffix(lower, ".ipa"):
 		platform = "ios"
-		secrets, _, err = ios.StartIOSExtraction(ctx, path, jobCtx)
+		secrets, _, _, err = ios.StartIOSExtraction(ctx, path, jobCtx)
 	default:
 		return nil, "", fmt.Errorf("file must be .apk or .ipa")
 	}

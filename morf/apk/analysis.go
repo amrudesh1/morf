@@ -418,5 +418,26 @@ func StartExtractProcess(apkPath string, db *gorm.DB, c *gin.Context, isSlack bo
 	metadataHandler.AddMetadataToResponse(resp, &secret)
 	resourceHandler.AddResourceDataToResponse(resp)
 
+	// SBOM-1: enrich the result payload with the evidence-bearing CycloneDX
+	// component set (native libs + detected runtimes) under the contract key
+	// "sbomComponents" (the same key the iOS path uses and exportCycloneDX
+	// consumes). Best-effort: a nil/empty set simply omits the key.
+	addSBOMComponents(resp, jobCtx)
+
 	return resp
+}
+
+// addSBOMComponents attaches the Android native-lib / runtime SBOM component set
+// to the "data" object of a result envelope under the contract key
+// "sbomComponents". The envelope's "data" is a gin.H built by the response
+// handlers; when the component set is empty the key is left absent so the
+// omitempty JSON contract is preserved. It is best-effort and never fails a scan.
+func addSBOMComponents(resp gin.H, jobCtx *utils.JobContext) {
+	components := CollectSBOMComponents(jobCtx)
+	if len(components) == 0 {
+		return
+	}
+	if data, ok := resp["data"].(gin.H); ok {
+		data["sbomComponents"] = components
+	}
 }
