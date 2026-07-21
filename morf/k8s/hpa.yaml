@@ -29,8 +29,16 @@ spec:
       serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
       metricName: morf_queue_depth_per_pod
       threshold: '50'
+      # Divisor = number of currently-up morf pods, so we scale on queue depth
+      # PER POD. The `job` selector must match the label Prometheus actually
+      # stamps on these targets. Scraping is driven by the `morf-metrics`
+      # ServiceMonitor below, which sets no `jobLabel`; the Prometheus Operator
+      # therefore defaults the `job` label to the Kubernetes Service NAME —
+      # `morf-service` (see deployment.yaml), NOT `morf`. `job="morf"` matched
+      # zero series, so `count(...)` was empty and the per-pod normalization
+      # was broken. Use the real Service-name job label.
       query: |
-        sum(morf_queue_depth) / clamp_min(count(up{job="morf"} == 1), 1)
+        sum(morf_queue_depth) / clamp_min(count(up{job="morf-service"} == 1), 1)
 ---
 # ServiceMonitor for Prometheus metrics. scrapeTimeout was raised closer to
 # the interval to avoid timing-out on cold starts where the metrics endpoint

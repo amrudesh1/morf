@@ -1,0 +1,145 @@
+---
+# =============================================================================
+# EXAMPLE / OPT-IN — nightly MySQL logical backup (mysqldump) for MORF.
+# =============================================================================
+#
+# The tree has NO database backup path. This CronJob dumps the MORF MySQL
+# database on a schedule and writes the compressed dump to a PVC. It is OPT-IN:
+# apply it only after you have reviewed the placeholders below. It is NOT
+# referenced by any other manifest and applying it changes nothing about the
+# running app.
+#
+# HOW IT WORKS:
+#   - Reuses the SAME `morf-secrets` Secret the app uses (key DATABASE_URL), so
+#     credentials are not duplicated. A small shell prelude parses the mysql://
+#     DSN into host/user/password/db for the mysql client.
+#   - Writes morf-YYYYmmdd-HHMMSS.sql.gz into the `morf-backups-pvc` PVC.
+#
+# BEFORE APPLYING:
+#   1. Confirm `morf-secrets` exists in the `morf` namespace (see
+#      secrets.example.yaml) and its DATABASE_URL is a mysql:// DSN.
+#   2. Adjust the schedule (default 02:17 daily — off the top of the hour to
+#      avoid thundering-herd with other cluster cron).
+#   3. Set the mysql client image tag to match your MySQL server major version.
+#   4. Size / storage-class the morf-backups-pvc PVC for your retention needs,
+#      and add off-cluster copy (e.g. sync the PVC to object storage) — a PVC in
+#      the same cluster is NOT disaster-recovery on its own.
+#   5. Retention: this example keeps dumps forever. Add a find -mtime prune step
+#      or a lifecycle policy on your object store.
+# =============================================================================
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: morf-db-backup
+  namespace: morf
+  labels:
+    app: morf
+    component: backup
+spec:
+  # TODO: adjust schedule/timezone as needed. Default: daily at 02:17.
+  schedule: "17 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # Auto-clean finished backup Jobs after 24h.
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: morf
+            component: backup
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+          - name: mysqldump
+            # TODO: pin to a tag matching your MySQL server major version.
+            image: mysql:8.0
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            # Reuse the app's Secret — do NOT duplicate DB creds in a new Secret.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: morf-secrets
+                  key: DATABASE_URL
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              # Parse mysql://user:pass@host:port/db from DATABASE_URL.
+              proto_stripped="${DATABASE_URL#mysql://}"
+              creds="${proto_stripped%%@*}"
+              hostpart="${proto_stripped#*@}"
+              DB_USER="${creds%%:*}"
+              DB_PASS="${creds#*:}"
+              hostport="${hostpart%%/*}"
+              DB_HOST="${hostport%%:*}"
+              DB_PORT="${hostport#*:}"
+              [ "$DB_PORT" = "$hostport" ] && DB_PORT=3306
+              DB_NAME="${hostpart#*/}"
+              DB_NAME="${DB_NAME%%\?*}"
+              TS="$(date +%Y%m%d-%H%M%S)"
+              OUT="/backup/morf-${TS}.sql.gz"
+              echo "Dumping ${DB_NAME} from ${DB_HOST}:${DB_PORT} -> ${OUT}"
+              mysqldump \
+                --host="$DB_HOST" --port="$DB_PORT" \
+                --user="$DB_USER" --password="$DB_PASS" \
+                --single-transaction --quick --routines --triggers \
+                --no-tablespaces "$DB_NAME" | gzip -c > "$OUT"
+              echo "Backup complete: ${OUT}"
+            volumeMounts:
+            - name: backup
+              mountPath: /backup
+            - name: tmp
+              mountPath: /tmp
+            resources:
+              requests:
+                cpu: "250m"
+                memory: "256Mi"
+                ephemeral-storage: "1Gi"
+              limits:
+                cpu: "1"
+                memory: "1Gi"
+                ephemeral-storage: "2Gi"
+          volumes:
+          - name: backup
+            persistentVolumeClaim:
+              claimName: morf-backups-pvc
+          - name: tmp
+            emptyDir:
+              sizeLimit: 1Gi
+---
+# Durable storage for the dumps. TODO: size + storageClassName for your cluster,
+# and copy off-cluster for real DR (a same-cluster PVC is not a DR strategy).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: morf-backups-pvc
+  namespace: morf
+  labels:
+    app: morf
+    component: backup
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  # storageClassName: standard   # uncomment and set to your storage class

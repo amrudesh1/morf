@@ -56,7 +56,11 @@ spec:
       # under load and risked schema-lock issues.
       initContainers:
       - name: migrate
-        image: morf:stable
+        # NOTE: OWNER is a literal placeholder — replace it with your GitHub owner
+        # (org/user) so this resolves to the image the release workflow actually
+        # pushes: ghcr.io/<owner>/morf. A bare `morf:stable` resolves to
+        # docker.io/library/morf and ImagePullBackOffs, because nothing publishes there.
+        image: ghcr.io/OWNER/morf:stable
         imagePullPolicy: IfNotPresent
         command: ["morf", "migrate"]
         env:
@@ -67,7 +71,10 @@ spec:
               key: DATABASE_URL
       containers:
       - name: morf
-        image: morf:stable
+        # NOTE: OWNER is a literal placeholder — replace it with your GitHub owner
+        # (org/user). The release workflow pushes ghcr.io/<owner>/morf; a bare
+        # `morf:stable` would resolve to docker.io/library/morf and never pull.
+        image: ghcr.io/OWNER/morf:stable
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false
@@ -112,6 +119,20 @@ spec:
         # AutoMigrate is disabled in steady-state pods; the initContainer ran it.
         - name: MORF_DISABLE_AUTO_MIGRATE
           value: "true"
+        # startupProbe gates liveness/readiness until the app has finished a
+        # potentially slow cold start (large GHCR image pull + up to ~15s of DB
+        # connection retries after the migrate initContainer). With
+        # failureThreshold:30 * periodSeconds:5 the app has up to 150s to answer
+        # /api/live before liveness begins; without this, livenessProbe
+        # (initialDelaySeconds:30, failureThreshold:3 → ~60s budget) can kill and
+        # kill-loop a healthy-but-still-starting pod.
+        startupProbe:
+          httpGet:
+            path: /api/live
+            port: 9092
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /api/live
@@ -140,9 +161,18 @@ spec:
             # (e.g. 70% of 2 = 1.4 cores) stays coherent with actual workload.
             cpu: "2"
             memory: "2Gi"
+            # Bound the node-local scratch used by the /tmp emptyDir (apktool
+            # decompile output, ripgrep temp files). Without an
+            # ephemeral-storage request the scheduler cannot reserve disk and a
+            # large APK scan can fill the node and trigger DiskPressure eviction.
+            ephemeral-storage: "5Gi"
           limits:
             cpu: "4"
             memory: "8Gi"
+            # Cap total pod ephemeral storage. Must be >= the emptyDir sizeLimit
+            # (20Gi) below plus any container-writable-layer usage; exceeding it
+            # evicts the pod cleanly instead of taking down the whole node.
+            ephemeral-storage: "25Gi"
         volumeMounts:
         # readOnlyRootFilesystem: true makes / immutable, so every path the app
         # writes to needs an explicit writable volume. This emptyDir covers /tmp
@@ -158,7 +188,11 @@ spec:
           # and remove this mount; pods become fully stateless.
       volumes:
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          # Cap the scanner scratch dir so a runaway/oversized APK decompile
+          # cannot consume all node disk and cause DiskPressure eviction of
+          # neighbouring pods. Kept in sync with the ephemeral-storage limit above.
+          sizeLimit: 20Gi
       - name: uploads
         persistentVolumeClaim:
           claimName: morf-uploads-pvc

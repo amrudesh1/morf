@@ -1,0 +1,60 @@
+---
+# =============================================================================
+# EXAMPLE / TEMPLATE — plain-Kubernetes Ingress for the stable `morf` namespace.
+# =============================================================================
+#
+# The tree ships NO Ingress/Gateway/TLS for the stable service — only the canary
+# Istio VirtualService (which needs an Istio ingress gateway to actually reach
+# the internet). This Ingress gives clusters WITHOUT Istio a standard north-south
+# entrypoint to `morf-service` (ClusterIP :80 -> pod :9092) with TLS.
+#
+# HOW TO USE:
+#   1. Replace EVERY morf.example.com with your real external hostname.
+#   2. Set ingressClassName to your controller (nginx, traefik, alb, ...).
+#   3. cert-manager: the annotation + tls block below make cert-manager request
+#      a certificate from the named ClusterIssuer and store it in the Secret
+#      referenced by tls[].secretName. Replace `letsencrypt-prod` with your
+#      actual Issuer/ClusterIssuer name. If you are NOT using cert-manager,
+#      delete the annotation and pre-create the TLS Secret yourself, keeping
+#      only the `tls:` block.
+#
+# NOTE: this does not front the canary namespace. Canary traffic splitting is
+# handled by the Istio VirtualService in canary-deployment.yaml; if you use this
+# Ingress instead of Istio, do canary routing with your controller's own
+# canary annotations (e.g. nginx `canary: "true"` on a second Ingress).
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: morf-ingress
+  namespace: morf
+  labels:
+    app: morf
+  annotations:
+    # cert-manager: auto-provision + renew the TLS cert into spec.tls.secretName.
+    # TODO: replace `letsencrypt-prod` with your ClusterIssuer/Issuer name.
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Backend speaks plain HTTP on :9092; TLS terminates at the Ingress.
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+spec:
+  # TODO: set this to the class of your installed ingress controller.
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    # TODO: replace with your real external hostname (must match rules[].host
+    # and the hostname on the canary Istio VirtualService).
+    - morf.example.com
+    # cert-manager writes the issued cert here; the Secret is created for you.
+    secretName: morf-tls
+  rules:
+  # TODO: replace with your real external hostname.
+  - host: morf.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: morf-service
+            port:
+              number: 80

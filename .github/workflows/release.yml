@@ -87,6 +87,18 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            # The k8s manifests deploy ghcr.io/OWNER/morf:stable, so a real
+            # release must also publish that moving tag. Guarded to final
+            # releases only: a prerelease tag (v1.2.3-rc1, contains a '-') must
+            # NOT be promoted to :stable. enable= evaluates to false when the
+            # ref name carries a prerelease suffix.
+            type=raw,value=stable,enable=${{ !contains(github.ref_name, '-') }}
+          # Canary promotion is intentionally NOT done here. :canary is promoted
+          # out of band, either by manually re-tagging a validated digest
+          #   (cosign copy / crane tag ghcr.io/OWNER/morf@<digest> canary), or by
+          # a separate, manually-triggered promote job — so a plain release push
+          # never silently shifts canary traffic. The k8s canary-deployment.yaml
+          # pins ghcr.io/OWNER/morf:canary and is rolled forward by that step.
 
       - name: Build & push multi-arch image
         id: build
@@ -107,6 +119,10 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
+          # $TAGS is every tag metadata-action emitted — version, major.minor,
+          # sha, and (on final releases) stable. Signing is by immutable digest,
+          # so all of them, stable included, resolve to and sign the same
+          # multi-arch manifest that carries the SBOM + provenance attestations.
           for tag in $TAGS; do
             repo="${tag%%:*}"
             cosign sign --yes "${repo}@${DIGEST}"
