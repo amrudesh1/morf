@@ -139,3 +139,24 @@ func TestBuildSecretFinding_FingerprintStableForDedup(t *testing.T) {
 		t.Fatalf("distinct values collided on fingerprint: %q", c.Fingerprint)
 	}
 }
+
+// TestJSONColumnValue guards the fix for the content_providers.intent_filters
+// rollback: an empty Go string is invalid JSON and MySQL rejects it (Error
+// 3140), which rolled back the entire scan-persist transaction on nearly every
+// real app. Empty/whitespace/"null" must normalize to a valid empty JSON array.
+func TestJSONColumnValue(t *testing.T) {
+	cases := map[string]string{
+		"":          "[]",
+		"   ":       "[]",
+		"null":      "[]",
+		`[]`:        `[]`,
+		`["a","b"]`: `["a","b"]`,
+		`[{"x":1}]`: `[{"x":1}]`,
+		`"quoted"`:  `"quoted"`, // already valid JSON string — passed through
+	}
+	for in, want := range cases {
+		if got := jsonColumnValue(in); got != want {
+			t.Errorf("jsonColumnValue(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -28,6 +28,7 @@ import (
 	"morf/metrics"
 	"morf/queue"
 	"morf/router"
+	"morf/storage"
 	"morf/utils"
 	"morf/version"
 	"morf/worker"
@@ -59,6 +60,18 @@ func configureGin() {
 		gin.SetMode(gin.DebugMode)
 	} else {
 		gin.SetMode(gin.ReleaseMode)
+	}
+}
+
+// validateStorageOrExit fails fast when an explicitly-configured storage backend
+// (MORF_STORAGE_BACKEND=s3) is misconfigured. Without this the upload store is
+// built lazily on the first /upload and its error is swallowed, so a bad S3
+// config boots green then 500s every upload. A misconfig is not runtime-
+// recoverable (it needs an env fix), so failing fast with a clear message —
+// surfaced as a pod crashloop reason — is the correct signal. STORAGE-startup.
+func validateStorageOrExit() {
+	if err := storage.ValidateConfiguredBackend(); err != nil {
+		log.Fatalf("Storage backend misconfigured: %v", err)
 	}
 }
 
@@ -274,6 +287,7 @@ func init() {
 }
 
 func runServer(cmd *cobra.Command, args []string) {
+	validateStorageOrExit()
 	port, _ := cmd.Flags().GetInt("port")
 	dbURL, _ := cmd.Flags().GetString("db-url")
 
@@ -483,6 +497,7 @@ func runServer(cmd *cobra.Command, args []string) {
 }
 
 func runAPIOnly(cmd *cobra.Command, args []string) {
+	validateStorageOrExit()
 	port, _ := cmd.Flags().GetInt("port")
 	dbURL, _ := cmd.Flags().GetString("db-url")
 
@@ -656,6 +671,7 @@ func runAPIOnly(cmd *cobra.Command, args []string) {
 }
 
 func runWorkerOnly(cmd *cobra.Command, args []string) {
+	validateStorageOrExit()
 	poolSize, _ := cmd.Flags().GetInt("pool-size")
 	dbURL, _ := cmd.Flags().GetString("db-url")
 

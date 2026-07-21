@@ -288,11 +288,17 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			checks["redis"] = "ready"
 		}
 
-		// Check database (optional)
-		if db.DatabaseRequired {
+		// Check database. READINESS-DB: if a DB was CONFIGURED (DATABASE_URL set),
+		// it MUST be reachable for this pod to be ready — otherwise K8s routes
+		// traffic to a pod that silently drops every persist (scan results never
+		// saved). checkDatabaseStatus() returns an error when the DB is disabled,
+		// uninitialized, or unreachable (covering the degraded-boot case where a
+		// configured DB failed at startup, DatabaseRequired=false). A deployment
+		// with NO DATABASE_URL at all treats the DB as optional and stays ready.
+		if db.DatabaseConfigured {
 			if err := checkDatabaseStatus(); err != nil {
-				// Database is optional for readiness if not required
-				checks["database"] = "degraded"
+				ready = false
+				checks["database"] = "unhealthy: " + err.Error()
 			} else {
 				checks["database"] = "ready"
 			}
@@ -531,8 +537,33 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			return
 		}
 
+		// SEC: mask secret values in the exported json/csv/pdf/cyclonedx output
+		// the same way /results and the SARIF branch do. Export is an
+		// authenticated download but must not hand back RAW secrets by default;
+		// ExportResult reads job.Result for every format, so masking that JSON
+		// masks all of them. Opt out with MORF_MASK_RESULTS=false. Fail closed:
+		// on a mask error we refuse to export rather than leak.
+		exportJob := job
+		if os.Getenv("MORF_MASK_RESULTS") != "false" && job.Result != "" {
+			masked, mErr := report.MaskResultJSON([]byte(job.Result))
+			if mErr != nil {
+				log.WithFields(log.Fields{
+					"request_id": requestID,
+					"job_id":     jobID,
+					"error":      mErr.Error(),
+				}).Error("Failed to mask result for export; refusing to export raw secrets")
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": "result unavailable (masking failed)",
+				})
+				return
+			}
+			jobCopy := *job
+			jobCopy.Result = string(masked)
+			exportJob = &jobCopy
+		}
+
 		// Export results
-		exportData, contentType, err := utils.ExportResult(job, utils.ExportFormat(format))
+		exportData, contentType, err := utils.ExportResult(exportJob, utils.ExportFormat(format))
 		if err != nil {
 			log.WithFields(log.Fields{
 				"request_id": requestID,

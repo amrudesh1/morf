@@ -71,3 +71,22 @@ func NewFromEnv() (Storage, error) {
 		return nil, fmt.Errorf("storage: unknown MORF_STORAGE_BACKEND %q (want %q or %q)", backend, BackendLocal, BackendS3)
 	}
 }
+
+// ValidateConfiguredBackend fails fast for a MISCONFIGURED explicit storage
+// backend. The upload store is otherwise constructed lazily on the first
+// /upload and its error is swallowed, so a bad MORF_STORAGE_BACKEND=s3 (missing
+// bucket/credentials, unknown backend name) would boot green and then 500 on
+// every upload. Calling this at startup surfaces the misconfiguration
+// immediately with a clear, actionable error. When the backend is unset or
+// "local" it is lenient (the local dir is created on demand), so a normal
+// deployment is unaffected. STORAGE-startup.
+func ValidateConfiguredBackend() error {
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("MORF_STORAGE_BACKEND")))
+	if backend == "" || backend == BackendLocal {
+		return nil
+	}
+	if _, err := NewFromEnv(); err != nil {
+		return fmt.Errorf("MORF_STORAGE_BACKEND=%q is misconfigured: %w", backend, err)
+	}
+	return nil
+}
