@@ -2,10 +2,19 @@
 # This file extends docker-compose.yml with macOS-specific optimizations
 services:
   morf-backend:
-    # macOS-specific volume mounts for better performance
+    # Apple Silicon: build and run a NATIVE arm64 image. The Dockerfile defaults
+    # to amd64 (for CI/buildx); a plain `docker build` on an M-series Mac would
+    # otherwise produce an emulated amd64 binary that can SIGSEGV in runtime.netpoll.
+    # `platform` forces arm64 at runtime; the build arg forces the Go cross-compile
+    # target to match. buildx multi-arch releases still override both.
+    platform: linux/arm64
+    build:
+      args:
+        TARGETARCH: arm64
+    # macOS-specific volume mounts for better performance. The ./morf/log mount is
+    # intentionally omitted (logs go to stderr, not files).
     volumes:
       - ./morf/uploads:/app/uploads:cached
-      - ./morf/log:/app/log:cached
       - ./morf/patterns:/app/patterns:cached
       - ./morf/db/migrations:/app/db/migrations:cached
     # Enable hot reload for development (if using air or similar)

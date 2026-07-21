@@ -53,17 +53,31 @@ services:
     ports:
       - "9092:9092"
     environment:
-      # DATABASE_URL is assembled from the same MYSQL_* vars as the mysql service
-      # (from .env, with local-dev fallbacks). Override in .env for real use.
-      - DATABASE_URL=${DATABASE_URL:-morf:morf_password@tcp(mysql:3306)/morf?charset=utf8mb4&parseTime=True&loc=Local}
+      # DATABASE_URL is built from the SAME MYSQL_* vars as the mysql service so
+      # they stay the single source of truth: set MYSQL_USER / MYSQL_PASSWORD /
+      # MYSQL_DATABASE (in .env or the environment) and both services agree. The
+      # nested ${VAR:-default} interpolation means editing MYSQL_PASSWORD alone no
+      # longer silently mis-auths the backend. Set DATABASE_URL explicitly only to
+      # point at a DB that is NOT this compose's mysql service.
+      # CAVEAT: this DSN is assembled by raw substitution — DSN-special characters
+      # in MYSQL_PASSWORD (e.g. @ : / ? or whitespace) are NOT URL-escaped and will
+      # corrupt the connection string. Keep the compose password DSN-safe, or set
+      # a fully-escaped DATABASE_URL yourself.
+      - DATABASE_URL=${DATABASE_URL:-${MYSQL_USER:-morf}:${MYSQL_PASSWORD:-morf_password}@tcp(mysql:3306)/${MYSQL_DATABASE:-morf}?charset=utf8mb4&parseTime=True&loc=Local}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - MORF_GIN_MODE=${MORF_GIN_MODE:-debug}
       # SEC: mask secret values in the /results JSON API by default (see
       # router/routers.go). Set MORF_MASK_RESULTS=false only in trusted setups.
       - MORF_MASK_RESULTS=${MORF_MASK_RESULTS:-true}
+      # Persist uploaded artifacts on the ./morf/uploads bind mount below. The
+      # local storage backend defaults to /tmp/morf/uploads (ephemeral); pointing
+      # it at /app/uploads is what makes that mount actually carry data.
+      - MORF_UPLOAD_DIR=${MORF_UPLOAD_DIR:-/app/uploads}
     volumes:
+      # Uploaded artifacts survive container restarts via this mount (paired with
+      # MORF_UPLOAD_DIR=/app/uploads above). Logs are intentionally NOT mounted:
+      # the app writes structured logs to stderr, captured by the json-file driver.
       - ./morf/uploads:/app/uploads
-      - ./morf/log:/app/log
       - ./morf/patterns:/app/patterns
       - ./morf/db/migrations:/app/db/migrations
     depends_on:
@@ -71,6 +85,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Readiness gate for the frontend's depends_on. The debian-slim runtime image
+    # has no curl, so we probe with wget, which morf/Dockerfile installs into the
+    # runtime stage precisely for this check. /api/ready reports 200 only once
+    # Redis (and the DB, if configured) are reachable — see router/routers.go.
+    # start_period covers migrate + first boot.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9092/api/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     networks:
       - morf-network
     # Resource limits for macOS compatibility
@@ -117,8 +142,11 @@ services:
     container_name: morf-frontend
     ports:
       - "80:80"
+    # Wait for the backend to pass its healthcheck (not merely start), so nginx
+    # doesn't proxy to a backend that is still migrating or connecting to deps.
     depends_on:
-      - morf-backend
+      morf-backend:
+        condition: service_healthy
     networks:
       - morf-network
     logging:

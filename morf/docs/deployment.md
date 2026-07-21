@@ -353,7 +353,10 @@ spec:
     spec:
       containers:
       - name: morf
-        image: morf:latest
+        # Replace OWNER with your GitHub owner. The release workflow pushes
+        # ghcr.io/<owner>/morf; a bare `morf:latest` resolves to
+        # docker.io/library/morf and ImagePullBackOffs.
+        image: ghcr.io/OWNER/morf:stable
         ports:
         - containerPort: 9092
         env:

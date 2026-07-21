@@ -59,7 +59,10 @@ spec:
       # of AutoMigrate-on-boot. Mirrors the stable deployment's migrate initContainer.
       initContainers:
       - name: migrate
-        image: morf:canary
+        # NOTE: OWNER is a literal placeholder — replace it with your GitHub owner
+        # (org/user). The release workflow pushes ghcr.io/<owner>/morf; a bare
+        # `morf:canary` would resolve to docker.io/library/morf and ImagePullBackOff.
+        image: ghcr.io/OWNER/morf:canary
         imagePullPolicy: Always
         command: ["morf", "migrate"]
         env:
@@ -70,7 +73,10 @@ spec:
               key: DATABASE_URL
       containers:
       - name: morf
-        image: morf:canary
+        # NOTE: OWNER is a literal placeholder — replace it with your GitHub owner
+        # (org/user). The release workflow pushes ghcr.io/<owner>/morf; a bare
+        # `morf:canary` would resolve to docker.io/library/morf and never pull.
+        image: ghcr.io/OWNER/morf:canary
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false
@@ -104,6 +110,18 @@ spec:
         # AutoMigrate is disabled; the migrate initContainer ran the schema setup.
         - name: MORF_DISABLE_AUTO_MIGRATE
           value: "true"
+        # startupProbe gates liveness/readiness during a slow cold start (large
+        # GHCR image pull + up to ~15s of DB retries after the migrate
+        # initContainer). Up to 30 * 5s = 150s to answer /api/live before
+        # liveness begins; without it, livenessProbe (initialDelaySeconds:30,
+        # failureThreshold:3) can kill-loop a healthy-but-still-starting pod.
+        startupProbe:
+          httpGet:
+            path: /api/live
+            port: 9092
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /api/live
@@ -124,9 +142,17 @@ spec:
           requests:
             memory: "2Gi"
             cpu: "1"
+            # Reserve node-local scratch for the /tmp emptyDir (apktool output,
+            # ripgrep temp). Without it the scheduler cannot account for scan
+            # disk usage and a large APK can trigger DiskPressure eviction.
+            ephemeral-storage: "5Gi"
           limits:
             memory: "8Gi"
             cpu: "4"
+            # Cap total pod ephemeral storage; must be >= the emptyDir sizeLimit
+            # (20Gi) below. Exceeding it evicts this pod cleanly rather than
+            # filling the node.
+            ephemeral-storage: "25Gi"
         volumeMounts:
         # readOnlyRootFilesystem: true requires explicit writable volumes for every
         # path the app writes. This emptyDir covers /tmp (and /tmp/morf, the scanner
@@ -138,7 +164,10 @@ spec:
           mountPath: /tmp/morf/uploads
       volumes:
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          # Cap scanner scratch so a runaway/oversized APK decompile cannot
+          # consume all node disk. Kept in sync with the ephemeral-storage limit.
+          sizeLimit: 20Gi
       - name: uploads
         persistentVolumeClaim:
           claimName: morf-uploads-pvc
@@ -192,6 +221,9 @@ metadata:
   namespace: morf-canary
 spec:
   hosts:
+  # TODO: replace morf.example.com with your real external hostname (must match
+  # the host on the Ingress/Gateway that fronts this VirtualService, and the TLS
+  # cert). This is a placeholder and will not route real traffic as-is.
   - morf.example.com
   http:
   - match:

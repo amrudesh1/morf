@@ -23,8 +23,10 @@ spec:
   template:
     spec:
       containers:
+      # Replace OWNER with your GitHub owner (ghcr.io/<owner>/morf). A bare
+      # `morf:latest` resolves to docker.io/library/morf and ImagePullBackOffs.
       - name: morf
-        image: morf:latest
+        image: ghcr.io/OWNER/morf:stable
 ```
 
 ## Vertical Scaling

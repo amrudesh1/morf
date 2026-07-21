@@ -36,7 +36,7 @@ scrape_configs:
       - role: pod
         namespaces:
           names:
-            - morf-production
+            - morf
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app]
         action: keep
@@ -88,10 +88,10 @@ curl https://morf.example.com/api/health
 #### Component Verification
 ```bash
 # Check database connectivity
-kubectl exec -n morf-production deployment/morf -- morf health-check db
+kubectl exec -n morf deployment/morf -- morf health-check db
 
 # Check Redis connectivity
-kubectl exec -n morf-production deployment/morf -- morf health-check redis
+kubectl exec -n morf deployment/morf -- morf health-check redis
 
 # Check metrics endpoint
 curl https://morf.example.com/api/metrics | grep morf_
@@ -131,13 +131,13 @@ curl https://morf.example.com/api/results/$JOB_ID
 #### Log Analysis
 ```bash
 # Check for errors
-kubectl logs -n morf-production deployment/morf | grep ERROR
+kubectl logs -n morf deployment/morf | grep ERROR
 
 # Check for warnings
-kubectl logs -n morf-production deployment/morf | grep WARN
+kubectl logs -n morf deployment/morf | grep WARN
 
 # Check correlation IDs
-kubectl logs -n morf-production deployment/morf | grep "request_id"
+kubectl logs -n morf deployment/morf | grep "request_id"
 ```
 
 #### Database Health
@@ -206,7 +206,7 @@ sum by (type) (rate(morf_errors_total[5m]))
 curl https://morf.example.com/api/dlq
 
 # Analyze failure reasons
-kubectl logs -n morf-production deployment/morf | grep "job failed" | tail -20
+kubectl logs -n morf deployment/morf | grep "job failed" | tail -20
 ```
 
 #### Resource Validation
@@ -214,10 +214,10 @@ kubectl logs -n morf-production deployment/morf | grep "job failed" | tail -20
 **CPU and Memory:**
 ```bash
 # Check resource usage
-kubectl top pods -n morf-production
+kubectl top pods -n morf
 
 # Check for OOM kills
-kubectl get events -n morf-production --field-selector reason=OOMKilling
+kubectl get events -n morf --field-selector reason=OOMKilling
 ```
 
 **Queue Depth:**

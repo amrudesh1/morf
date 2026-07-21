@@ -1,5 +1,8 @@
 # Stage 1: Build the Go binary (Alpine for smaller size)
-FROM golang:1.24-alpine AS go-builder
+# NOTE: must be >= the `go` directive in go.mod (currently 1.25.5). The official
+# golang images pin GOTOOLCHAIN=local, so an older toolchain refuses to build a
+# newer module rather than auto-downloading — keep this in lockstep with go.mod.
+FROM golang:1.25-alpine AS go-builder
 WORKDIR /app
 
 # Install build dependencies
@@ -57,14 +60,19 @@ RUN echo "Tools downloaded successfully"
 FROM debian:bullseye-slim
 ARG JDK_VERSION=11
 
-# Install runtime dependencies and tools in one layer
+# Install runtime dependencies and tools in one layer.
+# wget is included so the container healthcheck (docker-compose.yml probes
+# http://localhost:9092/api/ready) has a client — the slim base ships neither
+# wget nor curl, and without it the healthcheck would always fail and the
+# frontend's depends_on: service_healthy gate would never release.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates-java \
         openjdk-${JDK_VERSION}-jre-headless \
         openjdk-${JDK_VERSION}-jdk \
         aapt \
-        ripgrep && \
+        ripgrep \
+        wget && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf /var/cache/oracle-jdk${JDK_VERSION}-installer

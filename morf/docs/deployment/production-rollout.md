@@ -60,7 +60,7 @@ curl https://morf-canary.example.com/api/health
 # Check Grafana/Prometheus dashboards
 
 # Backup current production state
-kubectl get deployment morf -n morf-production -o yaml > morf-backup-$(date +%Y%m%d).yaml
+kubectl get deployment morf -n morf -o yaml > morf-backup-$(date +%Y%m%d).yaml
 ```
 
 ### Step 2: Update Production Deployment
@@ -69,13 +69,16 @@ kubectl get deployment morf -n morf-production -o yaml > morf-backup-$(date +%Y%
 
 ```bash
 # Update production deployment image
-kubectl set image deployment/morf morf=morf:latest -n morf-production
+# NOTE: replace OWNER with your GitHub owner; the release workflow pushes
+# ghcr.io/<owner>/morf. A bare `morf:latest` resolves to docker.io/library and
+# ImagePullBackOffs.
+kubectl set image deployment/morf morf=ghcr.io/OWNER/morf:stable -n morf
 
 # Monitor rollout status
-kubectl rollout status deployment/morf -n morf-production
+kubectl rollout status deployment/morf -n morf
 
 # Watch pods
-kubectl get pods -n morf-production -w
+kubectl get pods -n morf -w
 ```
 
 #### For Istio (Traffic Splitting)
@@ -86,7 +89,7 @@ apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: morf-vs
-  namespace: morf-production
+  namespace: morf
 spec:
   hosts:
   - morf.example.com
@@ -107,8 +110,8 @@ spec:
 #### For Docker Compose
 
 ```bash
-# Pull latest image
-docker pull morf:latest
+# Pull latest image (replace OWNER with your GitHub owner)
+docker pull ghcr.io/OWNER/morf:stable
 
 # Update docker-compose.yml with new image
 
@@ -136,7 +139,7 @@ watch -n 5 'curl -s https://morf.example.com/api/metrics | grep morf_errors_tota
 watch -n 5 'curl -s https://morf.example.com/api/metrics | grep morf_queue_depth'
 
 # Monitor pod status
-kubectl get pods -n morf-production -w
+kubectl get pods -n morf -w
 ```
 
 **Key Metrics to Watch:**
@@ -194,7 +197,7 @@ Once validated at current percentage:
 
 ```bash
 # For Kubernetes - complete rollout
-kubectl rollout status deployment/morf -n morf-production
+kubectl rollout status deployment/morf -n morf
 
 # For Istio - increase to 100%
 kubectl apply -f - <<EOF
@@ -202,7 +205,7 @@ apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: morf-vs
-  namespace: morf-production
+  namespace: morf
 spec:
   hosts:
   - morf.example.com
@@ -216,7 +219,7 @@ spec:
 EOF
 
 # Remove old production deployment (after validation)
-# kubectl delete deployment morf -n morf-production
+# kubectl delete deployment morf -n morf
 ```
 
 ### Step 7: Post-Rollout Monitoring
@@ -244,8 +247,8 @@ EOF
 
 ```bash
 # Kubernetes rollback
-kubectl rollout undo deployment/morf -n morf-production
-kubectl rollout status deployment/morf -n morf-production
+kubectl rollout undo deployment/morf -n morf
+kubectl rollout status deployment/morf -n morf
 
 # Or restore from backup
 kubectl apply -f morf-backup-YYYYMMDD.yaml
@@ -256,7 +259,7 @@ apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: morf-vs
-  namespace: morf-production
+  namespace: morf
 spec:
   hosts:
   - morf.example.com
