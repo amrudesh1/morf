@@ -42,6 +42,15 @@ type FrameworkInfo struct {
 	Architectures []string
 	// IsEncrypted is true if any slice reports a FairPlay cryptid != 0.
 	IsEncrypted bool
+	// ShortVersion is CFBundleShortVersionString from the framework bundle's
+	// own Info.plist, when present (e.g. "5.9.0"). It is the version the SBOM
+	// records for the framework component. Empty for dylibs (which have no
+	// bundle plist) and for frameworks whose plist is missing/undecodable.
+	ShortVersion string
+	// BundleID is CFBundleIdentifier from the framework bundle's own
+	// Info.plist, when present (e.g. "org.alamofire.Alamofire"). Best-effort,
+	// used for provenance; empty when no plist could be read/decoded.
+	BundleID string
 }
 
 // EnumerateFrameworks resolves the Mach-O binary for each embedded framework
@@ -61,6 +70,7 @@ func EnumerateFrameworks(jobID string, up *UnpackedIPA) []FrameworkInfo {
 			info.BinaryPath = candidate
 		}
 		fillArch(jobID, &info)
+		fillFrameworkVersion(jobID, &info)
 		out = append(out, info)
 	}
 
@@ -90,6 +100,33 @@ func fillArch(jobID string, info *FrameworkInfo) {
 	}
 	info.Architectures = mi.Architectures
 	info.IsEncrypted = mi.IsEncrypted
+}
+
+// fillFrameworkVersion locates <bundle>/Info.plist for an embedded framework,
+// decodes it with the existing DecodeInfoPlist, and captures its
+// CFBundleShortVersionString (SBOM component version) and CFBundleIdentifier.
+// It is strictly best-effort: a framework bundle with no Info.plist, an
+// unreadable plist, or one that fails to decode simply yields a name-only
+// FrameworkInfo (empty ShortVersion/BundleID) and NEVER aborts the scan. Only
+// .framework bundles have an Info.plist; the dylib path never calls this.
+func fillFrameworkVersion(jobID string, info *FrameworkInfo) {
+	plistPath := filepath.Join(info.Path, "Info.plist")
+	data, err := os.ReadFile(plistPath)
+	if err != nil {
+		// No bundle plist (or unreadable): name-only is fine, not an error.
+		return
+	}
+	ip, err := DecodeInfoPlist(data)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"job_id":    jobID,
+			"framework": info.Name,
+			"error":     err.Error(),
+		}).Debug("Skipping undecodable framework Info.plist")
+		return
+	}
+	info.ShortVersion = ip.ShortVersion
+	info.BundleID = ip.BundleIdentifier
 }
 
 // FrameworkNames returns just the display names of a FrameworkInfo slice, for

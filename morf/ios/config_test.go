@@ -138,7 +138,7 @@ func TestEmbeddedConfigReachesCorpus(t *testing.T) {
 	ipaPath := buildIPA(t, entries)
 	jc := newTestJobCtx(t)
 
-	if _, _, err := StartIOSExtraction(context.Background(), ipaPath, jc); err != nil {
+	if _, _, _, err := StartIOSExtraction(context.Background(), ipaPath, jc); err != nil {
 		t.Fatalf("StartIOSExtraction error: %v", err)
 	}
 

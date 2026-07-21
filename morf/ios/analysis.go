@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"morf/detect"
 	"morf/models"
@@ -54,27 +55,31 @@ const corpusFileName = "ios_strings.corpus"
 // Only genuinely fatal problems (unusable .ipa, unwritable corpus, scan
 // failure) produce an error; per-binary / per-plist parse failures are logged
 // and the scan continues.
-func StartIOSExtraction(ctx context.Context, ipaPath string, jobCtx *utils.JobContext) ([]models.SecretModel, models.IOSMetadata, error) {
+// The 4th return value is the per-app SBOM component inventory (embedded
+// frameworks + dylibs with evidence); the worker threads it into the scan
+// result payload under the "sbomComponents" key that the CycloneDX exporter
+// reads. It is nil on any error path.
+func StartIOSExtraction(ctx context.Context, ipaPath string, jobCtx *utils.JobContext) ([]models.SecretModel, models.IOSMetadata, []models.SBOMComponent, error) {
 	var meta models.IOSMetadata
 
 	// 1. Unpack.
 	up, err := StartUnpack(ipaPath, jobCtx)
 	if err != nil {
-		return nil, meta, fmt.Errorf("ipa unpack failed: %w", err)
+		return nil, meta, nil, fmt.Errorf("ipa unpack failed: %w", err)
 	}
 
 	// Prepare an isolated corpus directory so ripgrep scans exactly our corpus
 	// file and nothing else in the workspace.
 	corpusDir := filepath.Join(jobCtx.GetIOSBinDir(), "corpus")
 	if err := os.MkdirAll(corpusDir, 0o700); err != nil {
-		return nil, meta, fmt.Errorf("create corpus dir %q: %w", corpusDir, err)
+		return nil, meta, nil, fmt.Errorf("create corpus dir %q: %w", corpusDir, err)
 	}
 	corpusPath := filepath.Join(corpusDir, corpusFileName)
 	// Truncate/create the corpus up front so appenders only ever append.
 	if f, cErr := os.OpenFile(corpusPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600); cErr == nil {
 		f.Close()
 	} else {
-		return nil, meta, fmt.Errorf("create corpus file %q: %w", corpusPath, cErr)
+		return nil, meta, nil, fmt.Errorf("create corpus file %q: %w", corpusPath, cErr)
 	}
 
 	// 2. Mach-O strings for the main binary.
@@ -139,6 +144,15 @@ func StartIOSExtraction(ctx context.Context, ipaPath string, jobCtx *utils.JobCo
 	fws := EnumerateFrameworks(jobCtx.JobID, up)
 	meta.Frameworks = marshalJSON(FrameworkNames(fws))
 
+	// SBOM: build one evidence-bearing CycloneDX component per EMBEDDED
+	// framework/dylib. This is the value the worker places under the scan
+	// result payload contract key "sbomComponents" (scanResultData.SBOMComponents).
+	// Only embedded Frameworks/*.framework and *.dylib artifacts are included;
+	// Apple OS system frameworks (UIKit/Foundation/… reached via LC_LOAD_DYLIB
+	// imports) are deliberately excluded — fws is derived from the app bundle's
+	// own Frameworks/ directory, not the main binary's dylib import list.
+	sbom := BuildSBOMComponents(fws)
+
 	// Extract strings from each embedded binary into the corpus as well.
 	for _, fw := range fws {
 		if fw.BinaryPath == "" {
@@ -164,22 +178,23 @@ func StartIOSExtraction(ctx context.Context, ipaPath string, jobCtx *utils.JobCo
 	}
 
 	log.WithFields(log.Fields{
-		"job_id":        jobCtx.JobID,
-		"bundle_id":     meta.BundleIdentifier,
-		"architectures": arches,
-		"encrypted":     encrypted,
-		"frameworks":    summarizeFrameworks(fws),
+		"job_id":          jobCtx.JobID,
+		"bundle_id":       meta.BundleIdentifier,
+		"architectures":   arches,
+		"encrypted":       encrypted,
+		"frameworks":      summarizeFrameworks(fws),
+		"sbom_components": len(sbom),
 	}).Info("iOS metadata assembled")
 
 	// 5. Scan the corpus dir with the shared detector, then sanitize.
 	// PLATFORM-SCOPE: iOS scan → "ios"/"any" patterns run (Android-only rules excluded).
 	rawSecrets, scanErr := detect.ScanCorpus(ctx, jobCtx.JobID, []string{corpusDir}, "ios")
 	if scanErr != nil {
-		return nil, meta, fmt.Errorf("ios corpus scan failed: %w", scanErr)
+		return nil, meta, nil, fmt.Errorf("ios corpus scan failed: %w", scanErr)
 	}
 	secrets := detect.SanitizeSecrets(rawSecrets)
 
-	return secrets, meta, nil
+	return secrets, meta, sbom, nil
 }
 
 // aggregateArch derives the architecture list and encryption flag for the
@@ -205,6 +220,55 @@ func aggregateArch(main *BinaryStrings, fws []FrameworkInfo) ([]string, bool) {
 		}
 	}
 	return arches, encrypted
+}
+
+// BuildSBOMComponents maps the enumerated embedded frameworks/dylibs to
+// evidence-bearing CycloneDX 1.6 components via the foundation constructors. It
+// is the value the worker places under the scan result payload contract key
+// "sbomComponents" (scanResultData.SBOMComponents).
+//
+// Mapping:
+//   - each *.framework bundle -> models.NewFrameworkComponent(name, version, path).
+//     The name is the bundle base name without the ".framework" suffix (so the
+//     purl and bom-ref are clean, e.g. "Alamofire" not "Alamofire.framework"),
+//     the version is CFBundleShortVersionString parsed from the framework's own
+//     Info.plist (empty when absent -> the constructor falls back to name-only
+//     filename evidence), and the path is the framework bundle path (recorded as
+//     the component's single occurrence). A framework with a version is emitted
+//     with manifest-analysis evidence; without one, filename evidence.
+//   - each *.dylib -> models.NewDylibComponent(name, path). A bare dylib has no
+//     bundle plist and therefore no version; the constructor emits name-only
+//     filename evidence.
+//
+// Only EMBEDDED artifacts are included. Apple OS system frameworks
+// (UIKit/Foundation/… linked via LC_LOAD_DYLIB) are never in fws — fws is built
+// from the app bundle's own Frameworks/ directory and its embedded *.dylib
+// files, not the main binary's dylib import list — so they are excluded by
+// construction, not by name filtering. Constructors are called (never
+// hand-built) so the evidence graph stays consistent with the shared contract.
+func BuildSBOMComponents(fws []FrameworkInfo) []models.SBOMComponent {
+	if len(fws) == 0 {
+		return nil
+	}
+	components := make([]models.SBOMComponent, 0, len(fws))
+	for _, fw := range fws {
+		if strings.HasSuffix(fw.Name, ".framework") {
+			name := strings.TrimSuffix(fw.Name, ".framework")
+			components = append(components,
+				models.NewFrameworkComponent(name, fw.ShortVersion, fw.Path))
+			continue
+		}
+		if strings.HasSuffix(fw.Name, ".dylib") {
+			components = append(components,
+				models.NewDylibComponent(fw.Name, fw.Path))
+			continue
+		}
+		// Any other embedded artifact shape (should not occur given unpack only
+		// collects *.framework bundles and *.dylib files) is treated as a dylib
+		// so it is still surfaced with weak filename evidence rather than dropped.
+		components = append(components, models.NewDylibComponent(fw.Name, fw.Path))
+	}
+	return components
 }
 
 // marshalJSON marshals v to a JSON string for storage in an IOSMetadata JSON

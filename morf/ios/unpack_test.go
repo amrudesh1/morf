@@ -170,7 +170,7 @@ func TestStartIOSExtractionEndToEnd(t *testing.T) {
 	ipaPath := buildIPA(t, entries)
 	jc := newTestJobCtx(t)
 
-	secrets, meta, err := StartIOSExtraction(context.Background(), ipaPath, jc)
+	secrets, meta, _, err := StartIOSExtraction(context.Background(), ipaPath, jc)
 	if err != nil {
 		t.Fatalf("StartIOSExtraction error: %v", err)
 	}

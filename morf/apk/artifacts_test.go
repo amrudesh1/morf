@@ -25,6 +25,7 @@ import (
 	"slices"
 	"testing"
 
+	"morf/models"
 	"morf/utils"
 )
 
@@ -217,4 +218,116 @@ func TestStartScanE_LargeNewlineSparseBinary(t *testing.T) {
 	if !found {
 		t.Errorf("planted key not found in the >5MB .so; hits=%v", secrets)
 	}
+}
+
+// writeFakeNativeLib creates a .so under lib/<abi>/<name> with the given bytes,
+// mkdir-ing the ABI directory. No apktool run is required — the tree is the
+// exact shape apktool's "-r" output would leave under GetSourceDir.
+func writeFakeNativeLib(t *testing.T, jc *utils.JobContext, abi, name string, data []byte) {
+	t.Helper()
+	dir := filepath.Join(jc.GetSourceDir(), "lib", abi)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+		t.Fatalf("write %s/%s: %v", dir, name, err)
+	}
+}
+
+// TestEnumerateNativeLibs_GroupsByBasenameAndDetectsFlutter builds a fake
+// decompiled tree with libfoo.so shipped for two ABIs plus a Flutter engine
+// .so, then asserts:
+//   - libfoo.so collapses to exactly ONE component across the two ABIs;
+//   - that component records both lib/<abi>/libfoo.so occurrences;
+//   - it carries a SHA-256 hash entry backed by a hash-comparison identity
+//     method (the byte-identity evidence);
+//   - CollectSBOMComponents additionally yields a "Flutter" runtime component
+//     from the libflutter.so signature.
+//
+// It never shells out to apktool — the tree is constructed directly on disk.
+func TestEnumerateNativeLibs_GroupsByBasenameAndDetectsFlutter(t *testing.T) {
+	jc := jobCtxForDir(t, "job-nativelibs")
+
+	// libfoo.so ships for arm64-v8a and armeabi-v7a with identical bytes; a
+	// Flutter engine .so ships for arm64-v8a only.
+	fooBytes := []byte("\x7fELF-fake-libfoo-contents")
+	writeFakeNativeLib(t, jc, "arm64-v8a", "libfoo.so", fooBytes)
+	writeFakeNativeLib(t, jc, "armeabi-v7a", "libfoo.so", fooBytes)
+	writeFakeNativeLib(t, jc, "arm64-v8a", "libflutter.so", []byte("\x7fELF-fake-flutter"))
+
+	libs := EnumerateNativeLibs(jc)
+
+	// Exactly two distinct native-lib components: libfoo.so and libflutter.so.
+	// libfoo must NOT be duplicated per ABI.
+	byName := map[string]models.SBOMComponent{}
+	for _, c := range libs {
+		if _, dup := byName[c.Name]; dup {
+			t.Fatalf("native lib %q appeared more than once; want exactly one component per basename (got %d total)", c.Name, len(libs))
+		}
+		byName[c.Name] = c
+	}
+	foo, ok := byName["libfoo.so"]
+	if !ok {
+		t.Fatalf("libfoo.so component missing; got components %v", componentNames(libs))
+	}
+
+	// Two ABI occurrences: lib/arm64-v8a/libfoo.so and lib/armeabi-v7a/libfoo.so.
+	gotOcc := make([]string, 0, len(foo.Evidence.Occurrences))
+	for _, o := range foo.Evidence.Occurrences {
+		gotOcc = append(gotOcc, o.Location)
+	}
+	slices.Sort(gotOcc)
+	wantOcc := []string{"lib/arm64-v8a/libfoo.so", "lib/armeabi-v7a/libfoo.so"}
+	if !slices.Equal(gotOcc, wantOcc) {
+		t.Errorf("libfoo occurrences = %v, want %v", gotOcc, wantOcc)
+	}
+
+	// A SHA-256 hash entry must be present.
+	if len(foo.Hashes) != 1 || foo.Hashes[0].Alg != "SHA-256" || foo.Hashes[0].Content == "" {
+		t.Errorf("libfoo hashes = %+v, want one non-empty SHA-256 entry", foo.Hashes)
+	}
+
+	// A hash-comparison identity method (the byte-identity evidence) must back it.
+	if !hasHashComparisonEvidence(foo) {
+		t.Errorf("libfoo missing a hash-comparison identity method; identity = %+v", foo.Evidence.Identity)
+	}
+
+	// CollectSBOMComponents must additionally surface the Flutter runtime.
+	all := CollectSBOMComponents(jc)
+	if !hasRuntimeComponent(all, "Flutter") {
+		t.Errorf("expected a Flutter runtime component from libflutter.so; got %v", componentNames(all))
+	}
+}
+
+// componentNames returns the component names for diagnostic output.
+func componentNames(cs []models.SBOMComponent) []string {
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, c.Name)
+	}
+	return out
+}
+
+// hasHashComparisonEvidence reports whether any identity entry of c is backed by
+// a hash-comparison technique method.
+func hasHashComparisonEvidence(c models.SBOMComponent) bool {
+	for _, id := range c.Evidence.Identity {
+		for _, m := range id.Methods {
+			if m.Technique == models.TechniqueHashComparison {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasRuntimeComponent reports whether cs contains a framework component with the
+// given runtime name.
+func hasRuntimeComponent(cs []models.SBOMComponent, name string) bool {
+	for _, c := range cs {
+		if c.Type == "framework" && c.Name == name {
+			return true
+		}
+	}
+	return false
 }
