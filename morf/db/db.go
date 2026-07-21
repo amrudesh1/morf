@@ -66,8 +66,19 @@ func maskDatabaseURL(dbURL string) string {
 // GormDB is the global database connection for GORM
 var GormDB *gorm.DB
 
-// DatabaseRequired indicates if database operations are required
+// DatabaseRequired indicates if database operations are currently usable. It is
+// set false when no DATABASE_URL is configured OR when the configured DB could
+// not be reached / migrated at startup (the app then boots in a degraded,
+// persistence-disabled mode rather than crashing).
 var DatabaseRequired = true
+
+// DatabaseConfigured records whether a DATABASE_URL was provided at all,
+// independent of whether the connection succeeded. This distinguishes
+// "operator intends a DB but it is currently unreachable" (DatabaseConfigured
+// && !DatabaseRequired) from "no DB intended" (both false). Readiness uses it so
+// a pod that was SUPPOSED to have a DB reports NotReady when the DB is down —
+// otherwise K8s would route traffic to a pod that silently drops every persist.
+var DatabaseConfigured bool
 
 const (
 	maxRetries = 5
@@ -82,6 +93,7 @@ const (
 // InitDB initializes the database connection with retries
 func InitDB() {
 	dbURL := os.Getenv("DATABASE_URL")
+	DatabaseConfigured = dbURL != ""
 	if dbURL == "" {
 		log.Error("DATABASE_URL not set")
 		DatabaseRequired = false
@@ -268,12 +280,22 @@ func runMigrations() error {
 			&models.APIKey{},      // API keys (no SQL migration owns this table)
 			&models.IOSMetadata{}, // iOS metadata; SQL migration 007 owns the authoritative DDL, but the model's gorm.Model uint id already maps to the BIGINT UNSIGNED that 007 creates, so AutoMigrate does not fork the schema and only reconciles when 007 has not yet run.
 		); err != nil {
-			// DB-2: a JSON error from AutoMigrate must NOT short-circuit the SQL
-			// migrations below (the old early `return nil` reported success while
+			// DB-2: a JSON/default error from AutoMigrate must NOT short-circuit the
+			// SQL migrations below (the old early `return nil` reported success while
 			// silently skipping every SQL migration). Log and fall through so the
 			// SQL migrations still run; any other AutoMigrate error is fatal.
-			if strings.Contains(err.Error(), "Invalid JSON text") {
-				log.Warn("AutoMigrate failed due to JSON error; continuing to SQL file migrations")
+			//
+			// The fresh-MySQL-8 failure mode surfaces with more than one message
+			// depending on the MySQL/GORM version: "Invalid JSON text",
+			// "can't have a default value" (Error 1101 on a JSON/TEXT/BLOB column),
+			// or "Invalid default value". Match all of them so the documented
+			// workaround holds across versions rather than only on MySQL's exact
+			// current wording.
+			em := err.Error()
+			if strings.Contains(em, "Invalid JSON text") ||
+				strings.Contains(em, "can't have a default value") ||
+				strings.Contains(em, "Invalid default value") {
+				log.Warnf("AutoMigrate failed due to a JSON/default-value error (%v); continuing to SQL file migrations", err)
 				// fall through to SQL migrations below
 			} else {
 				return fmt.Errorf("failed to run migrations: %v", err)
@@ -730,7 +752,7 @@ func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.I
 						SecretID:      newSecret.ID,
 						Name:          activity.Name,
 						Exported:      activity.Exported,
-						IntentFilters: string(intentFiltersJSON),
+						IntentFilters: jsonColumnValue(string(intentFiltersJSON)),
 					})
 				}
 				if err := tx.CreateInBatches(activities, 100).Error; err != nil {
@@ -747,7 +769,7 @@ func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.I
 						SecretID:      newSecret.ID,
 						Name:          service.Name,
 						Exported:      service.Exported,
-						IntentFilters: string(intentFiltersJSON),
+						IntentFilters: jsonColumnValue(string(intentFiltersJSON)),
 					})
 				}
 				if err := tx.CreateInBatches(services, 100).Error; err != nil {
@@ -761,10 +783,14 @@ func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.I
 				for _, provider := range secret.ContentProviders {
 					authoritiesJSON, _ := json.Marshal(provider.Authorities)
 					providers = append(providers, models.ContentProvider{
-						SecretID:            newSecret.ID,
-						Name:                provider.Name,
-						Exported:            provider.Exported,
-						Authorities:         string(authoritiesJSON),
+						SecretID: newSecret.ID,
+						Name:     provider.Name,
+						Exported: provider.Exported,
+						// IntentFilters was previously never set → Go "" → invalid JSON
+						// → MySQL 3140 → whole scan-insert rolled back. Content providers
+						// carry no intent-filters, so store a valid empty JSON array.
+						IntentFilters:       "[]",
+						Authorities:         jsonColumnValue(string(authoritiesJSON)),
 						GrantUriPermissions: provider.GrantUriPermissions,
 					})
 				}
@@ -782,7 +808,7 @@ func insertSecretsSync(secret models.Secrets, platform string, iosMeta *models.I
 						SecretID:      newSecret.ID,
 						Name:          receiver.Name,
 						Exported:      receiver.Exported,
-						IntentFilters: string(intentFiltersJSON),
+						IntentFilters: jsonColumnValue(string(intentFiltersJSON)),
 					})
 				}
 				if err := tx.CreateInBatches(receivers, 100).Error; err != nil {
@@ -913,6 +939,21 @@ func GetSecretsPage(limit, offset int) []models.Secrets {
 // earlier in the scan pipeline, so collapsing identical values does not depend
 // on this transform. Kept as a pure function so the write-time protection is
 // unit-testable without a live database.
+// jsonColumnValue coerces a value destined for a MySQL JSON-typed column into
+// valid JSON text. An EMPTY Go string is not valid JSON: MySQL rejects it with
+// Error 3140 ("Invalid JSON text: The document is empty."), which aborts the
+// enclosing transaction and rolls back the ENTIRE scan persistence — so a single
+// component with no intent-filters (e.g. androidx.startup.InitializationProvider,
+// present in almost every app) would silently drop all findings for that scan.
+// Empty/whitespace/"null" are normalized to an empty JSON array so the column
+// always holds valid JSON. DB-json-empty.
+func jsonColumnValue(s string) string {
+	if t := strings.TrimSpace(s); t != "" && t != "null" {
+		return t
+	}
+	return "[]"
+}
+
 func buildSecretFinding(secretID uint, secretModel models.SecretModel) models.SecretFinding {
 	finding := models.SecretFinding{
 		SecretID:         secretID,

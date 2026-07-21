@@ -132,3 +132,31 @@ func TestLocalStorage_DefaultDirAndInterface(t *testing.T) {
 		t.Fatalf("local backend LocalPath ok = false")
 	}
 }
+
+// TestValidateConfiguredBackend guards the fail-fast storage-startup fix: an
+// explicit but misconfigured backend must error at startup instead of degrading
+// into per-/upload 500s. Unset/local is lenient; s3 without a bucket and an
+// unknown backend both error.
+func TestValidateConfiguredBackend(t *testing.T) {
+	// Unset → lenient (nil).
+	t.Setenv("MORF_STORAGE_BACKEND", "")
+	if err := ValidateConfiguredBackend(); err != nil {
+		t.Errorf("unset backend: want nil, got %v", err)
+	}
+	// local → lenient.
+	t.Setenv("MORF_STORAGE_BACKEND", "local")
+	if err := ValidateConfiguredBackend(); err != nil {
+		t.Errorf("local backend: want nil, got %v", err)
+	}
+	// unknown → error.
+	t.Setenv("MORF_STORAGE_BACKEND", "gcs")
+	if err := ValidateConfiguredBackend(); err == nil {
+		t.Error("unknown backend: want error, got nil")
+	}
+	// s3 without a bucket → error (misconfig surfaced at startup, not per-upload).
+	t.Setenv("MORF_STORAGE_BACKEND", "s3")
+	t.Setenv("MORF_S3_BUCKET", "")
+	if err := ValidateConfiguredBackend(); err == nil {
+		t.Error("s3 without bucket: want error, got nil")
+	}
+}
