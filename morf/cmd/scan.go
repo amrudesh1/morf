@@ -76,6 +76,7 @@ type scanOptions struct {
 	verify   bool   // enable live verification (sets MORF_ENABLE_VERIFICATION)
 	failOn   string // none|any|verified|keep
 	sarif    bool   // --sarif convenience alias for --format sarif
+	reveal   bool   // --reveal-secrets: emit UNMASKED values (JSON format only)
 	target   string // artifact name for the SARIF/report header
 	platform string
 }
@@ -131,8 +132,12 @@ func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.S
 
 // renderFindings serialises findings in the requested format. The JSON path
 // masks every secretString via report.MaskResultJSON so plaintext secrets never
-// leave the process, matching the SARIF encoder's masking guarantee.
-func renderFindings(format, target, platform string, secrets []models.SecretModel) ([]byte, error) {
+// leave the process, matching the SARIF encoder's masking guarantee — UNLESS
+// reveal is set, an explicit per-run opt-out (`--reveal-secrets`) for scanning
+// your own authorized artifact when you need the plaintext to rotate/verify.
+// reveal never affects SARIF: that format is built for upload to code scanning
+// and must always mask, so a reveal request there is ignored (still masked).
+func renderFindings(format, target, platform string, secrets []models.SecretModel, reveal bool) ([]byte, error) {
 	switch strings.ToLower(format) {
 	case "sarif":
 		return report.EncodeSARIF(target, platform, secrets)
@@ -153,13 +158,15 @@ func renderFindings(format, target, platform string, secrets []models.SecretMode
 		if err != nil {
 			return nil, err
 		}
-		masked, err := report.MaskResultJSON(raw)
-		if err != nil {
-			return nil, err
+		if !reveal {
+			raw, err = report.MaskResultJSON(raw)
+			if err != nil {
+				return nil, err
+			}
 		}
 		// Re-indent for human/diff friendliness.
 		var pretty any
-		if err := json.Unmarshal(masked, &pretty); err != nil {
+		if err := json.Unmarshal(raw, &pretty); err != nil {
 			return nil, err
 		}
 		return json.MarshalIndent(pretty, "", "  ")
@@ -224,7 +231,7 @@ func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []mo
 		return nil, "", exitOperational, perr
 	}
 
-	rendered, rerr := renderFindings(format, opts.target, opts.platform, secrets)
+	rendered, rerr := renderFindings(format, opts.target, opts.platform, secrets, opts.reveal)
 	if rerr != nil {
 		return nil, "", exitOperational, rerr
 	}
@@ -291,6 +298,16 @@ func runScan(ctx context.Context, opts scanOptions, path string, stdout, stderr 
 		opts.target = filepath.Base(path)
 	}
 
+	// Loudly flag the unmask opt-out: reveal only takes effect for JSON (SARIF
+	// always masks), so only warn when it will actually emit plaintext.
+	if opts.reveal && !opts.sarif && strings.EqualFold(opts.format, "json") {
+		dest := "stdout"
+		if strings.TrimSpace(opts.out) != "" {
+			dest = opts.out
+		}
+		fmt.Fprintf(stderr, "WARNING: --reveal-secrets wrote UNMASKED secret values to %s — handle as sensitive.\n", dest)
+	}
+
 	out, summary, code, err := evaluateAndRender(opts, secrets, sbom)
 	if err != nil {
 		return exitOperational, err
@@ -336,6 +353,7 @@ MORF_ENABLE_VERIFICATION=true) to make read-only liveness checks.`,
 	scanCmd.Flags().StringVar(&opts.format, "format", "sarif", "Output format: json|sarif|cyclonedx-sbom")
 	scanCmd.Flags().BoolVar(&opts.verify, "verify", false, "Enable live (read-only) verification of findings")
 	scanCmd.Flags().StringVar(&opts.failOn, "fail-on", "verified", "Gate threshold: none|any|verified|keep")
+	scanCmd.Flags().BoolVar(&opts.reveal, "reveal-secrets", false, "Emit UNMASKED secret values in JSON output (own/authorized artifacts only; ignored for SARIF)")
 
 	return scanCmd
 }
