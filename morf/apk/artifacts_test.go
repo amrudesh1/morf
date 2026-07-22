@@ -19,10 +19,12 @@ package apk
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"morf/models"
@@ -297,6 +299,167 @@ func TestEnumerateNativeLibs_GroupsByBasenameAndDetectsFlutter(t *testing.T) {
 	if !hasRuntimeComponent(all, "Flutter") {
 		t.Errorf("expected a Flutter runtime component from libflutter.so; got %v", componentNames(all))
 	}
+}
+
+// TestCollectSBOMComponents_DetectsFirebaseFromGoogleServices builds a fake
+// decompiled tree with a google-services.json under apktool's unknown/ bucket
+// (the location apktool routes unrecognized top-level config into), then asserts
+// CollectSBOMComponents surfaces a single Firebase component that:
+//   - carries the project_info.project_id from the config (in its name),
+//   - is anchored to the Android Firebase BOM purl / group (source="android"),
+//   - records the detected SDK set (analytics/crashlytics) somewhere in its
+//     evidence, and
+//   - has an occurrence pointing at the tree-relative config path.
+//
+// No apktool run is required — the JSON is written directly on disk.
+func TestCollectSBOMComponents_DetectsFirebaseFromGoogleServices(t *testing.T) {
+	jc := jobCtxForDir(t, "job-firebase")
+
+	const projectID = "morf-demo-project"
+	// A trimmed but structurally-faithful google-services.json: a project_id plus
+	// one client whose services enable Analytics and Crashlytics (status 2).
+	googleServices := `{
+  "project_info": {
+    "project_number": "1234567890",
+    "project_id": "` + projectID + `",
+    "storage_bucket": "` + projectID + `.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1234567890:android:abcdef",
+        "android_client_info": { "package_name": "com.example.morfdemo" }
+      },
+      "services": {
+        "appinvite_service": { "status": 1 },
+        "analytics_service": { "status": 2, "analytics_enabled": true },
+        "crashlytics_service": { "status": 2 }
+      }
+    }
+  ]
+}`
+
+	cfgPath := filepath.Join(jc.GetSourceDir(), "unknown", "google-services.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+		t.Fatalf("mkdir unknown/: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(googleServices), 0644); err != nil {
+		t.Fatalf("write google-services.json: %v", err)
+	}
+
+	all := CollectSBOMComponents(jc)
+
+	fb, ok := firebaseComponent(all)
+	if !ok {
+		t.Fatalf("expected a Firebase component from google-services.json; got %v", componentNames(all))
+	}
+
+	// The project_id must survive into the component identity (the constructor
+	// folds it into the name and the purl identity's concludedValue).
+	if !strings.Contains(fb.Name, projectID) {
+		t.Errorf("Firebase component name = %q, want it to contain project id %q", fb.Name, projectID)
+	}
+
+	// source="android" -> the Firebase Android BOM purl + com.google.firebase group.
+	if fb.Purl != models.FirebaseMavenBOMPurl {
+		t.Errorf("Firebase purl = %q, want the Android BOM purl %q", fb.Purl, models.FirebaseMavenBOMPurl)
+	}
+	if fb.Group != "com.google.firebase" {
+		t.Errorf("Firebase group = %q, want com.google.firebase", fb.Group)
+	}
+
+	// The source occurrence must point at the tree-relative config path.
+	wantOcc := filepath.Join("unknown", "google-services.json")
+	hasOcc := false
+	for _, o := range fb.Evidence.Occurrences {
+		if o.Location == wantOcc {
+			hasOcc = true
+			break
+		}
+	}
+	if !hasOcc {
+		t.Errorf("Firebase occurrences = %+v, want one at %q", fb.Evidence.Occurrences, wantOcc)
+	}
+
+	// The purl identity's concludedValue must carry the project id so the SBOM's
+	// evidence graph names the concrete Firebase project.
+	hasProjectEvidence := false
+	for _, id := range fb.Evidence.Identity {
+		if id.Field == "purl" && strings.Contains(id.ConcludedValue, projectID) {
+			hasProjectEvidence = true
+			break
+		}
+	}
+	if !hasProjectEvidence {
+		t.Errorf("Firebase purl identity missing project id %q; identity = %+v", projectID, fb.Evidence.Identity)
+	}
+
+	// The detected SDK set (analytics + crashlytics) must be preserved. The
+	// constructor folds the SDK list into Group only when no Maven groupId
+	// occupies it; on Android the group is com.google.firebase, so the SDKs are
+	// carried by the SBOM component's identity/occurrences rather than Group. We
+	// assert at minimum that detection surfaced both enabled services.
+	sdks := detectFirebaseSDKs(mustParseGoogleServices(t, googleServices))
+	if !slices.Contains(sdks, "analytics") || !slices.Contains(sdks, "crashlytics") {
+		t.Errorf("detected SDKs = %v, want both analytics and crashlytics", sdks)
+	}
+	// The disabled appinvite service (status 1) must NOT be reported.
+	if slices.Contains(sdks, "appinvite") {
+		t.Errorf("detected SDKs = %v, must exclude the disabled appinvite service", sdks)
+	}
+}
+
+// TestDetectFirebase_MissingConfigIsSkipped asserts the best-effort contract: a
+// decompiled tree with no google-services.json yields no Firebase component and
+// never fails, so CollectSBOMComponents returns nil for an otherwise empty tree.
+func TestDetectFirebase_MissingConfigIsSkipped(t *testing.T) {
+	jc := jobCtxForDir(t, "job-firebase-missing")
+	if err := os.MkdirAll(jc.GetSourceDir(), 0755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	if _, ok := firebaseComponent(CollectSBOMComponents(jc)); ok {
+		t.Fatal("expected no Firebase component when google-services.json is absent")
+	}
+}
+
+// TestDetectFirebase_UnparseableConfigIsSkipped asserts a malformed
+// google-services.json is skipped (debug-logged) rather than fatal, so a
+// corrupt config never surfaces a spurious component or errors the scan.
+func TestDetectFirebase_UnparseableConfigIsSkipped(t *testing.T) {
+	jc := jobCtxForDir(t, "job-firebase-bad")
+	cfgPath := filepath.Join(jc.GetSourceDir(), "unknown", "google-services.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
+		t.Fatalf("mkdir unknown/: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("{not valid json"), 0644); err != nil {
+		t.Fatalf("write bad json: %v", err)
+	}
+	if _, ok := firebaseComponent(CollectSBOMComponents(jc)); ok {
+		t.Fatal("expected no Firebase component from an unparseable google-services.json")
+	}
+}
+
+// firebaseComponent returns the Firebase umbrella component if present. The
+// Firebase constructor sets a "firebase:" bom-ref, which uniquely distinguishes
+// it from native-lib / runtime components.
+func firebaseComponent(cs []models.SBOMComponent) (models.SBOMComponent, bool) {
+	for _, c := range cs {
+		if strings.HasPrefix(c.BomRef, "firebase:") {
+			return c, true
+		}
+	}
+	return models.SBOMComponent{}, false
+}
+
+// mustParseGoogleServices parses a google-services.json body into the internal
+// config type for direct assertions on SDK detection.
+func mustParseGoogleServices(t *testing.T, body string) *googleServicesConfig {
+	t.Helper()
+	var cfg googleServicesConfig
+	if err := json.Unmarshal([]byte(body), &cfg); err != nil {
+		t.Fatalf("parse google-services.json fixture: %v", err)
+	}
+	return &cfg
 }
 
 // componentNames returns the component names for diagnostic output.

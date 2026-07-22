@@ -19,6 +19,7 @@ package apk
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -329,20 +330,158 @@ func hasReactNativeBundle(jobCtx *utils.JobContext) bool {
 	return err == nil && !st.IsDir()
 }
 
+// googleServicesConfig is the subset of a google-services.json we parse for
+// SBOM Firebase detection. The file is the Google-services Gradle plugin's
+// config that a Firebase-enabled Android app ships; it names the Firebase
+// project and the client apps/services registered against it.
+//
+// Only the fields MORF concludes evidence from are modeled; unknown fields are
+// ignored by encoding/json. project_info.project_id is the project identity;
+// each client[].services.<name> is a per-client service block whose presence
+// (with an enabled status) evidences an enabled Firebase SDK.
+type googleServicesConfig struct {
+	ProjectInfo struct {
+		ProjectID     string `json:"project_id"`
+		ProjectNumber string `json:"project_number"`
+	} `json:"project_info"`
+	Client []struct {
+		ClientInfo struct {
+			MobileSDKAppID    string `json:"mobilesdk_app_id"`
+			AndroidClientInfo struct {
+				PackageName string `json:"package_name"`
+			} `json:"android_client_info"`
+		} `json:"client_info"`
+		// Services is the per-client service map. Real keys include
+		// appinvite_service, ads_service, analytics_service, etc. We only look at
+		// whether the block is present with a non-disabled status; the exact shape
+		// varies, so it is decoded as a permissive map.
+		Services map[string]struct {
+			Status              int  `json:"status"`
+			AnalyticsEnabled    bool `json:"analytics_enabled"`
+			GA4AutoLoggingRules any  `json:"ga4_auto_logging_rules"`
+		} `json:"services"`
+	} `json:"client"`
+}
+
+// googleServicesSearchPaths returns, in priority order, the candidate locations
+// of a google-services.json inside the apktool "-r" output tree. apktool routes
+// unrecognized top-level config into unknown/, but a google-services.json can
+// also survive as a raw resource (res/raw/) or sit at the decompiled tree root.
+func googleServicesSearchPaths(jobCtx *utils.JobContext) []string {
+	src := jobCtx.GetSourceDir()
+	return []string{
+		filepath.Join(src, "unknown", "google-services.json"),
+		filepath.Join(src, "res", "raw", "google-services.json"),
+		filepath.Join(src, "google-services.json"),
+	}
+}
+
+// detectFirebaseSDKs derives the sorted, de-duplicated set of enabled Firebase
+// services from the parsed config. A service is counted when at least one client
+// registers it with a non-disabled status (google-services uses status==2 for
+// enabled, status==1 for absent/disabled; analytics_enabled corroborates
+// Analytics). The "_service" suffix is trimmed so the SBOM records "analytics",
+// "ads", … rather than the raw JSON keys.
+func detectFirebaseSDKs(cfg *googleServicesConfig) []string {
+	set := map[string]struct{}{}
+	for _, client := range cfg.Client {
+		for name, svc := range client.Services {
+			enabled := svc.Status >= 2 || svc.AnalyticsEnabled
+			if !enabled {
+				continue
+			}
+			set[strings.TrimSuffix(name, "_service")] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// detectFirebase looks for a google-services.json in the decompiled tree, parses
+// it, and returns a single umbrella Firebase SBOM component built via
+// models.NewFirebaseComponent (source="android" -> pkg:maven firebase-bom).
+//
+// It is strictly best-effort: no file found, an unreadable file, or a file that
+// does not parse as the expected JSON is logged at debug and yields (nil,false),
+// never an error — a missing Firebase config must never fail a scan. The
+// returned evidencePath is the tree-relative path of the config so the SBOM
+// occurrence points at the artifact that evidenced the component.
+func detectFirebase(jobCtx *utils.JobContext) (models.SBOMComponent, bool) {
+	src := jobCtx.GetSourceDir()
+	for _, path := range googleServicesSearchPaths(jobCtx) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue // not at this location; try the next candidate
+		}
+
+		var cfg googleServicesConfig
+		if jErr := json.Unmarshal(data, &cfg); jErr != nil {
+			log.WithFields(log.Fields{
+				"job_id": jobCtx.JobID,
+				"path":   path,
+				"error":  jErr.Error(),
+			}).Debug("Skipping unparseable google-services.json for Firebase SBOM detection")
+			continue
+		}
+		if cfg.ProjectInfo.ProjectID == "" {
+			log.WithFields(log.Fields{
+				"job_id": jobCtx.JobID,
+				"path":   path,
+			}).Debug("google-services.json has no project_info.project_id; skipping Firebase SBOM component")
+			continue
+		}
+
+		sdks := detectFirebaseSDKs(&cfg)
+		// Record the occurrence as a tree-relative path so it reads the same way
+		// as the native-lib lib/<abi>/<name> occurrences.
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil {
+			rel = path
+		}
+
+		log.WithFields(log.Fields{
+			"job_id":     jobCtx.JobID,
+			"project_id": cfg.ProjectInfo.ProjectID,
+			"sdks":       strings.Join(sdks, ","),
+			"path":       rel,
+		}).Debug("Detected Firebase integration from google-services.json")
+
+		return models.NewFirebaseComponent(
+			cfg.ProjectInfo.ProjectID,
+			sdks,
+			models.FirebaseSourceAndroid,
+			rel,
+		), true
+	}
+	return models.SBOMComponent{}, false
+}
+
 // CollectSBOMComponents assembles the full Android SBOM component set for a
-// scanned APK: every distinct native library (EnumerateNativeLibs) plus any
-// detected runtime framework (classifyRuntime). This is the single entry point
-// the scan pipeline wires into the result payload under the contract key
+// scanned APK: every distinct native library (EnumerateNativeLibs), any detected
+// runtime framework (classifyRuntime), and a structured Firebase component when a
+// google-services.json is present (detectFirebase). This is the single entry
+// point the scan pipeline wires into the result payload under the contract key
 // "sbomComponents". It is best-effort and never fails a scan.
 func CollectSBOMComponents(jobCtx *utils.JobContext) []models.SBOMComponent {
 	libs := EnumerateNativeLibs(jobCtx)
 	runtimes := classifyRuntime(nativeLibNames(jobCtx), hasReactNativeBundle(jobCtx))
+	firebase, hasFirebase := detectFirebase(jobCtx)
 
-	if len(libs) == 0 && len(runtimes) == 0 {
+	if len(libs) == 0 && len(runtimes) == 0 && !hasFirebase {
 		return nil
 	}
-	out := make([]models.SBOMComponent, 0, len(libs)+len(runtimes))
+	out := make([]models.SBOMComponent, 0, len(libs)+len(runtimes)+1)
 	out = append(out, libs...)
 	out = append(out, runtimes...)
+	if hasFirebase {
+		out = append(out, firebase)
+	}
 	return out
 }

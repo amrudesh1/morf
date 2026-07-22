@@ -144,14 +144,15 @@ func StartIOSExtraction(ctx context.Context, ipaPath string, jobCtx *utils.JobCo
 	fws := EnumerateFrameworks(jobCtx.JobID, up)
 	meta.Frameworks = marshalJSON(FrameworkNames(fws))
 
-	// SBOM: build one evidence-bearing CycloneDX component per EMBEDDED
-	// framework/dylib. This is the value the worker places under the scan
-	// result payload contract key "sbomComponents" (scanResultData.SBOMComponents).
-	// Only embedded Frameworks/*.framework and *.dylib artifacts are included;
-	// Apple OS system frameworks (UIKit/Foundation/… reached via LC_LOAD_DYLIB
-	// imports) are deliberately excluded — fws is derived from the app bundle's
-	// own Frameworks/ directory, not the main binary's dylib import list.
-	sbom := BuildSBOMComponents(fws)
+	// SBOM: build the evidence-bearing CycloneDX component inventory. It contains
+	// one component per EMBEDDED framework/dylib, plus THIRD-PARTY Mach-O
+	// LC_LOAD_DYLIB imports not already covered by an embedded component, plus a
+	// single Firebase umbrella component when a GoogleService-Info.plist is
+	// present. This is the value the worker places under the scan result payload
+	// contract key "sbomComponents" (scanResultData.SBOMComponents). Apple OS
+	// system frameworks (UIKit/Foundation/… reached via LC_LOAD_DYLIB imports)
+	// are deliberately excluded by the import filter.
+	sbom := BuildSBOMComponents(jobCtx.JobID, up, fws)
 
 	// Extract strings from each embedded binary into the corpus as well.
 	for _, fw := range fws {
@@ -222,53 +223,145 @@ func aggregateArch(main *BinaryStrings, fws []FrameworkInfo) ([]string, bool) {
 	return arches, encrypted
 }
 
-// BuildSBOMComponents maps the enumerated embedded frameworks/dylibs to
-// evidence-bearing CycloneDX 1.6 components via the foundation constructors. It
-// is the value the worker places under the scan result payload contract key
-// "sbomComponents" (scanResultData.SBOMComponents).
+// BuildSBOMComponents assembles the evidence-bearing CycloneDX 1.6 component
+// inventory for an unpacked app via the foundation constructors. It is the value
+// the worker places under the scan result payload contract key "sbomComponents"
+// (scanResultData.SBOMComponents). It layers three sources, in order:
 //
-// Mapping:
-//   - each *.framework bundle -> models.NewFrameworkComponent(name, version, path).
-//     The name is the bundle base name without the ".framework" suffix (so the
-//     purl and bom-ref are clean, e.g. "Alamofire" not "Alamofire.framework"),
-//     the version is CFBundleShortVersionString parsed from the framework's own
-//     Info.plist (empty when absent -> the constructor falls back to name-only
-//     filename evidence), and the path is the framework bundle path (recorded as
-//     the component's single occurrence). A framework with a version is emitted
-//     with manifest-analysis evidence; without one, filename evidence.
-//   - each *.dylib -> models.NewDylibComponent(name, path). A bare dylib has no
-//     bundle plist and therefore no version; the constructor emits name-only
-//     filename evidence.
+//  1. EMBEDDED frameworks/dylibs (from fws):
+//     - each *.framework bundle -> models.NewFrameworkComponent(name, version,
+//     bundleID, path). The name is the bundle base name without ".framework"
+//     (clean purl/bom-ref, e.g. "Alamofire"), version is
+//     CFBundleShortVersionString from the framework's own Info.plist (empty ->
+//     name-only filename evidence), bundleID is its CFBundleIdentifier (fed to
+//     PurlFor for ecosystem-purl mapping), and path is the framework bundle
+//     (its single occurrence).
+//     - each *.dylib -> models.NewDylibComponent(name, path): name-only filename
+//     evidence.
 //
-// Only EMBEDDED artifacts are included. Apple OS system frameworks
-// (UIKit/Foundation/… linked via LC_LOAD_DYLIB) are never in fws — fws is built
-// from the app bundle's own Frameworks/ directory and its embedded *.dylib
-// files, not the main binary's dylib import list — so they are excluded by
-// construction, not by name filtering. Constructors are called (never
-// hand-built) so the evidence graph stays consistent with the shared contract.
-func BuildSBOMComponents(fws []FrameworkInfo) []models.SBOMComponent {
-	if len(fws) == 0 {
-		return nil
-	}
-	components := make([]models.SBOMComponent, 0, len(fws))
+//  2. THIRD-PARTY Mach-O LC_LOAD_DYLIB imports (from the main binary + every
+//     framework binary): OS/system and Swift-runtime imports are filtered out by
+//     ExtractImportedDylibs; each surviving import whose base name is NOT already
+//     covered by an embedded component (step 1) is emitted via
+//     models.NewImportedLibraryComponent(name, "LC_LOAD_DYLIB:"+installName).
+//     This is the weakest identity source (a load command names a library but
+//     carries no version/bytes), deduped by name so a dependency embedded AND
+//     linked is reported once (as the stronger embedded component).
+//
+//  3. FIREBASE: when a GoogleService-Info.plist exists in the app bundle it is
+//     parsed (best-effort) and a single umbrella models.NewFirebaseComponent(
+//     projectID, sdks, FirebaseSourceIOS, plistPath) is emitted.
+//
+// Every step is best-effort: a binary that will not parse or a Firebase plist
+// that will not decode is logged and skipped, never fatal.
+func BuildSBOMComponents(jobID string, up *UnpackedIPA, fws []FrameworkInfo) []models.SBOMComponent {
+	var components []models.SBOMComponent
+
+	// covered tracks the base names already represented by an embedded component
+	// so a linked-AND-embedded dependency is not double-counted as a weaker
+	// imported-library component.
+	covered := map[string]bool{}
+
+	// 1. Embedded frameworks / dylibs.
 	for _, fw := range fws {
 		if strings.HasSuffix(fw.Name, ".framework") {
 			name := strings.TrimSuffix(fw.Name, ".framework")
 			components = append(components,
-				models.NewFrameworkComponent(name, fw.ShortVersion, fw.Path))
+				models.NewFrameworkComponent(name, fw.ShortVersion, fw.BundleID, fw.Path))
+			covered[name] = true
 			continue
 		}
 		if strings.HasSuffix(fw.Name, ".dylib") {
-			components = append(components,
-				models.NewDylibComponent(fw.Name, fw.Path))
+			components = append(components, models.NewDylibComponent(fw.Name, fw.Path))
+			covered[fw.Name] = true
 			continue
 		}
 		// Any other embedded artifact shape (should not occur given unpack only
 		// collects *.framework bundles and *.dylib files) is treated as a dylib
 		// so it is still surfaced with weak filename evidence rather than dropped.
 		components = append(components, models.NewDylibComponent(fw.Name, fw.Path))
+		covered[fw.Name] = true
 	}
+
+	if up == nil {
+		return components
+	}
+
+	// 2. Third-party Mach-O imports, deduped against embedded components and
+	// against each other (ExtractImportedDylibs already dedups within one binary;
+	// importSeen dedups across binaries).
+	components = append(components, importedLibraryComponents(jobID, up, covered)...)
+
+	// 3. Firebase umbrella component from GoogleService-Info.plist.
+	if fc := firebaseComponent(jobID, up.AppBundlePath); fc != nil {
+		components = append(components, *fc)
+	}
+
 	return components
+}
+
+// importedLibraryComponents enumerates third-party LC_LOAD_DYLIB imports across
+// the main binary and every framework binary, filters OS/system + Swift-runtime
+// imports (done inside ExtractImportedDylibs), drops any import already covered
+// by an embedded component, and returns one weak imported-library component per
+// remaining unique import. It is best-effort per binary: a binary that will not
+// parse is logged at Debug and skipped.
+func importedLibraryComponents(jobID string, up *UnpackedIPA, covered map[string]bool) []models.SBOMComponent {
+	var out []models.SBOMComponent
+	importSeen := map[string]bool{}
+
+	binaries := []string{up.MainBinaryPath}
+	for _, fw := range up.Frameworks {
+		base := strings.TrimSuffix(filepath.Base(fw), ".framework")
+		if bin := filepath.Join(fw, base); fileExists(bin) {
+			binaries = append(binaries, bin)
+		}
+	}
+
+	for _, bin := range binaries {
+		if bin == "" {
+			continue
+		}
+		imports, err := ExtractImportedDylibs(bin)
+		if err != nil {
+			log.WithFields(log.Fields{"job_id": jobID, "binary": bin, "error": err.Error()}).
+				Debug("Skipping unparseable binary for import enumeration")
+			continue
+		}
+		for _, imp := range imports {
+			if covered[imp.Name] || importSeen[imp.Name] {
+				continue
+			}
+			importSeen[imp.Name] = true
+			out = append(out, models.NewImportedLibraryComponent(imp.Name, "LC_LOAD_DYLIB:"+imp.InstallName))
+		}
+	}
+	return out
+}
+
+// firebaseComponent looks for a GoogleService-Info.plist in the app bundle root,
+// parses it best-effort, and returns a single Firebase umbrella component (iOS
+// source). It returns nil when there is no bundle path, no config file, or the
+// config cannot be decoded — Firebase detection NEVER fails the scan.
+func firebaseComponent(jobID, appBundlePath string) *models.SBOMComponent {
+	if appBundlePath == "" {
+		return nil
+	}
+	plistPath := filepath.Join(appBundlePath, GoogleServiceInfoName)
+	data, err := os.ReadFile(plistPath)
+	if err != nil {
+		return nil // no Firebase config: not an error.
+	}
+	fc, err := ParseGoogleServiceInfoPlist(data)
+	if err != nil {
+		log.WithFields(log.Fields{"job_id": jobID, "plist": plistPath, "error": err.Error()}).
+			Debug("Skipping undecodable GoogleService-Info.plist")
+		return nil
+	}
+	c := models.NewFirebaseComponent(fc.ProjectID, fc.SDKs, models.FirebaseSourceIOS, plistPath)
+	log.WithFields(log.Fields{"job_id": jobID, "project_id": fc.ProjectID, "sdks": fc.SDKs}).
+		Info("Detected Firebase (GoogleService-Info.plist)")
+	return &c
 }
 
 // marshalJSON marshals v to a JSON string for storage in an IOSMetadata JSON

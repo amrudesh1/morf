@@ -21,6 +21,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path"
+	"strings"
 
 	"github.com/blacktop/go-macho"
 	"github.com/blacktop/go-macho/types"
@@ -335,4 +337,124 @@ func logBinaryStrings(jobID string, bs *BinaryStrings) {
 		"encrypted":     bs.IsEncrypted,
 		"string_count":  total,
 	}).Info("Extracted Mach-O strings")
+}
+
+// ImportedDylib pairs a Mach-O LC_LOAD_DYLIB install-name with the base name of
+// the library it points at. InstallName is the raw dependency string as it
+// appears in the load command (e.g. "@rpath/Alamofire.framework/Alamofire");
+// Name is its file base name (e.g. "Alamofire"), suitable as the SBOM component
+// name and PurlFor lookup key.
+type ImportedDylib struct {
+	// InstallName is the raw LC_LOAD_DYLIB dependency string.
+	InstallName string
+	// Name is the base library name derived from InstallName.
+	Name string
+}
+
+// ExtractImportedDylibs opens the Mach-O at path (thin or fat/universal),
+// enumerates its LC_LOAD_DYLIB (and weak/reexport/upward/lazy) import
+// install-names across every architecture slice, FILTERS OUT OS/system and
+// Swift-runtime imports, and returns the surviving THIRD-PARTY imports
+// de-duplicated by base name.
+//
+// It is deliberately conservative: anything living under a system prefix
+// (/System/, /usr/lib/, system /Library/Frameworks) or that looks like an Apple
+// framework / Swift runtime dylib is dropped, so only genuinely bundled
+// third-party dependencies (typically @rpath/... imports) survive. It is
+// best-effort — a binary that cannot be parsed yields (nil, error) and callers
+// log-and-continue rather than fail the scan.
+func ExtractImportedDylibs(path string) ([]ImportedDylib, error) {
+	seen := map[string]bool{}
+	var out []ImportedDylib
+
+	collect := func(f *macho.File) {
+		if f == nil {
+			return
+		}
+		for _, installName := range f.ImportedLibraries() {
+			if installName == "" || isSystemDylib(installName) {
+				continue
+			}
+			base := dylibBaseName(installName)
+			if base == "" || seen[base] {
+				continue
+			}
+			seen[base] = true
+			out = append(out, ImportedDylib{InstallName: installName, Name: base})
+		}
+	}
+
+	fat, err := macho.OpenFat(path)
+	if err == nil {
+		defer fat.Close()
+		for i := range fat.Arches {
+			collect(fat.Arches[i].File)
+		}
+		return out, nil
+	}
+	if err != macho.ErrNotFat {
+		return nil, fmt.Errorf("open fat Mach-O %q: %w", path, err)
+	}
+
+	thin, err := macho.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open thin Mach-O %q: %w", path, err)
+	}
+	defer thin.Close()
+	collect(thin)
+	return out, nil
+}
+
+// dylibBaseName reduces an LC_LOAD_DYLIB install-name to the base library name
+// used as the SBOM component name / PurlFor key. For a framework import
+// ("@rpath/Alamofire.framework/Alamofire") this is the framework name
+// ("Alamofire"); for a plain dylib ("@rpath/libFoo.dylib") it is the file's
+// base name ("libFoo.dylib"). The @rpath/@loader_path/@executable_path DYLD
+// prefixes are stripped first.
+func dylibBaseName(installName string) string {
+	p := installName
+	for _, prefix := range []string{"@rpath/", "@loader_path/", "@executable_path/"} {
+		p = strings.TrimPrefix(p, prefix)
+	}
+	// A framework import path contains "X.framework/X"; the library name is the
+	// framework's own name, not the (identical) trailing binary — derive it from
+	// the ".framework" path segment so the name is clean.
+	if idx := strings.Index(p, ".framework/"); idx >= 0 {
+		return path.Base(p[:idx])
+	}
+	return path.Base(p)
+}
+
+// systemDylibPrefixes are the install-name path prefixes that mark an OS /
+// platform-provided dependency. Anything under these lives in the OS, not the
+// app bundle, so it is never a third-party SBOM component.
+var systemDylibPrefixes = []string{
+	"/System/",
+	"/usr/lib/",
+	"/Library/Frameworks/",
+}
+
+// isSystemDylib reports whether an LC_LOAD_DYLIB install-name refers to an
+// OS/system dependency (or the Swift runtime) that must be excluded from the
+// third-party SBOM. It matches:
+//   - absolute system paths (/System/, /usr/lib/, /Library/Frameworks/),
+//     covering Apple's public frameworks (Foundation, UIKit, …) and libSystem,
+//   - the Swift runtime shipped via @rpath/libswift* (libswiftCore.dylib and
+//     the libswift* family), which is a platform runtime, not a dependency the
+//     app authored.
+//
+// It is intentionally conservative in the OTHER direction too: any remaining
+// @rpath import that is NOT a Swift-runtime dylib is treated as third-party, so
+// a genuine bundled dependency is never silently dropped.
+func isSystemDylib(installName string) bool {
+	for _, prefix := range systemDylibPrefixes {
+		if strings.HasPrefix(installName, prefix) {
+			return true
+		}
+	}
+	// Swift runtime dylibs are shipped under @rpath (or a bundle path) but are a
+	// platform runtime, not an app dependency: @rpath/libswiftCore.dylib,
+	// @rpath/libswiftFoundation.dylib, … The base name always starts "libswift".
+	base := dylibBaseName(installName)
+	return strings.HasPrefix(base, "libswift")
 }

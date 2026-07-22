@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"morf/models"
 )
 
 // fakeFirebaseAPIKey is a plausible-looking but fake Google API key
@@ -159,5 +161,83 @@ func TestEmbeddedConfigReachesCorpus(t *testing.T) {
 	// The bundled JSON key must have flowed through the new JSON sweep.
 	if !strings.Contains(corpus, "[json=") || !strings.Contains(corpus, "google-services.json") {
 		t.Errorf("corpus missing embedded JSON provenance; corpus=\n%s", corpus)
+	}
+}
+
+// TestParseGoogleServiceInfoPlist proves the Firebase config parser extracts the
+// PROJECT_ID and the provisioned-capability key set from a GoogleService-Info.plist.
+// sampleGoogleServiceInfoPlist declares PROJECT_ID + GCM_SENDER_ID + API_KEY (and
+// BUNDLE_ID, which is not a capability key), so the detected SDK set is exactly
+// {API_KEY, GCM_SENDER_ID} (sorted).
+func TestParseGoogleServiceInfoPlist(t *testing.T) {
+	fc, err := ParseGoogleServiceInfoPlist([]byte(sampleGoogleServiceInfoPlist))
+	if err != nil {
+		t.Fatalf("ParseGoogleServiceInfoPlist error: %v", err)
+	}
+	if fc.ProjectID != "morf-test-project" {
+		t.Errorf("ProjectID = %q; want morf-test-project", fc.ProjectID)
+	}
+	// API_KEY + GCM_SENDER_ID are provisioned capability keys; BUNDLE_ID is not.
+	want := []string{"API_KEY", "GCM_SENDER_ID"}
+	if len(fc.SDKs) != len(want) {
+		t.Fatalf("SDKs = %v; want %v", fc.SDKs, want)
+	}
+	for i, k := range want {
+		if fc.SDKs[i] != k {
+			t.Errorf("SDKs[%d] = %q; want %q (SDKs=%v)", i, fc.SDKs[i], k, fc.SDKs)
+		}
+	}
+}
+
+// TestBuildSBOMComponentsFirebase proves a GoogleService-Info.plist in the app
+// bundle produces ONE Firebase umbrella component (iOS source) carrying the
+// project id: the purl is the CocoaPods Firebase pod, the projectID is folded
+// into the name and the purl identity's concludedValue, and the plist is its
+// occurrence. No frameworks/dylibs/imports are present, so it is the only
+// component.
+func TestBuildSBOMComponentsFirebase(t *testing.T) {
+	root := t.TempDir()
+	appBundle := filepath.Join(root, "Payload", "App.app")
+	if err := os.MkdirAll(appBundle, 0o700); err != nil {
+		t.Fatalf("mkdir app bundle: %v", err)
+	}
+	plistPath := filepath.Join(appBundle, GoogleServiceInfoName)
+	if err := os.WriteFile(plistPath, []byte(sampleGoogleServiceInfoPlist), 0o600); err != nil {
+		t.Fatalf("write GoogleService-Info.plist: %v", err)
+	}
+
+	up := &UnpackedIPA{AppBundlePath: appBundle}
+	components := BuildSBOMComponents("test-job", up, nil)
+
+	if len(components) != 1 {
+		t.Fatalf("BuildSBOMComponents returned %d components; want 1 (Firebase only)", len(components))
+	}
+	c := components[0]
+
+	if c.Type != "library" {
+		t.Errorf("Type = %q; want library", c.Type)
+	}
+	// Firebase on iOS maps to the umbrella CocoaPod, never the Android Maven BOM.
+	if c.Purl != models.FirebaseCocoaPodsPurl {
+		t.Errorf("Purl = %q; want %q (iOS CocoaPods Firebase)", c.Purl, models.FirebaseCocoaPodsPurl)
+	}
+	// The projectID must surface in the component name and the bom-ref.
+	if !strings.Contains(c.Name, "morf-test-project") {
+		t.Errorf("Name = %q; want it to contain the projectID morf-test-project", c.Name)
+	}
+	if c.BomRef != "firebase:morf-test-project" {
+		t.Errorf("BomRef = %q; want firebase:morf-test-project", c.BomRef)
+	}
+	// The purl identity's concludedValue must carry the projectID as evidence.
+	if len(c.Evidence.Identity) != 1 || c.Evidence.Identity[0].Field != "purl" {
+		t.Fatalf("Identity = %+v; want a single purl identity", c.Evidence.Identity)
+	}
+	if !strings.Contains(c.Evidence.Identity[0].ConcludedValue, "morf-test-project") {
+		t.Errorf("purl identity concludedValue = %q; want it to carry projectID",
+			c.Evidence.Identity[0].ConcludedValue)
+	}
+	// The plist is the single occurrence.
+	if len(c.Evidence.Occurrences) != 1 || c.Evidence.Occurrences[0].Location != plistPath {
+		t.Errorf("Occurrences = %+v; want single occurrence at %q", c.Evidence.Occurrences, plistPath)
 	}
 }

@@ -16,7 +16,10 @@ limitations under the License.
 
 package models
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // SBOMComponent models a single CycloneDX 1.6 component together with the
 // EVIDENCE that justifies its identity. This is the contract type that the
@@ -147,15 +150,30 @@ func genericPurl(name, version string) string {
 // NewFrameworkComponent builds a "framework" component for an iOS/embedded
 // framework observed at path.
 //
-// Evidence:
+// The bundleID is the framework's CFBundleIdentifier (e.g.
+// "org.cocoapods.Alamofire", "io.realm.Realm"), used purely as an ecosystem
+// anchor for purl mapping — it is NOT recorded as a field, only fed to PurlFor.
+//
+// Purl + group:
+//   - When PurlFor(name, bundleID, version) matches, the component carries the
+//     real ecosystem purl (pkg:cocoapods / pkg:swift / pkg:maven), Group is set
+//     for a Maven match, and an ADDITIONAL "purl" identity is recorded. Its
+//     technique is manifest-analysis when the mapping was anchored by the
+//     bundleID (an org.cocoapods.* CFBundleIdentifier we parsed from a plist),
+//     or ast-fingerprint when the mapping was name-only (we recognized the
+//     library from its binary/framework name alone). Either way at MEDIUM
+//     confidence — a curated coordinate is a strong-but-not-byte-exact claim.
+//   - When there is no confident mapping, the component keeps the honest
+//     pkg:generic purl and only the name/version evidence below.
+//
+// Name/version evidence (always present):
 //   - When version is present, the name+version identity is backed by
-//     manifest-analysis (an Info.plist / manifest field) at MEDIUM confidence,
-//     reflecting structured metadata we parsed rather than merely inferred.
+//     manifest-analysis (an Info.plist / manifest field) at MEDIUM confidence.
 //   - When version is absent, only the name is concluded, backed by filename
 //     evidence at LOW confidence.
 //
 // A single occurrence records the framework's path.
-func NewFrameworkComponent(name, version, path string) SBOMComponent {
+func NewFrameworkComponent(name, version, bundleID, path string) SBOMComponent {
 	c := SBOMComponent{
 		Type:    "framework",
 		Name:    name,
@@ -197,6 +215,29 @@ func NewFrameworkComponent(name, version, path string) SBOMComponent {
 				},
 			},
 		}
+	}
+
+	// Upgrade the ecosystem-agnostic pkg:generic purl to a curated, real
+	// coordinate when we are confident of one. bundleID anchoring (an
+	// org.cocoapods.* CFBundleIdentifier) is manifest-analysis; recognizing the
+	// library from its name alone is ast-fingerprint.
+	if purl, group, matched := PurlFor(name, bundleID, version); matched {
+		c.Purl = purl
+		if group != "" {
+			c.Group = group
+		}
+		technique := TechniqueASTFingerprint
+		if bundleIDIsCocoaPods(bundleID) {
+			technique = TechniqueManifestAnalysis
+		}
+		c.Evidence.Identity = append(c.Evidence.Identity, SBOMIdentity{
+			Field:          "purl",
+			Confidence:     ConfidenceMedium,
+			ConcludedValue: purl,
+			Methods: []SBOMMethod{
+				{Technique: technique, Confidence: ConfidenceMedium, Value: purl},
+			},
+		})
 	}
 	return c
 }
@@ -319,6 +360,136 @@ func NewRuntimeComponent(name string, evidencePaths []string) SBOMComponent {
 			continue
 		}
 		c.Evidence.Occurrences = append(c.Evidence.Occurrences, SBOMOccurrence{Location: p})
+	}
+	return c
+}
+
+// Firebase source hints for NewFirebaseComponent. Callers pass the platform
+// they detected Firebase on so the constructor can emit the correct ecosystem
+// purl (Firebase ships as a Maven BOM on Android and an umbrella CocoaPod on
+// iOS).
+const (
+	// FirebaseSourceAndroid selects the Firebase Android BOM (pkg:maven) purl.
+	FirebaseSourceAndroid = "android"
+	// FirebaseSourceIOS selects the Firebase umbrella CocoaPod (pkg:cocoapods) purl.
+	FirebaseSourceIOS = "ios"
+)
+
+// NewFirebaseComponent builds a "library" component for a detected Firebase
+// integration.
+//
+// Firebase is special-cased (rather than emitted as N separate framework/native
+// components) because on-device it presents as a Google-services config
+// (GoogleService-Info.plist on iOS, google-services.json on Android) that names
+// a projectID and enables a set of SDKs, plus the individual Firebase product
+// frameworks/libs. This constructor produces ONE umbrella component that records
+// the projectID and the detected SDK set, so the SBOM has a single, coherent
+// Firebase entry.
+//
+// Purl:
+//   - source == FirebaseSourceAndroid -> pkg:maven/com.google.firebase/firebase-bom
+//     (the Android BOM, MORF's canonical Firebase-Android coordinate), Group set
+//     to the com.google.firebase groupId.
+//   - otherwise (iOS / unknown) -> pkg:cocoapods/Firebase (the umbrella pod).
+//
+// No version is invented — a Firebase config declares a projectID and SDKs, not
+// a resolved SDK version. The projectID is recorded as the purl identity's
+// concludedValue and the detected SDK set is folded into the Group so it is not
+// lost. Evidence is a single manifest-analysis purl identity at MEDIUM
+// confidence (we parsed a structured Google-services manifest), with one
+// occurrence at evidencePath.
+func NewFirebaseComponent(projectID string, sdks []string, source, evidencePath string) SBOMComponent {
+	name := "Firebase"
+	if projectID != "" {
+		name = fmt.Sprintf("Firebase (%s)", projectID)
+	}
+
+	c := SBOMComponent{
+		Type:   "library",
+		Name:   name,
+		BomRef: "firebase:" + firebaseRef(projectID),
+	}
+
+	if source == FirebaseSourceAndroid {
+		c.Purl = FirebaseMavenBOMPurl
+		c.Group = "com.google.firebase"
+	} else {
+		c.Purl = FirebaseCocoaPodsPurl
+	}
+
+	// Record the detected SDK set without fabricating a version. When there is
+	// no Maven groupId occupying Group, we surface the SDK list there so the
+	// signal survives into the SBOM; the concludedValue carries the projectID.
+	if len(sdks) > 0 && c.Group == "" {
+		c.Group = "sdks: " + strings.Join(sdks, ", ")
+	}
+
+	concluded := c.Purl
+	if projectID != "" {
+		concluded = fmt.Sprintf("%s (projectID=%s)", c.Purl, projectID)
+	}
+	c.Evidence.Identity = []SBOMIdentity{
+		{
+			Field:          "purl",
+			Confidence:     ConfidenceMedium,
+			ConcludedValue: concluded,
+			Methods: []SBOMMethod{
+				{Technique: TechniqueManifestAnalysis, Confidence: ConfidenceMedium, Value: c.Purl},
+			},
+		},
+	}
+	if evidencePath != "" {
+		c.Evidence.Occurrences = []SBOMOccurrence{{Location: evidencePath}}
+	}
+	return c
+}
+
+// firebaseRef derives a stable bom-ref suffix for a Firebase component: the
+// projectID when present, else the literal "Firebase".
+func firebaseRef(projectID string) string {
+	if projectID != "" {
+		return projectID
+	}
+	return "Firebase"
+}
+
+// NewImportedLibraryComponent builds a "library" component for a third-party
+// Mach-O dynamic-library import (an LC_LOAD_DYLIB entry pointing at a bundled
+// framework/dylib) observed at path.
+//
+// This is the WEAKEST identity source MORF emits: a load command names a
+// library but carries no version and no bytes we hashed, so identity is
+// name-only via binary-analysis at LOW confidence. When the import name maps to
+// a curated coordinate we still upgrade the purl (PurlFor with no bundleID —
+// name-only matching), and set Group for a Maven coordinate; otherwise the
+// component keeps the honest pkg:generic fallback.
+func NewImportedLibraryComponent(name, path string) SBOMComponent {
+	c := SBOMComponent{
+		Type:   "library",
+		Name:   name,
+		BomRef: "import:" + name,
+		Purl:   genericPurl(name, ""),
+		Evidence: SBOMEvidence{
+			Identity: []SBOMIdentity{
+				{
+					Field:          "name",
+					Confidence:     ConfidenceLow,
+					ConcludedValue: name,
+					Methods: []SBOMMethod{
+						{Technique: TechniqueBinaryAnalysis, Confidence: ConfidenceLow, Value: name},
+					},
+				},
+			},
+		},
+	}
+	if purl, group, matched := PurlFor(name, "", ""); matched {
+		c.Purl = purl
+		if group != "" {
+			c.Group = group
+		}
+	}
+	if path != "" {
+		c.Evidence.Occurrences = []SBOMOccurrence{{Location: path}}
 	}
 	return c
 }

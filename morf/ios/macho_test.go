@@ -239,6 +239,91 @@ func TestWriteCorpusProvenanceAndEncrypted(t *testing.T) {
 	}
 }
 
+// --- Import-filter unit tests (no cross-build) ---
+
+// TestDylibBaseName proves an LC_LOAD_DYLIB install-name is reduced to the clean
+// base library name used as the SBOM component name / PurlFor key: the DYLD
+// prefixes (@rpath/@loader_path/@executable_path) are stripped, a
+// "X.framework/X" import yields the framework name X (not the trailing binary),
+// and a plain dylib yields its file base name.
+func TestDylibBaseName(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"@rpath/Alamofire.framework/Alamofire", "Alamofire"},
+		{"@rpath/libSomeThirdParty.dylib", "libSomeThirdParty.dylib"},
+		{"@executable_path/Frameworks/Realm.framework/Realm", "Realm"},
+		{"/System/Library/Frameworks/Foundation.framework/Foundation", "Foundation"},
+		{"/usr/lib/libSystem.B.dylib", "libSystem.B.dylib"},
+		{"@rpath/libswiftCore.dylib", "libswiftCore.dylib"},
+	}
+	for _, c := range cases {
+		if got := dylibBaseName(c.in); got != c.want {
+			t.Errorf("dylibBaseName(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestIsSystemDylib proves the filter drops OS/system and Swift-runtime imports
+// while keeping genuine third-party @rpath imports. This is the conservative
+// gate that keeps Apple frameworks (UIKit/Foundation/libSystem) and the Swift
+// runtime (libswift*) out of the third-party SBOM.
+func TestIsSystemDylib(t *testing.T) {
+	system := []string{
+		"/System/Library/Frameworks/UIKit.framework/UIKit",
+		"/System/Library/Frameworks/Foundation.framework/Foundation",
+		"/usr/lib/libSystem.B.dylib",
+		"/usr/lib/libobjc.A.dylib",
+		"/Library/Frameworks/SomeSystem.framework/SomeSystem",
+		"@rpath/libswiftCore.dylib",          // Swift runtime, shipped via @rpath
+		"@rpath/libswiftFoundation.dylib",    // Swift runtime family
+		"/usr/lib/swift/libswiftUIKit.dylib", // Swift runtime under /usr/lib
+	}
+	for _, s := range system {
+		if !isSystemDylib(s) {
+			t.Errorf("isSystemDylib(%q) = false; want true (system/runtime import)", s)
+		}
+	}
+
+	thirdParty := []string{
+		"@rpath/Alamofire.framework/Alamofire",
+		"@rpath/Realm.framework/Realm",
+		"@rpath/libThirdParty.dylib",
+		"@loader_path/Vendored.framework/Vendored",
+	}
+	for _, s := range thirdParty {
+		if isSystemDylib(s) {
+			t.Errorf("isSystemDylib(%q) = true; want false (third-party import)", s)
+		}
+	}
+}
+
+// TestExtractImportedDylibsFiltersSystem builds a local Mach-O (which links only
+// against system libraries + the Go/Swift runtime) and asserts the import
+// enumeration filters ALL of them out — a self-contained cgo binary has no
+// bundled third-party @rpath framework, so the third-party import set is empty.
+// This exercises the real go-macho LC_LOAD_DYLIB walk end-to-end through the
+// filter. It skips when a darwin/arm64 cgo cross-build is unavailable.
+func TestExtractImportedDylibsFiltersSystem(t *testing.T) {
+	bin := buildTestMachO(t)
+
+	imports, err := ExtractImportedDylibs(bin)
+	if err != nil {
+		t.Fatalf("ExtractImportedDylibs error: %v", err)
+	}
+	for _, imp := range imports {
+		if isSystemDylib(imp.InstallName) {
+			t.Errorf("system import %q leaked through the filter", imp.InstallName)
+		}
+	}
+	// A locally built self-contained binary links only system/runtime libs, so
+	// after filtering there must be no third-party imports left.
+	if len(imports) != 0 {
+		t.Errorf("expected no third-party imports from a self-contained binary; got %+v", imports)
+	}
+}
+
 func TestAppendBinaryCorpus(t *testing.T) {
 	dir := t.TempDir()
 	corpusPath := filepath.Join(dir, "corpus.txt")
