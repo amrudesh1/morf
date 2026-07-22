@@ -515,6 +515,15 @@ func ScanCorpus(ctx context.Context, jobID string, roots []string, platform stri
 type ScanOptions struct {
 	Text          bool
 	ExtraExcludes []string
+	// MaxFileSizeMB, when > 0 and Text is set, passes ripgrep --max-filesize so
+	// the binary pass SKIPS files larger than this many MB. PERF-2: a compiled
+	// Flutter/Unity/ML artifact (e.g. a 100 MB+ libapp.so Dart AOT snapshot) is a
+	// dense blob that yields a flood of -a/-o matches, and per-match attribution
+	// over the combined pattern set then pins the scan for many minutes (rg ends
+	// up pipe-blocked). Such oversized native blobs almost never carry
+	// text-pattern secrets in proportion to that cost, so the binary pass bounds
+	// per-file size. The text pass (real source/resources) is never size-capped.
+	MaxFileSizeMB int
 }
 
 // ScanCorpusText is the binary-safe sibling of ScanCorpus: it runs ripgrep with
@@ -524,7 +533,24 @@ type ScanOptions struct {
 // this pass from re-scanning roots already covered by the text pass. Attribution,
 // precision and sanitize are identical to ScanCorpus (SCAN-1/RECALL/PRECISION).
 func ScanCorpusText(ctx context.Context, jobID string, roots []string, platform string, extraExcludes []string) ([]models.SecretModel, error) {
-	return scanCorpusWithOpts(ctx, jobID, roots, platform, ScanOptions{Text: true, ExtraExcludes: extraExcludes})
+	return scanCorpusWithOpts(ctx, jobID, roots, platform, ScanOptions{
+		Text:          true,
+		ExtraExcludes: extraExcludes,
+		MaxFileSizeMB: binaryPassMaxFileSizeMB(),
+	})
+}
+
+// binaryPassMaxFileSizeMB is the per-file size cap (MB) for the binary --text
+// pass, tunable via MORF_BINARY_MAX_FILESIZE_MB. Default 50. Set 0 (or negative)
+// to disable the cap and scan native blobs of any size (slow on Flutter/Unity
+// apps — see ScanOptions.MaxFileSizeMB / PERF-2).
+func binaryPassMaxFileSizeMB() int {
+	if v := strings.TrimSpace(os.Getenv("MORF_BINARY_MAX_FILESIZE_MB")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return 50
 }
 
 // buildRgArgs assembles the ripgrep argument list for a corpus scan. It is
@@ -552,6 +578,12 @@ func buildRgArgs(patternFilePath string, excludeGlobs, existing []string, opts S
 		// guard against pathological line lengths (the stream reader truncates as
 		// a backstop).
 		base = append(base, "-a", "-o")
+		// PERF-2: skip oversized native blobs (e.g. a 100 MB+ Flutter libapp.so)
+		// whose dense match output pins per-match attribution. Only applied to the
+		// binary pass; 0 disables.
+		if opts.MaxFileSizeMB > 0 {
+			base = append(base, "--max-filesize", fmt.Sprintf("%dM", opts.MaxFileSizeMB))
+		}
 	}
 	args := append(base, excludeGlobs...)
 	args = append(args, opts.ExtraExcludes...)
