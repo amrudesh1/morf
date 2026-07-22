@@ -46,7 +46,7 @@ func buildCycloneDXFixture() (*models.ScanJob, *scanResultPayload) {
 			PackageName: "com.example.app",
 			Version:     "3.2.1",
 			SBOMComponents: []models.SBOMComponent{
-				models.NewFrameworkComponent("Alamofire", "5.9.0", "Frameworks/Alamofire.framework"),
+				models.NewFrameworkComponent("Alamofire", "5.9.0", "", "Frameworks/Alamofire.framework"),
 				models.NewNativeLibComponent("libflutter.so", []string{"arm64-v8a", "armeabi-v7a"}, sha),
 				models.NewRuntimeComponent("Flutter", []string{"Frameworks/Flutter.framework/Flutter"}),
 			},
@@ -175,8 +175,11 @@ func TestExportCycloneDX16Structure(t *testing.T) {
 	if fw["version"] != "5.9.0" {
 		t.Errorf("Alamofire version = %v; want 5.9.0", fw["version"])
 	}
-	if fw["purl"] != "pkg:generic/Alamofire@5.9.0" {
-		t.Errorf("Alamofire purl = %v; want pkg:generic/Alamofire@5.9.0", fw["purl"])
+	// Phase 2: Alamofire is a known library, so even name-only (no bundleID) it
+	// maps to its real ecosystem coordinate (the SPM host form) rather than
+	// pkg:generic. A CocoaPods bundleID would instead yield pkg:cocoapods/Alamofire.
+	if fw["purl"] != "pkg:swift/github.com/Alamofire/Alamofire@5.9.0" {
+		t.Errorf("Alamofire purl = %v; want pkg:swift/github.com/Alamofire/Alamofire@5.9.0", fw["purl"])
 	}
 	assertHasTechnique(t, fw, "Alamofire", models.TechniqueManifestAnalysis, models.ConfidenceMedium)
 	assertHasOccurrence(t, fw, "Alamofire", "Frameworks/Alamofire.framework")

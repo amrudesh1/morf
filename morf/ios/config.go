@@ -20,7 +20,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+
+	"howett.net/plist"
 )
 
 // AppendJSONCorpus reads the (JSON) config file at jsonPath and appends its
@@ -57,4 +60,67 @@ func AppendJSONCorpus(corpusPath, jsonPath string) error {
 		return fmt.Errorf("flush corpus %q: %w", corpusPath, err)
 	}
 	return nil
+}
+
+// GoogleServiceInfoName is the fixed file name of the Firebase config plist an
+// iOS app bundles when it integrates the Firebase SDK.
+const GoogleServiceInfoName = "GoogleService-Info.plist"
+
+// firebaseSDKKeys are the GoogleService-Info.plist keys MORF treats as evidence
+// of a specific Firebase capability being provisioned. When present (and
+// non-empty) each is folded into the detected-SDK set the SBOM records, so the
+// Firebase component names WHICH Firebase products the config enables rather
+// than emitting a bare "Firebase present" signal. The keys are the canonical
+// GoogleService-Info.plist keys the Firebase iOS SDK reads.
+var firebaseSDKKeys = []string{
+	"GCM_SENDER_ID",  // Cloud Messaging / push
+	"GOOGLE_APP_ID",  // core app identity (FirebaseCore)
+	"API_KEY",        // Firebase API key (auth/config)
+	"CLIENT_ID",      // OAuth / Google Sign-In
+	"DATABASE_URL",   // Realtime Database
+	"STORAGE_BUCKET", // Cloud Storage
+	"IS_ANALYTICS_ENABLED",
+}
+
+// FirebaseConfig is the decoded, best-effort view of a Firebase
+// GoogleService-Info.plist. ProjectID is the Firebase project identifier and
+// SDKs is the sorted set of firebaseSDKKeys the plist populated (evidence of
+// which Firebase products the config provisions).
+type FirebaseConfig struct {
+	// ProjectID is the Firebase PROJECT_ID (empty when the key is absent).
+	ProjectID string
+	// SDKs is the sorted set of provisioned Firebase capability keys present in
+	// the plist (a subset of firebaseSDKKeys), used as the SBOM SDK evidence.
+	SDKs []string
+}
+
+// ParseGoogleServiceInfoPlist decodes a Firebase GoogleService-Info.plist
+// (binary or XML) and extracts the PROJECT_ID and the set of provisioned
+// Firebase capability keys (firebaseSDKKeys that are present and non-empty).
+//
+// It reuses the existing howett.net/plist decode (same engine as
+// DecodeInfoPlist), decoding into a flat string map so heterogeneous scalar
+// types (strings, bools) are handled uniformly. It is strictly best-effort: an
+// unreadable / undecodable plist yields (nil, error) and the caller
+// log-and-continues — a Firebase config that fails to parse must NEVER fail the
+// scan.
+func ParseGoogleServiceInfoPlist(data []byte) (*FirebaseConfig, error) {
+	var raw map[string]interface{}
+	if _, err := plist.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("decode GoogleService-Info.plist: %w", err)
+	}
+
+	// Flatten scalars to strings so PROJECT_ID and the capability keys read
+	// uniformly regardless of their plist scalar type.
+	flat := map[string]string{}
+	flattenPlistMap("", raw, flat)
+
+	cfg := &FirebaseConfig{ProjectID: flat["PROJECT_ID"]}
+	for _, k := range firebaseSDKKeys {
+		if v, ok := flat[k]; ok && v != "" {
+			cfg.SDKs = append(cfg.SDKs, k)
+		}
+	}
+	sort.Strings(cfg.SDKs)
+	return cfg, nil
 }

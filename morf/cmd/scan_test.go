@@ -186,7 +186,7 @@ func TestEvaluateAndRenderSarifAliasOverridesFormat(t *testing.T) {
 // exits 0 (an inventory is not gated by --fail-on).
 func TestEvaluateAndRenderSBOMFormat(t *testing.T) {
 	sbom := []models.SBOMComponent{
-		models.NewFrameworkComponent("Alamofire", "5.4.3", "Payload/App.app/Frameworks/Alamofire.framework"),
+		models.NewFrameworkComponent("Alamofire", "5.4.3", "org.cocoapods.Alamofire", "Payload/App.app/Frameworks/Alamofire.framework"),
 		models.NewNativeLibComponent("libssl.so", []string{"arm64-v8a"}, "deadbeef"),
 	}
 	opts := scanOptions{format: "cyclonedx-sbom", target: "app.ipa", platform: "ios", failOn: "verified"}

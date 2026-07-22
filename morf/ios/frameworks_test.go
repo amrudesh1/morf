@@ -33,13 +33,15 @@ import (
 
 // alamofireFrameworkPlist is a minimal but representative embedded framework
 // Info.plist. The only fields the extractor reads are CFBundleShortVersionString
-// (the SBOM component version) and CFBundleIdentifier (provenance).
+// (the SBOM component version) and CFBundleIdentifier (the ecosystem anchor fed
+// to PurlFor). The bundle id carries the "org.cocoapods." prefix CocoaPods
+// stamps on embedded pod frameworks, so PurlFor emits the CocoaPods coordinate.
 const alamofireFrameworkPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>org.alamofire.Alamofire</string>
+	<string>org.cocoapods.Alamofire</string>
 	<key>CFBundleName</key>
 	<string>Alamofire</string>
 	<key>CFBundleShortVersionString</key>
@@ -91,21 +93,23 @@ func TestEnumerateFrameworksCapturesShortVersion(t *testing.T) {
 	if fw.ShortVersion != "5.9.0" {
 		t.Errorf("ShortVersion = %q; want 5.9.0 (from CFBundleShortVersionString)", fw.ShortVersion)
 	}
-	if fw.BundleID != "org.alamofire.Alamofire" {
-		t.Errorf("BundleID = %q; want org.alamofire.Alamofire", fw.BundleID)
+	if fw.BundleID != "org.cocoapods.Alamofire" {
+		t.Errorf("BundleID = %q; want org.cocoapods.Alamofire", fw.BundleID)
 	}
 }
 
-// TestBuildSBOMComponentsFrameworkVersion is the core proof for this stage: the
-// framework component is produced with the parsed version, the framework path as
-// its occurrence, and manifest-analysis evidence (because a version was parsed
-// from the bundle plist) at MEDIUM confidence.
+// TestBuildSBOMComponentsFrameworkVersion is the core proof for this stage: an
+// embedded Alamofire.framework with CFBundleIdentifier org.cocoapods.Alamofire
+// and a parsed version maps to a framework component whose purl is the real
+// CocoaPods coordinate pkg:cocoapods/Alamofire@<ver> (the org.cocoapods. bundle
+// id anchors the ecosystem), with the framework path as its occurrence and
+// manifest-analysis evidence for name + version + purl.
 func TestBuildSBOMComponentsFrameworkVersion(t *testing.T) {
 	fwBundle := writeFakeAppWithFramework(t)
 	up := &UnpackedIPA{Frameworks: []string{fwBundle}}
 
 	fws := EnumerateFrameworks("test-job", up)
-	components := BuildSBOMComponents(fws)
+	components := BuildSBOMComponents("test-job", up, fws)
 
 	if len(components) != 1 {
 		t.Fatalf("BuildSBOMComponents returned %d components; want 1", len(components))
@@ -122,9 +126,11 @@ func TestBuildSBOMComponentsFrameworkVersion(t *testing.T) {
 	if c.Version != "5.9.0" {
 		t.Errorf("Version = %q; want 5.9.0 (parsed CFBundleShortVersionString)", c.Version)
 	}
-	// PURL RULE: default pkg:generic/<name>@<version>; never pkg:swift.
-	if c.Purl != "pkg:generic/Alamofire@5.9.0" {
-		t.Errorf("Purl = %q; want pkg:generic/Alamofire@5.9.0", c.Purl)
+	// PURL RULE: an org.cocoapods.* CFBundleIdentifier anchors the CocoaPods
+	// ecosystem, so the curated coordinate pkg:cocoapods/Alamofire@<ver> is
+	// emitted (not the pkg:generic fallback, and not the pkg:swift host form).
+	if c.Purl != "pkg:cocoapods/Alamofire@5.9.0" {
+		t.Errorf("Purl = %q; want pkg:cocoapods/Alamofire@5.9.0", c.Purl)
 	}
 	if c.BomRef != "framework:Alamofire" {
 		t.Errorf("BomRef = %q; want framework:Alamofire", c.BomRef)
@@ -135,12 +141,13 @@ func TestBuildSBOMComponentsFrameworkVersion(t *testing.T) {
 		t.Fatalf("Occurrences = %+v; want single occurrence at %q", c.Evidence.Occurrences, fwBundle)
 	}
 
-	// Evidence: because a version was parsed, identity is backed by
-	// manifest-analysis (structured plist metadata), NOT filename. Assert both
-	// the name and version identities carry the manifest-analysis technique.
-	if len(c.Evidence.Identity) != 2 {
-		t.Fatalf("Identity entries = %d; want 2 (name + version)", len(c.Evidence.Identity))
+	// Evidence: name + version (manifest-analysis, because a version was parsed
+	// from the bundle plist) PLUS an additional purl identity (the CocoaPods
+	// coordinate was anchored by the org.cocoapods. bundle id -> manifest-analysis).
+	if len(c.Evidence.Identity) != 3 {
+		t.Fatalf("Identity entries = %d; want 3 (name + version + purl)", len(c.Evidence.Identity))
 	}
+	var sawPurlIdentity bool
 	for _, id := range c.Evidence.Identity {
 		if len(id.Methods) != 1 {
 			t.Fatalf("identity %q has %d methods; want 1", id.Field, len(id.Methods))
@@ -154,6 +161,15 @@ func TestBuildSBOMComponentsFrameworkVersion(t *testing.T) {
 			t.Errorf("identity %q confidence = %v; want %v (MEDIUM)",
 				id.Field, m.Confidence, models.ConfidenceMedium)
 		}
+		if id.Field == "purl" {
+			sawPurlIdentity = true
+			if id.ConcludedValue != "pkg:cocoapods/Alamofire@5.9.0" {
+				t.Errorf("purl identity concludedValue = %q; want pkg:cocoapods/Alamofire@5.9.0", id.ConcludedValue)
+			}
+		}
+	}
+	if !sawPurlIdentity {
+		t.Errorf("expected a purl identity for the mapped CocoaPods coordinate")
 	}
 }
 
@@ -174,7 +190,7 @@ func TestBuildSBOMComponentsNameOnlyWhenNoPlist(t *testing.T) {
 		t.Fatalf("missing plist should yield empty ShortVersion; got %+v", fws)
 	}
 
-	components := BuildSBOMComponents(fws)
+	components := BuildSBOMComponents("test-job", up, fws)
 	if len(components) != 1 {
 		t.Fatalf("BuildSBOMComponents returned %d components; want 1", len(components))
 	}
@@ -215,7 +231,7 @@ func TestBuildSBOMComponentsDylib(t *testing.T) {
 	up := &UnpackedIPA{Dylibs: []string{dylib}}
 
 	fws := EnumerateFrameworks("test-job", up)
-	components := BuildSBOMComponents(fws)
+	components := BuildSBOMComponents("test-job", up, fws)
 	if len(components) != 1 {
 		t.Fatalf("BuildSBOMComponents returned %d components; want 1", len(components))
 	}
@@ -234,13 +250,16 @@ func TestBuildSBOMComponentsDylib(t *testing.T) {
 	}
 }
 
-// TestBuildSBOMComponentsEmpty proves an app with no embedded frameworks/dylibs
-// yields nil (no spurious components).
+// TestBuildSBOMComponentsEmpty proves an app with no embedded frameworks/dylibs,
+// no parseable binaries and no Firebase config yields nil (no spurious
+// components). A nil UnpackedIPA (no binaries/bundle to inspect) and an empty
+// bundle both take the early/no-op paths.
 func TestBuildSBOMComponentsEmpty(t *testing.T) {
-	if got := BuildSBOMComponents(nil); got != nil {
-		t.Errorf("BuildSBOMComponents(nil) = %+v; want nil", got)
+	if got := BuildSBOMComponents("test-job", nil, nil); got != nil {
+		t.Errorf("BuildSBOMComponents(nil up, nil fws) = %+v; want nil", got)
 	}
-	if got := BuildSBOMComponents([]FrameworkInfo{}); got != nil {
-		t.Errorf("BuildSBOMComponents(empty) = %+v; want nil", got)
+	emptyUp := &UnpackedIPA{AppBundlePath: t.TempDir()}
+	if got := BuildSBOMComponents("test-job", emptyUp, []FrameworkInfo{}); got != nil {
+		t.Errorf("BuildSBOMComponents(empty up, empty fws) = %+v; want nil", got)
 	}
 }
