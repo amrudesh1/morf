@@ -212,3 +212,39 @@ func TestEvaluateAndRenderSBOMFormat(t *testing.T) {
 		t.Errorf("summary missing component count: %q", summary)
 	}
 }
+
+// TestEvaluateAndRenderJSONRevealShowsSecret is the counterpart to the masking
+// test: with reveal set, --format json emits the plaintext value verbatim (the
+// explicit opt-out for scanning your own authorized artifact). This guards the
+// flag actually reaching renderFindings — a regression here silently re-masks.
+func TestEvaluateAndRenderJSONRevealShowsSecret(t *testing.T) {
+	const raw = "AKIAEXAMPLE1234567890"
+	secrets := []models.SecretModel{finding("aws-key", raw, "active", "keep")}
+	opts := scanOptions{format: "json", reveal: true, failOn: "none", target: "app.apk", platform: "android"}
+	out, _, _, err := evaluateAndRender(opts, secrets, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !json.Valid(out) {
+		t.Fatalf("JSON output is not valid JSON")
+	}
+	if !strings.Contains(string(out), raw) {
+		t.Errorf("--reveal-secrets did not emit the plaintext value; got: %s", out)
+	}
+}
+
+// TestEvaluateAndRenderSARIFRevealStillMasks proves reveal is scoped to JSON:
+// SARIF is built for upload to code scanning and must never carry plaintext,
+// so a reveal request on the SARIF path is ignored (value stays masked).
+func TestEvaluateAndRenderSARIFRevealStillMasks(t *testing.T) {
+	const raw = "AKIAEXAMPLE1234567890"
+	secrets := []models.SecretModel{finding("aws-key", raw, "active", "keep")}
+	opts := scanOptions{format: "sarif", reveal: true, failOn: "none", target: "app.apk", platform: "android"}
+	out, _, _, err := evaluateAndRender(opts, secrets, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(string(out), raw) {
+		t.Errorf("SARIF leaked plaintext even though reveal must not apply to SARIF: %s", out)
+	}
+}

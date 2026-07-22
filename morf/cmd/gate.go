@@ -96,7 +96,7 @@ func maskGateResult(res gate.GateResult) ([]byte, error) {
 		if len(in) == 0 {
 			return []any{}, nil
 		}
-		raw, err := renderFindings("json", "", "", in)
+		raw, err := renderFindings("json", "", "", in, false) // gate output always masks
 		if err != nil {
 			return nil, err
 		}
