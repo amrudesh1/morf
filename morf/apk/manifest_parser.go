@@ -33,6 +33,9 @@ var (
 	mpAndroidNameRe      = regexp.MustCompile(`android:name\(.*?\)="([^"]+)"`)
 	mpExportedStringRe   = regexp.MustCompile(`android:exported\(.*?\)="([^"]+)"`)
 	mpExportedHexRe      = regexp.MustCompile(`android:exported\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`)
+	mpPermissionRe       = regexp.MustCompile(`android:permission\(.*?\)="([^"]+)"`)
+	mpReadPermissionRe   = regexp.MustCompile(`android:readPermission\(.*?\)="([^"]+)"`)
+	mpWritePermissionRe  = regexp.MustCompile(`android:writePermission\(.*?\)="([^"]+)"`)
 	mpGrantUriStringRe   = regexp.MustCompile(`android:grantUriPermissions\(.*?\)="([^"]+)"`)
 	mpGrantUriHexRe      = regexp.MustCompile(`android:grantUriPermissions\(.*?\)=\(type [^)]+\)(0x[0-9a-f]+)`)
 	mpAuthoritiesRe      = regexp.MustCompile(`android:authorities\(.*?\)="([^"]+)"`)
@@ -261,6 +264,12 @@ func extractActivities(lines []string, targetSdk int) []models.ManifestActivityI
 			}
 		}
 
+		// Extract android:permission attribute
+		permission := ""
+		if m := mpPermissionRe.FindStringSubmatch(block); len(m) >= 2 {
+			permission = m[1]
+		}
+
 		// Extract intent filters
 		log.Debugf("Extracting intent filters for activity: %s", activityName)
 		intentFilters := extractIntentFilters(block)
@@ -269,6 +278,7 @@ func extractActivities(lines []string, targetSdk int) []models.ManifestActivityI
 		activity := models.ManifestActivityInfo{
 			Name:          activityName,
 			Exported:      exported,
+			Permission:    permission,
 			IntentFilters: intentFilters,
 		}
 		activities = append(activities, activity)
@@ -335,6 +345,12 @@ func extractServices(lines []string, targetSdk int) []models.ManifestServiceInfo
 			}
 		}
 
+		// Extract android:permission attribute
+		permission := ""
+		if m := mpPermissionRe.FindStringSubmatch(block); len(m) >= 2 {
+			permission = m[1]
+		}
+
 		// Extract intent filters
 		log.Debugf("Extracting intent filters for service: %s", serviceName)
 		intentFilters := extractIntentFilters(block)
@@ -343,6 +359,7 @@ func extractServices(lines []string, targetSdk int) []models.ManifestServiceInfo
 		service := models.ManifestServiceInfo{
 			Name:          serviceName,
 			Exported:      exported,
+			Permission:    permission,
 			IntentFilters: intentFilters,
 		}
 		services = append(services, service)
@@ -409,6 +426,12 @@ func extractReceivers(lines []string, targetSdk int) []models.ManifestReceiverIn
 			}
 		}
 
+		// Extract android:permission attribute
+		permission := ""
+		if m := mpPermissionRe.FindStringSubmatch(block); len(m) >= 2 {
+			permission = m[1]
+		}
+
 		// Extract intent filters
 		log.Debugf("Extracting intent filters for receiver: %s", receiverName)
 		intentFilters := extractIntentFilters(block)
@@ -417,6 +440,7 @@ func extractReceivers(lines []string, targetSdk int) []models.ManifestReceiverIn
 		receiver := models.ManifestReceiverInfo{
 			Name:          receiverName,
 			Exported:      exported,
+			Permission:    permission,
 			IntentFilters: intentFilters,
 		}
 		receivers = append(receivers, receiver)
@@ -499,9 +523,26 @@ func extractProviders(lines []string, targetSdk int) []models.ManifestProviderIn
 			log.Debugf("No authorities found for provider %s", providerName)
 		}
 
+		// Extract android:permission, android:readPermission, android:writePermission
+		permission := ""
+		if m := mpPermissionRe.FindStringSubmatch(block); len(m) >= 2 {
+			permission = m[1]
+		}
+		readPermission := ""
+		if m := mpReadPermissionRe.FindStringSubmatch(block); len(m) >= 2 {
+			readPermission = m[1]
+		}
+		writePermission := ""
+		if m := mpWritePermissionRe.FindStringSubmatch(block); len(m) >= 2 {
+			writePermission = m[1]
+		}
+
 		provider := models.ManifestProviderInfo{
 			Name:                providerName,
 			Exported:            exported,
+			Permission:          permission,
+			ReadPermission:      readPermission,
+			WritePermission:     writePermission,
 			Authorities:         authorities,
 			GrantUriPermissions: grantUriPermissions,
 		}
