@@ -43,6 +43,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // scanResultSchemaVersion stamps results so subscribers (frontend, webhooks,
@@ -424,6 +427,30 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 		return
 	}
 
+	// OTel: extract the W3C trace context that was injected into the job at
+	// enqueue time (router upload handler) so this worker span becomes a CHILD
+	// of the originating HTTP request span across the async Redis boundary.
+	// The extraction is safe even when TraceContext is nil/empty: an empty
+	// carrier yields a background context, which produces a root span here
+	// (no dangling parent), so legacy jobs (enqueued before this field existed)
+	// are handled correctly.
+	{
+		carrier := propagation.MapCarrier(job.TraceContext)
+		parentCtx := otel.GetTextMapPropagator().Extract(context.Background(), carrier)
+		tracer := otel.GetTracerProvider().Tracer("morf/worker")
+		_, span := tracer.Start(parentCtx, "morf.worker.process_job")
+		span.SetAttributes(
+			attribute.String("job_id", jobID),
+			attribute.String("worker_id", workerID),
+		)
+		if job.RequestID != "" {
+			span.SetAttributes(attribute.String("request_id", job.RequestID))
+		}
+		// The span wraps the full processJob lifecycle; End is deferred so all
+		// child events are recorded before the span is submitted.
+		defer span.End()
+	}
+
 	// IDEMPOTENCY SHORT-CIRCUIT (at-least-once redelivery): the reliable queue
 	// guarantees at-least-once delivery, so a job that already reached a terminal
 	// state (completed or failed) can be re-delivered — e.g. a worker finished the
@@ -530,11 +557,38 @@ func (w *Worker) processJob(ctx context.Context, workerID, jobID string) {
 	// discriminator: an "ipa" job runs the iOS pipeline (scanIPA), everything else
 	// (including an empty FileType, which is legacy Android) runs scanAPK. Both
 	// return the same gin.H result shape consumed by handleJobSuccess.
+	//
+	// OTel: create a platform scan child span so the decompile/scan phase is
+	// visible in the trace as a distinct segment.
 	var result gin.H
-	if strings.EqualFold(job.FileType, "ipa") {
-		result, err = w.scanIPA(scanCtx, job)
-	} else {
-		result, err = w.scanAPK(scanCtx, job)
+	{
+		carrier := propagation.MapCarrier(job.TraceContext)
+		// Overlay the remote (upload) trace parent onto scanCtx — NOT onto a fresh
+		// context.Background(). Extract derives from the context passed in, so using
+		// scanCtx preserves its per-job timeout (scanTimeout) AND the user-cancel
+		// signal (scanCancel via the status poller) while still linking the span to
+		// the distributed trace. Extracting onto Background() here would silently drop
+		// both, letting a hung scan run forever and defeating mid-scan cancellation.
+		parentCtx := otel.GetTextMapPropagator().Extract(scanCtx, carrier)
+		tracer := otel.GetTracerProvider().Tracer("morf/worker")
+		spanName := "morf.worker.scan_apk"
+		if strings.EqualFold(job.FileType, "ipa") {
+			spanName = "morf.worker.scan_ipa"
+		}
+		scanSpanCtx, scanSpan := tracer.Start(parentCtx, spanName)
+		scanSpan.SetAttributes(
+			attribute.String("job_id", jobID),
+			attribute.String("file_type", job.FileType),
+		)
+		if job.RequestID != "" {
+			scanSpan.SetAttributes(attribute.String("request_id", job.RequestID))
+		}
+		if strings.EqualFold(job.FileType, "ipa") {
+			result, err = w.scanIPA(scanSpanCtx, job)
+		} else {
+			result, err = w.scanAPK(scanSpanCtx, job)
+		}
+		scanSpan.End()
 	}
 	if err != nil {
 		// Check if error is due to timeout

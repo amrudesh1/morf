@@ -29,6 +29,7 @@ import (
 	"morf/queue"
 	"morf/router"
 	"morf/storage"
+	"morf/telemetry"
 	"morf/utils"
 	"morf/version"
 	"morf/worker"
@@ -250,12 +251,12 @@ func init() {
 	log.SetOutput(os.Stderr)
 	log.SetLevel(log.InfoLevel)
 
-	// TODO(observability): wire full OpenTelemetry tracing (spans across the
-	// HTTP upload -> queue -> worker scan boundary, exported via OTLP). For now
-	// correlation is carried by the request_id field: it is captured by
-	// router.CorrelationIDMiddleware, persisted on models.ScanJob at enqueue, and
-	// re-attached to the worker's structured scan logs, so an upload can already
-	// be traced to its scan logs by request_id without a tracing backend.
+	// OpenTelemetry tracing is initialised per run-mode (server/api/worker)
+	// inside each run function so the TracerProvider is live before any spans
+	// are started.  Correlation is also carried by the request_id field:
+	// router.CorrelationIDMiddleware captures it, models.ScanJob persists it,
+	// and the worker re-attaches it to scan logs — both mechanisms work in
+	// parallel.
 
 	rootCmd.AddCommand(cmd.GetCliCmd())
 	rootCmd.AddCommand(cmd.GetScanCmd())
@@ -302,6 +303,25 @@ func runServer(cmd *cobra.Command, args []string) {
 	// these drain before the process exits.
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
+
+	// Observability: initialise OTel tracing.  With no OTLP endpoint configured
+	// this installs a no-op provider (zero network, zero exporter).  With
+	// OTEL_EXPORTER_OTLP_ENDPOINT set it wires a real OTLP HTTP exporter.
+	// The shutdown func is deferred so spans are flushed before the process exits.
+	tracingShutdown, tracingErr := telemetry.InitTracing(bgCtx)
+	if tracingErr != nil {
+		log.Warnf("OTel tracing init failed (continuing without tracing): %v", tracingErr)
+		tracingShutdown = func(_ context.Context) error { return nil }
+	} else {
+		log.Info("OTel tracing initialised (version: " + version.Version + ")")
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(ctx); err != nil {
+			log.Warnf("OTel tracing shutdown error: %v", err)
+		}
+	}()
 
 	// Set database URL if provided
 	if dbURL != "" {
@@ -512,6 +532,22 @@ func runAPIOnly(cmd *cobra.Command, args []string) {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
+	// Observability: initialise OTel tracing.
+	tracingShutdown, tracingErr := telemetry.InitTracing(bgCtx)
+	if tracingErr != nil {
+		log.Warnf("OTel tracing init failed (continuing without tracing): %v", tracingErr)
+		tracingShutdown = func(_ context.Context) error { return nil }
+	} else {
+		log.Info("OTel tracing initialised (version: " + version.Version + ")")
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(ctx); err != nil {
+			log.Warnf("OTel tracing shutdown error: %v", err)
+		}
+	}()
+
 	// Set database URL if provided
 	if dbURL != "" {
 		os.Setenv("DATABASE_URL", dbURL)
@@ -684,6 +720,22 @@ func runWorkerOnly(cmd *cobra.Command, args []string) {
 	// queue reaper, cache invalidation subscriber). Cancelled on shutdown.
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
+
+	// Observability: initialise OTel tracing.
+	tracingShutdown, tracingErr := telemetry.InitTracing(bgCtx)
+	if tracingErr != nil {
+		log.Warnf("OTel tracing init failed (continuing without tracing): %v", tracingErr)
+		tracingShutdown = func(_ context.Context) error { return nil }
+	} else {
+		log.Info("OTel tracing initialised (version: " + version.Version + ")")
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(ctx); err != nil {
+			log.Warnf("OTel tracing shutdown error: %v", err)
+		}
+	}()
 
 	// Set database URL if provided
 	if dbURL != "" {
