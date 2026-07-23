@@ -173,6 +173,33 @@ func MaskResultJSON(raw []byte) ([]byte, error) {
 	return json.Marshal(env)
 }
 
+// MaskComparisonJSON walks a ComparisonResult JSON envelope
+// ({"added":[...],"removed":[...],"unchanged":[...],...}) and replaces every
+// secretString in the three secret-list arrays with a masked preview, preserving
+// all other fields and structure.
+//
+// It uses the same masking as MaskResultJSON and fails CLOSED: a parse failure
+// returns an error and NO bytes so the caller can drop the field rather than
+// leak raw secrets.
+func MaskComparisonJSON(raw []byte) ([]byte, error) {
+	var env map[string]any
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"added", "removed", "unchanged"} {
+		if list, ok := env[key].([]any); ok {
+			for _, item := range list {
+				if m, ok := item.(map[string]any); ok {
+					if v, ok := m["secretString"].(string); ok {
+						m["secretString"] = maskSecret(v)
+					}
+				}
+			}
+		}
+	}
+	return json.Marshal(env)
+}
+
 // EncodeSARIF renders the given findings as a SARIF 2.1.0 JSON document for the
 // scanned artifact. target identifies the scanned bundle (file name / package
 // id), platform is "android" or "ios", and secrets are the enriched findings to
