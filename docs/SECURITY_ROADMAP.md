@@ -24,7 +24,7 @@ as a service.
 Two things are true at once:
 
 1. **MORF's iOS module is dramatically better than the internal Python+radare2 PoC** it is meant
-   to replace. On the same App build it found **29 findings across 9 types + full app metadata**
+   to replace. On the same reference-app build it found **29 findings across 9 types + full app metadata**
    vs the PoC's **8 (one working regex)**, and it scans arbitrary apps the PoC physically cannot.
    The PoC should be retired. (§3)
 2. **MORF is still an early-stage scanner** measured against the community bar. It *detects* but
@@ -78,13 +78,13 @@ Android scan from 548 → ~19 clean findings; and a real-phase processing steppe
 
 ### 3.1 The head-to-head (run 2026-07-08 on identical binaries)
 
-Target: **`reference.ipa`** → `Payload/App.app/App`, 121 MB arm64, **`cryptid 0` (NOT FairPlay-
+Target: **the reference IPA** → `Payload/App.app/App`, 121 MB arm64, **`cryptid 0` (NOT FairPlay-
 encrypted)** — a decrypted/dev build, so static extraction works fully for *both* tools (a fair
 test; neither is handicapped by encryption).
 
 | Dimension | Internal PoC (`Secrets_IPA`) | MORF iOS |
 |---|---|---|
-| **Findings on App** | **8 raw matches = only 4 unique keys** (all Google `AIza…`; PoC has no value-dedup) | **29** across 9 types (incl. **8** unique Google keys) |
+| **Findings on the reference app** | **8 raw matches = only 4 unique keys** (all Google `AIza…`; PoC has no value-dedup) | **29** across 9 types (incl. **8** unique Google keys) |
 | Types found | Google API keys only | Google API Key, GCP OAuth, Firebase DB URL, Private Key, Twitter Secret, JWT, iOS Keychain Access Group, Reversed Client-ID scheme, Keychain entitlement |
 | Working detectors | **1 of 11** regexes (rest typo'd/broken, e.g. `sk_live_\(…`) | 99 iOS-scoped patterns |
 | App metadata | **none** | bundle id, **73 frameworks, 21 entitlements, 12 URL schemes**, arch, encryption flag |
@@ -95,7 +95,7 @@ test; neither is handicapped by encryption).
 in MORF's set: the PoC's 4 unique Google keys are all present in MORF's 8 unique Google keys
 (`PoC-only findings: none`). MORF additionally found **4 more Google keys + 25 non-Google findings
 the PoC is blind to**, plus structured metadata the PoC has none of. The PoC even mis-*counts* its
-own hits (8 raw matches for 4 real keys — no value-dedup). On any app that isn't App, the PoC
+own hits (8 raw matches for 4 real keys — no value-dedup). On any app that is not the reference app, the PoC
 cannot run at all.
 
 ### 3.2 Why the PoC must be retired (it is also a security liability)
@@ -175,7 +175,7 @@ and **two 30-char context-window checks** (reject near `author/sha/pubkey/key_id
 `SanitizeSecrets`); re-introduce a *scored* generic-secret rule to recover recall lost when the
 loose ones were disabled. Emit a numeric `score` alongside `confidence`.
 
-**Effort S–M. Verify:** re-scan the App APK/IPA; confirm the count stays low and real keys remain
+**Effort S–M. Verify:** re-scan the reference APK/IPA; confirm the count stays low and real keys remain
 while punctuation/identifier noise stays gone.
 
 ### J1. **SARIF output + MASVS/MASTG IDs** *(P0/P1 — unlocks CI adoption, evidence: HIGH)*
@@ -191,7 +191,7 @@ how `mobsfscan` gets CI adoption (`--sarif` → `github/codeql-action/upload-sar
 field to pattern YAML so mapping is data-driven. **Effort S–M.**
 
 ### D. **SDK/framework CVE + SBOM (CycloneDX + VEX)** *(P1, evidence: HIGH)*
-**Problem.** MORF already extracts the framework list (73 for App) but does nothing with it.
+**Problem.** MORF already extracts the framework list (73 for the reference app) but does nothing with it.
 Third-party SDKs are a top mobile supply-chain risk.
 
 **Design.** Emit a **CycloneDX 1.x** SBOM (JSON) of detected SDKs/frameworks for both APK and IPA;
@@ -227,7 +227,7 @@ Differentiate — don't re-implement MobSF's semgrep source coverage; lean on bi
 secrets. **Effort L (incremental, check-by-check).**
 
 ### iOS depth items *(P1–P2, evidence: MED/blog-grade — flagged uncertain)*
-- **Entitlement risk scoring (P1, S):** MORF already extracts 21 entitlements for App — score
+- **Entitlement risk scoring (P1, S):** MORF already extracts 21 entitlements for the reference app — score
   them (e.g., wildcard keychain-access-groups, `get-task-allow` in a release build, associated-
   domains sprawl) and map to MASTG. Pure post-processing on data already in `IOSMetadata`.
 - **Swift/Obj-C extraction & deobfuscation (P2, M):** MORF reads `__swift5_*`/`__objc_*` sections;
@@ -269,7 +269,7 @@ early: [aws-samples MCP security scanner](https://github.com/aws-samples/sample-
 **Effort M.** *Flag: no verified best-practice corpus yet — build conservatively.*
 
 ### H. **Scale & architecture** *(P1/P2, ongoing)*
-Large IPAs are slow (the App scan's secret phase is ~145 s). Roadmap: stream ripgrep output (partly
+Large IPAs are slow (the reference scan's secret phase is ~145 s). Roadmap: stream ripgrep output (partly
 done), cap/parallelize per-section scanning, size-aware worker concurrency, and validate the
 horizontal `api`/`worker` split under load. Keep the on-prem/air-gapped posture (a differentiator vs
 SaaS scanners). Seam: `worker/pool.go`, `queue/`.
@@ -343,8 +343,8 @@ report MORF produces — do them first.
   came with 22.25% real-finding suppression — do not trust auto-suppression), and **thin/absent** for
   MCP-for-security best practices and iOS FairPlay/dynamic specifics (blog-grade). Build those
   conservatively and validate on real mobile data before trusting them.
-- The head-to-head numbers are reproducible from the live runs on 2026-07-08 (`reference.ipa` decrypted,
-  `cryptid 0`). An App-Store-encrypted App build would limit *both* tools until iOS-3 lands — MORF
+- The head-to-head numbers are reproducible from the live runs on 2026-07-08 (the reference IPA decrypted,
+  `cryptid 0`). An App-Store-encrypted build would limit *both* tools until iOS-3 lands — MORF
   flags the encryption; the PoC degrades silently.
 - Verification and AI both carry real safety obligations (authorized-use-only, never mutate, never
   send raw secrets to a third-party model) — these lead each design, not footnote it.

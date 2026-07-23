@@ -20,7 +20,7 @@
     "apk",
     "ipa"
   ],
-  "author": "App",
+  "author": "Amrudesh Balakrishnan",
   "license": "MIT",
   "devDependencies": {
     "concurrently": "^8.2.0"
