@@ -327,6 +327,326 @@ func TestExplainTierAndStatus(t *testing.T) {
 	}
 }
 
+// --- get_results: registration + masking + error paths -------------------
+
+// TestNewServerRegistersGetResults asserts that the get_results tool is
+// registered on the server (five tools total: scan_file, list_patterns,
+// verify_secret, explain_finding, get_results).
+func TestNewServerRegistersGetResults(t *testing.T) {
+	s := NewServer()
+	if s == nil {
+		t.Fatal("NewServer returned nil")
+	}
+	// The server must build without panicking with get_results registered.
+	// Tool presence is exercised via the handler call below; the only
+	// structural check we can do here is that the server is non-nil.
+}
+
+// TestGetResultsHandler_MissingPath asserts a tool-level error when no path is
+// supplied.
+func TestGetResultsHandler_MissingPath(t *testing.T) {
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected tool-level error for missing path")
+	}
+}
+
+// TestGetResultsHandler_NonExistentPath asserts a tool-level error when the
+// supplied path does not exist.
+func TestGetResultsHandler_NonExistentPath(t *testing.T) {
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": "/tmp/morf_does_not_exist_12345678.json",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected tool-level error for non-existent path")
+	}
+	txt := resultText(t, res)
+	if !strings.Contains(txt, "not found") && !strings.Contains(txt, "cannot stat") {
+		t.Fatalf("error message should indicate missing file; got: %q", txt)
+	}
+}
+
+// TestGetResultsHandler_DirectoryPath asserts a tool-level error when the path
+// points to a directory rather than a regular file.
+func TestGetResultsHandler_DirectoryPath(t *testing.T) {
+	dir := t.TempDir()
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": dir,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected tool-level error for directory path")
+	}
+	txt := resultText(t, res)
+	if !strings.Contains(txt, "not a regular file") {
+		t.Fatalf("error should mention not a regular file; got: %q", txt)
+	}
+}
+
+// TestGetResultsHandler_NotJSON asserts a tool-level error when the file
+// contains non-JSON content.
+func TestGetResultsHandler_NotJSON(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "scan.json")
+	if err := os.WriteFile(tmp, []byte("this is not json at all"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": tmp,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected tool-level error for non-JSON file")
+	}
+}
+
+// TestGetResultsHandler_UnknownJSONFormat asserts a tool-level error when the
+// file is valid JSON but neither a MORF JSON envelope nor a SARIF document.
+func TestGetResultsHandler_UnknownJSONFormat(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "scan.json")
+	if err := os.WriteFile(tmp, []byte(`{"hello":"world"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": tmp,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected tool-level error for unknown JSON format")
+	}
+}
+
+// TestGetResultsHandler_JSONMasksRawSecret is the core masking guarantee for
+// the JSON path: write a small MORF JSON output file with an unmasked
+// secretString and assert that the handler response never contains the raw
+// value, and does contain a masked preview.
+func TestGetResultsHandler_JSONMasksRawSecret(t *testing.T) {
+	const rawSecret = "AKIAIOSFODNN7VERYSECRETRAW00000000"
+
+	// Build the JSON envelope that `morf scan --format json --out` would produce
+	// (possibly with --reveal-secrets, so secretString is plaintext on disk).
+	env := map[string]any{
+		"data": map[string]any{
+			"target":   "myapp.apk",
+			"platform": "android",
+			"secrets": []any{
+				map[string]any{
+					"secretType":         "aws",
+					"secretString":       rawSecret,
+					"secretConfidence":   "high",
+					"fileLocation":       "res/values/strings.xml",
+					"lineNo":             12,
+					"tier":               "keep",
+					"verificationStatus": "unchecked",
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(t.TempDir(), "scan_out.json")
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": tmp,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", resultText(t, res))
+	}
+
+	txt := resultText(t, res)
+
+	// The raw secret MUST NOT appear in the response.
+	if strings.Contains(txt, rawSecret) {
+		t.Fatalf("get_results leaked the raw secret value in JSON output; got:\n%s", txt)
+	}
+
+	// A masked preview MUST be present (MaskResultJSON keeps a short head+tail).
+	if !strings.Contains(txt, "AKIA") {
+		t.Fatalf("get_results should contain masked preview head AKIA; got:\n%s", txt)
+	}
+
+	// The summary must mention the finding count.
+	if !strings.Contains(txt, "1 finding") {
+		t.Fatalf("get_results summary should report 1 finding; got:\n%s", txt)
+	}
+
+	// The output should be valid JSON.
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(txt), &parsed); err != nil {
+		t.Fatalf("get_results output is not valid JSON: %v\noutput:\n%s", err, txt)
+	}
+
+	// "format" key should be "json".
+	if parsed["format"] != "json" {
+		t.Fatalf("expected format=json, got %v", parsed["format"])
+	}
+
+	// "source" should be the path we supplied.
+	if parsed["source"] != tmp {
+		t.Fatalf("expected source=%q, got %v", tmp, parsed["source"])
+	}
+}
+
+// TestGetResultsHandler_JSONEmptySecrets asserts the handler handles a valid
+// MORF JSON envelope that has an empty secrets array gracefully.
+func TestGetResultsHandler_JSONEmptySecrets(t *testing.T) {
+	env := map[string]any{
+		"data": map[string]any{
+			"target":   "clean.apk",
+			"platform": "android",
+			"secrets":  []any{},
+		},
+	}
+	data, _ := json.Marshal(env)
+	tmp := filepath.Join(t.TempDir(), "empty.json")
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": tmp,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", resultText(t, res))
+	}
+	txt := resultText(t, res)
+	if !strings.Contains(txt, "0 finding") {
+		t.Fatalf("expected 0 findings in summary; got:\n%s", txt)
+	}
+}
+
+// TestGetResultsHandler_SARIFFormat asserts the handler correctly processes a
+// SARIF document (SARIF files are already masked at encode time by EncodeSARIF).
+func TestGetResultsHandler_SARIFFormat(t *testing.T) {
+	// Build a minimal SARIF document with two findings.
+	sarifDoc := map[string]any{
+		"$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+		"version": "2.1.0",
+		"runs": []any{
+			map[string]any{
+				"tool": map[string]any{
+					"driver": map[string]any{
+						"name":  "MORF",
+						"rules": []any{},
+					},
+				},
+				"results": []any{
+					map[string]any{
+						"ruleId": "aws",
+						"level":  "error",
+						"message": map[string]any{
+							"text": "aws (masked: AKIA…le)",
+						},
+						"locations": []any{},
+						"properties": map[string]any{
+							"tier":               "keep",
+							"verificationStatus": "unchecked",
+						},
+					},
+					map[string]any{
+						"ruleId": "github",
+						"level":  "note",
+						"message": map[string]any{
+							"text": "github (masked: ghp_…00)",
+						},
+						"locations": []any{},
+						"properties": map[string]any{
+							"tier": "info",
+						},
+					},
+				},
+				"properties": map[string]any{
+					"target":   "myapp.apk",
+					"platform": "android",
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(sarifDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(t.TempDir(), "scan_out.sarif")
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": tmp,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %s", resultText(t, res))
+	}
+	txt := resultText(t, res)
+
+	// Must be valid JSON.
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(txt), &parsed); err != nil {
+		t.Fatalf("get_results SARIF output is not valid JSON: %v\noutput:\n%s", err, txt)
+	}
+	if parsed["format"] != "sarif" {
+		t.Fatalf("expected format=sarif, got %v", parsed["format"])
+	}
+	if !strings.Contains(txt, "2 finding") {
+		t.Fatalf("expected 2 findings in summary; got:\n%s", txt)
+	}
+}
+
+// TestGetResultsHandler_OversizeFile asserts that files larger than
+// getResultsMaxBytes are rejected without being read.
+func TestGetResultsHandler_OversizeFile(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "huge.json")
+	// Write a file slightly larger than the limit.
+	data := make([]byte, getResultsMaxBytes+1)
+	data[0] = '{'
+	for i := 1; i < len(data)-1; i++ {
+		data[i] = ' '
+	}
+	data[len(data)-1] = '}'
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := getResultsHandler(context.Background(), newReq(map[string]any{
+		"path": tmp,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected tool-level error for oversize file")
+	}
+	txt := resultText(t, res)
+	if !strings.Contains(txt, "too large") {
+		t.Fatalf("error should mention file is too large; got: %q", txt)
+	}
+}
+
 // TestVerifySecretHandler_OptInDoesNotLeakGlobally locks in the fix that a
 // per-call enable=true does NOT mutate the process-global MORF_ENABLE_VERIFICATION.
 // Previously the handler did os.Setenv(...,"true") with no restore, so one

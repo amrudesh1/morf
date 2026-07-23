@@ -17,6 +17,7 @@ limitations under the License.
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -185,5 +186,288 @@ func TestGateBaselineRoundTripAcceptsPreviouslyNew(t *testing.T) {
 	}
 	if strings.Contains(string(data), active.SecretString) {
 		t.Errorf("baseline file leaked plaintext secret: %s", data)
+	}
+}
+
+// TestSplitComma verifies that the comma/repeat flag parser deduplicates and
+// trims as expected.
+func TestSplitComma(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want []string
+	}{
+		{nil, nil},
+		{[]string{""}, nil},
+		{[]string{"  "}, nil},
+		{[]string{"a"}, []string{"a"}},
+		{[]string{"a,b,c"}, []string{"a", "b", "c"}},
+		{[]string{"a", "b"}, []string{"a", "b"}},
+		// dedup across items
+		{[]string{"a,b", "b,c"}, []string{"a", "b", "c"}},
+		// trim whitespace
+		{[]string{" a , b "}, []string{"a", "b"}},
+	}
+	for _, tc := range cases {
+		got := splitComma(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("splitComma(%v) = %v, want %v", tc.in, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("splitComma(%v)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// TestRunGateAllowRequiresBaseline checks that runGateAllow errors when no
+// --baseline path is given.
+func TestRunGateAllowRequiresBaseline(t *testing.T) {
+	err := runGateAllow(allowOptions{
+		baseline: "",
+		types:    []string{"aws-access-key"},
+	}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error when --baseline is empty")
+	}
+}
+
+// TestRunGateAllowRequiresEntries checks that runGateAllow errors when neither
+// fingerprints nor types are specified.
+func TestRunGateAllowRequiresEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	err := runGateAllow(allowOptions{baseline: path}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error when no --allow-fingerprint or --allow-type is given")
+	}
+}
+
+// TestRunGateAllowTypeSupressesFinding verifies the primary end-to-end workflow:
+// add a secret type to the allowlist, then re-evaluate: the finding is
+// suppressed and exit code becomes 0.
+func TestRunGateAllowTypeSupressesFinding(t *testing.T) {
+	const secretType = "test-fixture-allowtype"
+	const secretValue = "AKIAEXAMPLE_ALLOW_TYPE"
+
+	f := finding(secretType, secretValue, "active", "keep")
+	secrets := []models.SecretModel{f}
+
+	// Step 1: without allowlist, the active finding fails.
+	_, _, _, code, err := evaluateGate(gateOptions{failOn: "verified"}, secrets, gate.NewBaseline())
+	if err != nil {
+		t.Fatalf("step1 error: %v", err)
+	}
+	if code != exitPolicy {
+		t.Fatalf("step1: expected exitPolicy(%d), got %d", exitPolicy, code)
+	}
+
+	// Step 2: create (empty) baseline, add the type via runGateAllow.
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	var stderr bytes.Buffer
+	if err := runGateAllow(allowOptions{
+		baseline: path,
+		types:    []string{secretType},
+	}, &stderr); err != nil {
+		t.Fatalf("runGateAllow: %v", err)
+	}
+
+	// Step 3: reload and re-evaluate — finding must now be suppressed.
+	base, err := loadBaselineOrEmpty(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	_, _, _, code, err = evaluateGate(gateOptions{failOn: "verified"}, secrets, base)
+	if err != nil {
+		t.Fatalf("step3 error: %v", err)
+	}
+	if code != exitOK {
+		t.Fatalf("step3: expected exitOK(%d) after allowlist, got %d", exitOK, code)
+	}
+
+	// Step 4: the persisted JSON must carry the type, no plaintext secret.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(data) {
+		t.Fatalf("baseline not valid JSON: %s", data)
+	}
+	if !strings.Contains(string(data), secretType) {
+		t.Errorf("baseline does not contain allowed type %q: %s", secretType, data)
+	}
+	if strings.Contains(string(data), secretValue) {
+		t.Errorf("baseline leaked plaintext secret value: %s", data)
+	}
+}
+
+// TestRunGateAllowFingerprintSupressesFinding verifies the fingerprint-based
+// allowlist: adding crypto.Fingerprint(secretValue) suppresses that finding.
+func TestRunGateAllowFingerprintSupressesFinding(t *testing.T) {
+	const secretValue = "AKIAEXAMPLE_ALLOW_FP"
+
+	f := finding("aws-access-key", secretValue, "active", "keep")
+	secrets := []models.SecretModel{f}
+
+	fp := crypto.Fingerprint(secretValue)
+
+	// Step 1: fails without allowlist.
+	_, _, _, code, err := evaluateGate(gateOptions{failOn: "verified"}, secrets, gate.NewBaseline())
+	if err != nil {
+		t.Fatalf("step1 error: %v", err)
+	}
+	if code != exitPolicy {
+		t.Fatalf("step1: expected exitPolicy(%d), got %d", exitPolicy, code)
+	}
+
+	// Step 2: allowlist the fingerprint.
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	var stderr bytes.Buffer
+	if err := runGateAllow(allowOptions{
+		baseline:     path,
+		fingerprints: []string{fp},
+	}, &stderr); err != nil {
+		t.Fatalf("runGateAllow: %v", err)
+	}
+
+	// Step 3: suppressed after allowlist.
+	base, err := loadBaselineOrEmpty(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	_, _, _, code, err = evaluateGate(gateOptions{failOn: "verified"}, secrets, base)
+	if err != nil {
+		t.Fatalf("step3 error: %v", err)
+	}
+	if code != exitOK {
+		t.Fatalf("step3: expected exitOK(%d) after allowlist, got %d", exitOK, code)
+	}
+
+	// Step 4: persisted JSON must carry the fingerprint digest, not the value.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(data) {
+		t.Fatalf("baseline not valid JSON: %s", data)
+	}
+	if !strings.Contains(string(data), fp) {
+		t.Errorf("baseline does not contain allowed fingerprint %q: %s", fp, data)
+	}
+	if strings.Contains(string(data), secretValue) {
+		t.Errorf("baseline leaked plaintext secret: %s", data)
+	}
+}
+
+// TestRunGateAllowIdempotent verifies that running runGateAllow twice with the
+// same entries does not duplicate them in the JSON.
+func TestRunGateAllowIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	opts := allowOptions{
+		baseline: path,
+		types:    []string{"some-type"},
+	}
+	var stderr bytes.Buffer
+	if err := runGateAllow(opts, &stderr); err != nil {
+		t.Fatalf("first allow: %v", err)
+	}
+	if err := runGateAllow(opts, &stderr); err != nil {
+		t.Fatalf("second allow: %v", err)
+	}
+
+	base, err := loadBaselineOrEmpty(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(base.AllowedTypes) != 1 {
+		t.Errorf("expected 1 allowed type after idempotent adds, got %d: %v", len(base.AllowedTypes), base.AllowedTypes)
+	}
+}
+
+// TestRunGateAllowOnBaselineFromScan verifies that a baseline produced by
+// BaselineFromScan can subsequently receive allowlist entries, and that a
+// finding NOT in the snapshot but matching the allowlist is still suppressed.
+func TestRunGateAllowOnBaselineFromScan(t *testing.T) {
+	// Two existing secrets — these will be snapshotted.
+	s1 := finding("aws-access-key", "AKIASNAPSHOT1111", "active", "keep")
+	s2 := finding("gcp-api-key", "gcptoken0000", "unchecked", "keep")
+
+	// A third secret: NOT in the snapshot, but we'll allow its type.
+	newSecret := finding("test-always-allowed", "some-ci-fixture-value", "active", "keep")
+
+	// Snapshot the first two.
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	if err := gate.BaselineFromScan([]models.SecretModel{s1, s2}).Save(path); err != nil {
+		t.Fatalf("BaselineFromScan.Save: %v", err)
+	}
+
+	// Before allow: newSecret is a new verified finding -> fails.
+	base, err := loadBaselineOrEmpty(path)
+	if err != nil {
+		t.Fatalf("reload pre-allow: %v", err)
+	}
+	allSecrets := []models.SecretModel{s1, s2, newSecret}
+	_, _, _, code, err := evaluateGate(gateOptions{failOn: "verified"}, allSecrets, base)
+	if err != nil {
+		t.Fatalf("pre-allow eval: %v", err)
+	}
+	if code != exitPolicy {
+		t.Fatalf("pre-allow: expected exitPolicy(%d), got %d", exitPolicy, code)
+	}
+
+	// Add the type allowlist entry.
+	var stderr bytes.Buffer
+	if err := runGateAllow(allowOptions{
+		baseline: path,
+		types:    []string{newSecret.SecretType},
+	}, &stderr); err != nil {
+		t.Fatalf("runGateAllow: %v", err)
+	}
+
+	// After allow: all three are suppressed.
+	base, err = loadBaselineOrEmpty(path)
+	if err != nil {
+		t.Fatalf("reload post-allow: %v", err)
+	}
+	_, _, _, code, err = evaluateGate(gateOptions{failOn: "verified"}, allSecrets, base)
+	if err != nil {
+		t.Fatalf("post-allow eval: %v", err)
+	}
+	if code != exitOK {
+		t.Fatalf("post-allow: expected exitOK(%d), got %d", exitOK, code)
+	}
+
+	// The on-disk baseline must not contain any plaintext secret value.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range allSecrets {
+		if strings.Contains(string(data), s.SecretString) {
+			t.Errorf("baseline leaked plaintext secret %q: %s", s.SecretString, data)
+		}
+	}
+}
+
+// TestRunGateAllowCommaValues verifies comma-separated values in a single flag
+// are expanded correctly.
+func TestRunGateAllowCommaValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	var stderr bytes.Buffer
+	if err := runGateAllow(allowOptions{
+		baseline: path,
+		types:    []string{"type-a,type-b,type-c"},
+	}, &stderr); err != nil {
+		t.Fatalf("runGateAllow: %v", err)
+	}
+
+	base, err := loadBaselineOrEmpty(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	for _, want := range []string{"type-a", "type-b", "type-c"} {
+		if _, ok := base.AllowedTypes[want]; !ok {
+			t.Errorf("expected AllowedTypes to contain %q; got %v", want, base.AllowedTypes)
+		}
 	}
 }

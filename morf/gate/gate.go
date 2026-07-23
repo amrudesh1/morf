@@ -186,6 +186,25 @@ func (b *Baseline) Save(path string) error {
 	return nil
 }
 
+// Allow adds fp to AllowedFingerprints. The call is idempotent: adding a
+// fingerprint that is already present is a no-op. fp must be an opaque
+// crypto.Fingerprint hex digest — no plaintext secret is ever stored.
+func (b *Baseline) Allow(fp string) {
+	if b.AllowedFingerprints == nil {
+		b.AllowedFingerprints = map[string]struct{}{}
+	}
+	b.AllowedFingerprints[fp] = struct{}{}
+}
+
+// AllowType adds secretType to AllowedTypes. The call is idempotent: adding a
+// type that is already present is a no-op.
+func (b *Baseline) AllowType(secretType string) {
+	if b.AllowedTypes == nil {
+		b.AllowedTypes = map[string]struct{}{}
+	}
+	b.AllowedTypes[secretType] = struct{}{}
+}
+
 // BaselineFromScan snapshots current findings into an accepted Baseline. Every
 // finding's fingerprint becomes an accepted fingerprint; the allowlists start
 // empty. Callers who also want to seed allowlists can populate the returned

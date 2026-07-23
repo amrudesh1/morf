@@ -30,6 +30,117 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// allowOptions carries the resolved flag state for a single gate-allow
+// invocation.
+type allowOptions struct {
+	baseline     string   // path to the baseline JSON (required)
+	fingerprints []string // --allow-fingerprint values (repeatable, comma-ok)
+	types        []string // --allow-type values (repeatable, comma-ok)
+}
+
+// splitComma splits a slice of potentially comma-separated tokens into a flat
+// deduplicated slice of non-empty trimmed strings. This supports both the
+// --flag v1 --flag v2 and --flag v1,v2 invocation styles.
+func splitComma(in []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, s := range in {
+		for _, tok := range strings.Split(s, ",") {
+			tok = strings.TrimSpace(tok)
+			if tok == "" {
+				continue
+			}
+			if _, dup := seen[tok]; !dup {
+				seen[tok] = struct{}{}
+				out = append(out, tok)
+			}
+		}
+	}
+	return out
+}
+
+// runGateAllow loads the baseline at opts.baseline (creating an empty one when
+// the file does not yet exist), adds the specified fingerprints / types to the
+// allowlists, and persists the result. It returns the number of entries added
+// and the path, which the caller can echo to stderr.
+func runGateAllow(opts allowOptions, stderr io.Writer) error {
+	if strings.TrimSpace(opts.baseline) == "" {
+		return fmt.Errorf("--baseline <path> is required for gate allow")
+	}
+
+	fps := splitComma(opts.fingerprints)
+	typs := splitComma(opts.types)
+	if len(fps) == 0 && len(typs) == 0 {
+		return fmt.Errorf("gate allow: at least one --allow-fingerprint or --allow-type is required")
+	}
+
+	base, err := loadBaselineOrEmpty(opts.baseline)
+	if err != nil {
+		return err
+	}
+
+	added := 0
+	for _, fp := range fps {
+		before := len(base.AllowedFingerprints)
+		base.Allow(fp)
+		if len(base.AllowedFingerprints) > before {
+			added++
+		}
+	}
+	for _, t := range typs {
+		before := len(base.AllowedTypes)
+		base.AllowType(t)
+		if len(base.AllowedTypes) > before {
+			added++
+		}
+	}
+
+	if err := base.Save(opts.baseline); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(stderr,
+		"MORF gate: allowlist updated (%s) — %d new entr(y/ies) added (%d fingerprint(s), %d type(s))\n",
+		opts.baseline, added, len(fps), len(typs),
+	)
+	return nil
+}
+
+// GetGateAllowCmd returns the `morf gate allow` subcommand: load a baseline,
+// add fingerprints and/or secret types to its allowlist, and persist.
+func GetGateAllowCmd() *cobra.Command {
+	var opts allowOptions
+
+	allowCmd := &cobra.Command{
+		Use:   "allow --baseline <path> [--allow-fingerprint FP ...] [--allow-type TYPE ...]",
+		Short: "Add fingerprints or secret types to a baseline allowlist",
+		Long: `Load the baseline at --baseline, add the given fingerprints / secret types to
+its allowlist (AllowedFingerprints / AllowedTypes), and persist. A missing
+baseline file is treated as empty (first run). All updates are idempotent.
+
+Fingerprints are opaque HMAC-SHA256 hex digests — no plaintext is stored.
+Secret types are detector labels such as "aws-access-key" or "generic-api-key".
+
+Both flags accept comma-separated values and may be repeated:
+
+  morf gate allow --baseline base.json --allow-type aws-access-key,gcp-api-key
+  morf gate allow --baseline base.json --allow-fingerprint <hex1> --allow-fingerprint <hex2>`,
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := runGateAllow(opts, os.Stderr); err != nil {
+				fmt.Fprintln(os.Stderr, "morf gate allow:", err)
+				os.Exit(exitOperational)
+			}
+		},
+	}
+
+	allowCmd.Flags().StringVar(&opts.baseline, "baseline", "", "Path to the accepted-findings baseline JSON (required)")
+	allowCmd.Flags().StringArrayVar(&opts.fingerprints, "allow-fingerprint", nil, "Fingerprint hex digest(s) to allowlist (repeatable; comma-separated ok)")
+	allowCmd.Flags().StringArrayVar(&opts.types, "allow-type", nil, "Secret type label(s) to allowlist (repeatable; comma-separated ok)")
+
+	return allowCmd
+}
+
 // gateOptions carries the resolved flag state for a single gate invocation.
 type gateOptions struct {
 	baseline       string // path to the baseline JSON
@@ -208,6 +319,8 @@ secrets) and are safe to commit.`,
 	gateCmd.Flags().BoolVar(&opts.verify, "verify", false, "Enable live (read-only) verification of findings")
 	gateCmd.Flags().StringVar(&opts.failOn, "fail-on", "verified", "Gate threshold: none|any|verified|keep")
 	gateCmd.Flags().BoolVar(&opts.jsonOut, "json", false, "Emit the gate result (masked) as JSON to stdout")
+
+	gateCmd.AddCommand(GetGateAllowCmd())
 
 	return gateCmd
 }

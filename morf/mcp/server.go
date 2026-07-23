@@ -33,6 +33,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -119,6 +120,21 @@ func registerTools(s *mcpserver.MCPServer) {
 				sdk.Description("Optional verification status to explain: active|inactive|unknown|unchecked")),
 		),
 		explainFindingHandler,
+	)
+
+	s.AddTool(
+		sdk.NewTool("get_results",
+			sdk.WithDescription("Re-open a previously written MORF scan output file (JSON or SARIF "+
+				"produced by `morf scan --out <path>`) and return a MASKED summary. "+
+				"Counts are reported by tier, type, and verificationStatus. "+
+				"The findings list in the response always has secretString masked — "+
+				"raw secret values are NEVER returned even if the file on disk is unmasked. "+
+				"No network, DB, or Redis calls are made; only the supplied file is read."),
+			sdk.WithString("path", sdk.Required(),
+				sdk.Description("Absolute filesystem path to a previously written MORF scan output file "+
+					"(.json or .sarif / .json extension). Must be a regular file.")),
+		),
+		getResultsHandler,
 	)
 }
 
@@ -515,6 +531,277 @@ func explainStatus(status string) string {
 	default:
 		return "unrecognized status; expected active|inactive|unknown|unchecked."
 	}
+}
+
+// ---------------------------------------------------------------------------
+// get_results
+// ---------------------------------------------------------------------------
+
+// getResultsMaxBytes is the upper limit on result files accepted by
+// getResultsHandler. Files larger than this are rejected to avoid reading
+// arbitrarily large files from disk.
+const getResultsMaxBytes = 10 * 1024 * 1024 // 10 MiB
+
+// getResultsHandler reads a previously written MORF scan output file (JSON or
+// SARIF produced by `morf scan --out`) and returns a MASKED summary. It is
+// strictly file-based: no network, DB, or Redis call is ever made. The handler
+// fails CLOSED — if masking fails, it returns an error rather than leaking the
+// raw file content. Security properties:
+//
+//   - Path must point to a regular file (directories and special files are
+//     rejected).
+//   - Files larger than getResultsMaxBytes are rejected.
+//   - All secretString values in JSON output are masked through
+//     report.MaskResultJSON before being returned; SARIF output has no
+//     secretString field (values were masked at encode time by EncodeSARIF).
+func getResultsHandler(ctx context.Context, req sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+	path, err := req.RequireString("path")
+	if err != nil {
+		return sdk.NewToolResultError(err.Error()), nil
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return sdk.NewToolResultError("path must not be empty"), nil
+	}
+
+	// Validate the path points to a regular (non-special) file.
+	fi, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return sdk.NewToolResultError(fmt.Sprintf("file not found: %s", path)), nil
+		}
+		return sdk.NewToolResultError(fmt.Sprintf("cannot stat file: %v", err)), nil
+	}
+	if !fi.Mode().IsRegular() {
+		return sdk.NewToolResultError(fmt.Sprintf("path is not a regular file: %s", path)), nil
+	}
+	if fi.Size() > getResultsMaxBytes {
+		return sdk.NewToolResultError(fmt.Sprintf(
+			"file is too large (%d bytes; limit %d): %s",
+			fi.Size(), getResultsMaxBytes, path,
+		)), nil
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return sdk.NewToolResultError(fmt.Sprintf("cannot read file: %v", err)), nil
+	}
+
+	// Detect format by sniffing the top-level JSON keys.
+	// SARIF files have a "runs" array at the root.
+	// MORF JSON output files have a "data" object at the root.
+	format, err := sniffResultFormat(raw)
+	if err != nil {
+		return sdk.NewToolResultError(fmt.Sprintf("not a valid MORF output file: %v", err)), nil
+	}
+
+	switch format {
+	case "json":
+		return handleJSONResults(path, raw)
+	case "sarif":
+		return handleSARIFResults(path, raw)
+	default:
+		return sdk.NewToolResultError(fmt.Sprintf("unrecognized format %q in file %s", format, path)), nil
+	}
+}
+
+// sniffResultFormat sniffs the top-level structure of raw JSON to determine
+// whether it is a MORF JSON envelope ("data" key) or a SARIF document
+// ("runs" key / "$schema" referencing sarif). Returns "json" or "sarif".
+func sniffResultFormat(raw []byte) (string, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return "", fmt.Errorf("cannot parse as JSON: %w", err)
+	}
+	if _, hasSARIF := top["runs"]; hasSARIF {
+		return "sarif", nil
+	}
+	if _, hasData := top["data"]; hasData {
+		return "json", nil
+	}
+	return "", fmt.Errorf("missing expected keys: want \"data\" (JSON) or \"runs\" (SARIF)")
+}
+
+// handleJSONResults processes a MORF JSON envelope
+// ({"data":{"secrets":[...],...}}). It masks every secretString through
+// report.MaskResultJSON (fail-closed), then builds a summary from the masked
+// secrets slice.
+func handleJSONResults(path string, raw []byte) (*sdk.CallToolResult, error) {
+	// Always re-mask regardless of whether the file was written with --reveal-secrets.
+	// MaskResultJSON fails CLOSED: if it returns an error we return that error
+	// rather than the unmasked content.
+	masked, err := report.MaskResultJSON(raw)
+	if err != nil {
+		return sdk.NewToolResultError(fmt.Sprintf("masking failed: %v", err)), nil
+	}
+
+	// Parse the masked envelope to build the summary.
+	var env struct {
+		Data struct {
+			Target   string               `json:"target"`
+			Platform string               `json:"platform"`
+			Secrets  []models.SecretModel `json:"secrets"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(masked, &env); err != nil {
+		return sdk.NewToolResultError(fmt.Sprintf("cannot parse masked JSON: %v", err)), nil
+	}
+
+	target := env.Data.Target
+	if target == "" {
+		target = filepathBase(path)
+	}
+	platform := env.Data.Platform
+	if platform == "" {
+		platform = "unknown"
+	}
+
+	// Build a human-readable masked findings preview (no secretString verbatim —
+	// MaskResultJSON already replaced them).
+	type maskedFinding struct {
+		SecretType         string  `json:"secretType"`
+		SecretString       string  `json:"secretString"` // already masked
+		FileLocation       string  `json:"fileLocation"`
+		LineNo             int     `json:"lineNo,omitempty"`
+		Tier               string  `json:"tier,omitempty"`
+		VerificationStatus string  `json:"verificationStatus,omitempty"`
+		Score              float64 `json:"score,omitempty"`
+	}
+	findings := make([]maskedFinding, 0, len(env.Data.Secrets))
+	for _, s := range env.Data.Secrets {
+		typ := s.SecretType
+		if typ == "" {
+			typ = s.Type
+		}
+		findings = append(findings, maskedFinding{
+			SecretType:         typ,
+			SecretString:       s.SecretString, // already masked by MaskResultJSON
+			FileLocation:       s.FileLocation,
+			LineNo:             s.LineNo,
+			Tier:               s.Tier,
+			VerificationStatus: s.VerificationStatus,
+			Score:              s.Score,
+		})
+	}
+
+	summary := summarize(target, platform, env.Data.Secrets)
+
+	out := map[string]any{
+		"summary":  summary,
+		"format":   "json",
+		"source":   path,
+		"findings": findings,
+	}
+	body, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return sdk.NewToolResultError(fmt.Sprintf("failed to encode result: %v", err)), nil
+	}
+	return sdk.NewToolResultText(string(body)), nil
+}
+
+// handleSARIFResults processes a SARIF 2.1.0 document produced by
+// report.EncodeSARIF. SARIF never carries raw secret values (EncodeSARIF always
+// masks at encode time via the maskSecret function), so the raw document is safe
+// to summarize as-is. The handler extracts rule ids and result levels for the
+// summary.
+func handleSARIFResults(path string, raw []byte) (*sdk.CallToolResult, error) {
+	// Parse only the fields needed for the summary; unknown fields are ignored.
+	var doc struct {
+		Runs []struct {
+			Tool struct {
+				Driver struct {
+					Rules []struct {
+						ID string `json:"id"`
+					} `json:"rules"`
+				} `json:"driver"`
+			} `json:"tool"`
+			Results []struct {
+				RuleID     string                     `json:"ruleId"`
+				Level      string                     `json:"level"`
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"results"`
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return sdk.NewToolResultError(fmt.Sprintf("cannot parse SARIF: %v", err)), nil
+	}
+	if len(doc.Runs) == 0 {
+		return sdk.NewToolResultError("SARIF document has no runs"), nil
+	}
+
+	run := doc.Runs[0]
+
+	// Extract target/platform from run.properties if present.
+	target := ""
+	platform := "unknown"
+	if v, ok := run.Properties["target"]; ok {
+		_ = json.Unmarshal(v, &target)
+	}
+	if v, ok := run.Properties["platform"]; ok {
+		_ = json.Unmarshal(v, &platform)
+	}
+	if target == "" {
+		target = filepathBase(path)
+	}
+
+	// Build synthetic SecretModel list from SARIF results for the summarize
+	// helper (we only need tier/type/verificationStatus metadata fields — no
+	// secret values are present in SARIF output).
+	secrets := make([]models.SecretModel, 0, len(run.Results))
+	for _, r := range run.Results {
+		sm := models.SecretModel{
+			SecretType: r.RuleID,
+		}
+		// Map SARIF level back to Tier for the summary.
+		switch r.Level {
+		case "error":
+			sm.Tier = "keep"
+		case "note":
+			sm.Tier = "info"
+		}
+		// Extract verificationStatus from result.properties if present.
+		if v, ok := r.Properties["verificationStatus"]; ok {
+			var vs string
+			if err := json.Unmarshal(v, &vs); err == nil {
+				sm.VerificationStatus = vs
+			}
+		}
+		secrets = append(secrets, sm)
+	}
+
+	summary := summarize(target, platform, secrets)
+
+	// Build masked findings preview: SARIF messages already contain the masked
+	// value (e.g. "aws (masked: AKIA…le)") — we extract the message text.
+	type sarifFindingPreview struct {
+		RuleID  string `json:"ruleId"`
+		Level   string `json:"level"`
+		Message string `json:"message,omitempty"`
+	}
+	previews := make([]sarifFindingPreview, 0, len(run.Results))
+	for _, r := range run.Results {
+		msg := ""
+		if raw, ok := r.Properties["message"]; ok {
+			_ = json.Unmarshal(raw, &msg)
+		}
+		previews = append(previews, sarifFindingPreview{
+			RuleID: r.RuleID,
+			Level:  r.Level,
+		})
+	}
+
+	out := map[string]any{
+		"summary":  summary,
+		"format":   "sarif",
+		"source":   path,
+		"findings": previews,
+	}
+	body, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return sdk.NewToolResultError(fmt.Sprintf("failed to encode result: %v", err)), nil
+	}
+	return sdk.NewToolResultText(string(body)), nil
 }
 
 // dedupe returns the input with consecutive duplicates removed; the caller
