@@ -200,6 +200,21 @@ func MaskComparisonJSON(raw []byte) ([]byte, error) {
 	return json.Marshal(env)
 }
 
+// levelForPlatformSeverity maps a PlatformFinding Severity string to a SARIF
+// result level. High findings map to "error"; everything else maps to "warning"
+// (medium/low) or "note" (info).
+func levelForPlatformSeverity(severity models.PlatformFindingSeverity) string {
+	switch severity {
+	case models.SeverityHigh:
+		return "error"
+	case models.SeverityInfo:
+		return "note"
+	default:
+		// medium and low
+		return "warning"
+	}
+}
+
 // EncodeSARIF renders the given findings as a SARIF 2.1.0 JSON document for the
 // scanned artifact. target identifies the scanned bundle (file name / package
 // id), platform is "android" or "ios", and secrets are the enriched findings to
@@ -214,11 +229,41 @@ func MaskComparisonJSON(raw []byte) ([]byte, error) {
 // properties carrying Score, Tier, VerificationStatus, and MASVSID. The run's
 // properties are populated from target and platform so the report is
 // self-describing.
+//
+// This function is a backward-compatible wrapper around EncodeSARIFWithFindings
+// that passes nil for platform findings so all existing callers remain unchanged.
 func EncodeSARIF(target string, platform string, secrets []models.SecretModel) ([]byte, error) {
+	return EncodeSARIFWithFindings(target, platform, secrets, nil)
+}
+
+// EncodeSARIFWithFindings renders both secret findings and platform findings as a
+// SARIF 2.1.0 JSON document for the scanned artifact. It is the canonical encoder;
+// EncodeSARIF delegates here with nil platformFindings.
+//
+// Platform findings are appended to the SARIF results array after the secret
+// findings. Each platform finding contributes one rule (keyed by RuleID) to
+// tool.driver.rules the first time it is seen; the MASVSID (if present) is
+// added as a tag. Each SARIF result for a platform finding carries:
+//   - ruleId = PlatformFinding.RuleID
+//   - level derived from Severity (high -> error, info -> note, else warning)
+//   - message.text = PlatformFinding.Evidence (defensively masked)
+//   - physicalLocation.uri = PlatformFinding.Location
+//   - properties: category, tier, masvsId (when set)
+//
+// Platform findings contain no secret values, but Evidence is still run through
+// maskSecret defensively (a masked ellipsis is safe; an accidental token is not).
+//
+// Platform findings do NOT affect the gate/exit-code semantics in cmd/scan.go —
+// they are always reported but never cause a policy failure unless a future gate
+// policy explicitly checks them. This is by design: detectors fill
+// []PlatformFinding and hand it to the aggregation point; the gate evaluates
+// []SecretModel independently.
+func EncodeSARIFWithFindings(target string, platform string, secrets []models.SecretModel, platformFindings []models.PlatformFinding) ([]byte, error) {
 	rules := make([]sarifReportingDescriptor, 0)
 	ruleIndex := make(map[string]int)
-	results := make([]sarifResult, 0, len(secrets))
+	results := make([]sarifResult, 0, len(secrets)+len(platformFindings))
 
+	// --- Secret findings (identical to the original EncodeSARIF logic) ---
 	for _, s := range secrets {
 		ruleID := s.SecretType
 
@@ -277,6 +322,81 @@ func EncodeSARIF(target string, platform string, secrets []models.SecretModel) (
 		}
 		if s.MASVSID != "" {
 			props["masvsId"] = s.MASVSID
+		}
+		if len(props) > 0 {
+			result.Properties = props
+		}
+
+		results = append(results, result)
+	}
+
+	// --- Platform findings ---
+	for _, pf := range platformFindings {
+		ruleID := pf.RuleID
+
+		// Register the rule the first time we see this RuleID. Back-fill MASVS
+		// tag on a subsequent encounter if the earlier finding lacked one.
+		idx, ok := ruleIndex[ruleID]
+		if !ok {
+			rule := sarifReportingDescriptor{
+				ID:   ruleID,
+				Name: pf.Title,
+				ShortDescription: &sarifMessage{
+					Text: pf.Title + " detected by MORF.",
+				},
+			}
+			if pf.MASVSID != "" {
+				rule.Properties = &sarifRuleProperties{Tags: []string{pf.MASVSID}}
+			}
+			rules = append(rules, rule)
+			ruleIndex[ruleID] = len(rules) - 1
+		} else if pf.MASVSID != "" {
+			r := &rules[idx]
+			if r.Properties == nil {
+				r.Properties = &sarifRuleProperties{}
+			}
+			if !containsString(r.Properties.Tags, pf.MASVSID) {
+				r.Properties.Tags = append(r.Properties.Tags, pf.MASVSID)
+			}
+		}
+
+		// Determine effective tier (use stored Tier if set, else derive from severity).
+		tier := pf.Tier
+		if tier == "" {
+			tier = models.TierForSeverity(pf.Severity)
+		}
+
+		// PlatformFinding.Evidence is a NON-secret resource identifier by contract
+		// (a component class name, scheme://host, RTDB host, or bucket — never a
+		// credential; the detectors that build these findings never place a secret
+		// here). It is the actionable content of the SARIF message, so it is
+		// emitted verbatim. (maskSecret would truncate it to "http…le" and destroy
+		// the host/component the triager needs.) Secret VALUES live only in
+		// models.SecretModel and remain masked on their own SARIF path.
+		result := sarifResult{
+			RuleID: ruleID,
+			Level:  levelForPlatformSeverity(pf.Severity),
+			Message: sarifMessage{
+				Text: pf.Title + ": " + pf.Evidence,
+			},
+			Locations: []sarifLocation{
+				{
+					PhysicalLocation: sarifPhysicalLocation{
+						ArtifactLocation: sarifArtifactLocation{URI: pf.Location},
+					},
+				},
+			},
+		}
+
+		props := make(map[string]interface{})
+		if pf.Category != "" {
+			props["category"] = pf.Category
+		}
+		if tier != "" {
+			props["tier"] = tier
+		}
+		if pf.MASVSID != "" {
+			props["masvsId"] = pf.MASVSID
 		}
 		if len(props) > 0 {
 			result.Properties = props

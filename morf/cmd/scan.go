@@ -85,12 +85,16 @@ type scanOptions struct {
 // in-process plumbing (identical order to worker.go). It is the only part that
 // needs java/apktool at runtime; the decision logic lives in evaluateAndRender
 // so it can be tested without those tools.
-func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.SecretModel, []models.SBOMComponent, string, error) {
+//
+// The returned []models.PlatformFinding is always non-nil (but may be empty);
+// detectors will populate it in a future unit. For now the slice is wired
+// through the call chain so the plumbing is in place.
+func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.SecretModel, []models.SBOMComponent, []models.PlatformFinding, string, error) {
 	lower := strings.ToLower(path)
 
 	jobCtx := utils.NewJobContext()
 	if err := jobCtx.CreateWorkspace(); err != nil {
-		return nil, nil, "", fmt.Errorf("create workspace: %w", err)
+		return nil, nil, nil, "", fmt.Errorf("create workspace: %w", err)
 	}
 	defer jobCtx.CleanupWorkspace()
 
@@ -98,23 +102,40 @@ func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.S
 	var sbom []models.SBOMComponent
 	var platform string
 	var err error
+	var platformFindings []models.PlatformFinding
 	switch {
 	case strings.HasSuffix(lower, ".apk"):
 		platform = "android"
 		secrets, err = apk.StartSecScanE(ctx, path, jobCtx)
-		// Native-lib + runtime SBOM components are enumerated from the decompiled
-		// tree the scan just produced (best-effort; nil when none).
 		if err == nil {
+			// Native-lib + runtime SBOM components are enumerated from the
+			// decompiled tree the scan just produced (best-effort; nil when none).
 			sbom = apk.CollectSBOMComponents(jobCtx)
+
+			// Platform findings (unit P2a): derive exported-component + deep-link
+			// exposure findings from the already-parsed manifest metadata. The
+			// metadata extraction runs inline here via the shared helper so the CLI
+			// path has the same coverage as the worker path.
+			if meta, _, metaErr := apk.ExtractMetadataAndPackageData(ctx, path, jobCtx); metaErr == nil {
+				platformFindings = apk.AnalyzeExposure(&meta)
+			}
+			// Platform findings (unit P2b): Firebase/GCP misconfig findings from
+			// google-services.json (passive always, active when MORF_ENABLE_VERIFICATION).
+			platformFindings = append(platformFindings, apk.CollectFirebaseMisconfigFindings(ctx, jobCtx, nil)...)
 		}
 	case strings.HasSuffix(lower, ".ipa"):
 		platform = "ios"
 		secrets, _, sbom, err = ios.StartIOSExtraction(ctx, path, jobCtx)
+		if err == nil {
+			// Platform findings (unit P2b): Firebase/GCP misconfig findings from
+			// GoogleService-Info.plist (passive always, active when MORF_ENABLE_VERIFICATION).
+			platformFindings = append(platformFindings, ios.CollectIOSFirebaseMisconfigFindingsFromIPA(ctx, jobCtx, nil)...)
+		}
 	default:
-		return nil, nil, "", fmt.Errorf("file must be .apk or .ipa")
+		return nil, nil, nil, "", fmt.Errorf("file must be .apk or .ipa")
 	}
 	if err != nil {
-		return nil, nil, platform, err
+		return nil, nil, nil, platform, err
 	}
 
 	// Identical post-processing to worker.go (Android 696-697 / iOS 827-828).
@@ -127,7 +148,13 @@ func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.S
 	}
 	secrets = verify.VerifySecrets(ctx, secrets)
 
-	return secrets, sbom, platform, nil
+	// Ensure platformFindings is always a non-nil slice so downstream JSON
+	// renders as "[]" rather than null.
+	if platformFindings == nil {
+		platformFindings = []models.PlatformFinding{}
+	}
+
+	return secrets, sbom, platformFindings, platform, nil
 }
 
 // renderFindings serialises findings in the requested format. The JSON path
@@ -137,21 +164,35 @@ func runScanForFile(ctx context.Context, path string, doVerify bool) ([]models.S
 // your own authorized artifact when you need the plaintext to rotate/verify.
 // reveal never affects SARIF: that format is built for upload to code scanning
 // and must always mask, so a reveal request there is ignored (still masked).
-func renderFindings(format, target, platform string, secrets []models.SecretModel, reveal bool) ([]byte, error) {
+//
+// platformFindings are always included in both formats:
+//   - SARIF: appended as additional results via EncodeSARIFWithFindings.
+//   - JSON: added as "platformFindings" array in the data envelope.
+//
+// Platform findings do not affect the gate/exit-code semantics (they are
+// reported, not gated). Passing nil for platformFindings is safe; it is treated
+// as an empty slice.
+func renderFindings(format, target, platform string, secrets []models.SecretModel, platformFindings []models.PlatformFinding, reveal bool) ([]byte, error) {
+	if platformFindings == nil {
+		platformFindings = []models.PlatformFinding{}
+	}
 	switch strings.ToLower(format) {
 	case "sarif":
-		return report.EncodeSARIF(target, platform, secrets)
+		return report.EncodeSARIFWithFindings(target, platform, secrets, platformFindings)
 	case "json":
-		// Wrap in the {"data":{"secrets":[...]}} envelope MaskResultJSON expects,
-		// so masking reuses the exact SARIF masking logic (no plaintext leak).
+		// Wrap in the {"data":{"secrets":[...],"platformFindings":[...]}} envelope
+		// MaskResultJSON expects, so secret masking reuses the exact SARIF masking
+		// logic (no plaintext leak). platformFindings carry no secrets but are
+		// included in the same envelope for a single coherent JSON output.
 		if secrets == nil {
 			secrets = []models.SecretModel{}
 		}
 		env := map[string]any{
 			"data": map[string]any{
-				"target":   target,
-				"platform": platform,
-				"secrets":  secrets,
+				"target":           target,
+				"platform":         platform,
+				"secrets":          secrets,
+				"platformFindings": platformFindings,
 			},
 		}
 		raw, err := json.Marshal(env)
@@ -204,7 +245,10 @@ func renderSBOM(target, platform string, sbom []models.SBOMComponent) ([]byte, e
 // and the resolved options, it produces the output bytes, the human summary, and
 // the process exit code. It performs NO scanning and NO I/O beyond formatting,
 // so tests can drive it with a hand-built []models.SecretModel.
-func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []models.SBOMComponent) (out []byte, summary string, exitCode int, err error) {
+//
+// platformFindings are threaded into the output (SARIF results + JSON array) but
+// do NOT affect gate/exit-code semantics. Passing nil is safe (treated as empty).
+func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []models.SBOMComponent, platformFindings []models.PlatformFinding) (out []byte, summary string, exitCode int, err error) {
 	format := opts.format
 	if opts.sarif {
 		format = "sarif"
@@ -231,7 +275,7 @@ func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []mo
 		return nil, "", exitOperational, perr
 	}
 
-	rendered, rerr := renderFindings(format, opts.target, opts.platform, secrets, opts.reveal)
+	rendered, rerr := renderFindings(format, opts.target, opts.platform, secrets, platformFindings, opts.reveal)
 	if rerr != nil {
 		return nil, "", exitOperational, rerr
 	}
@@ -239,6 +283,7 @@ func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []mo
 	// Reuse the gate diff engine against an empty baseline: every finding is
 	// "new", so the same policy vocabulary decides pass/fail for a standalone
 	// scan exactly as it does for a baselined gate run.
+	// Platform findings do NOT affect gate evaluation — only secrets are gated.
 	res := gate.Evaluate(secrets, gate.NewBaseline(), policy)
 
 	code := exitOK
@@ -247,8 +292,8 @@ func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []mo
 	}
 
 	summary = fmt.Sprintf(
-		"MORF scan: %d finding(s) (%d verified-active); fail-on=%s -> %s [%s]",
-		len(secrets), len(res.NewVerified), policyLabel(policy), passFail(res.Failed), res.Reason,
+		"MORF scan: %d finding(s) (%d verified-active), %d platform finding(s); fail-on=%s -> %s [%s]",
+		len(secrets), len(res.NewVerified), len(platformFindings), policyLabel(policy), passFail(res.Failed), res.Reason,
 	)
 
 	return rendered, summary, code, nil
@@ -289,7 +334,7 @@ func writeOutput(opts scanOptions, w io.Writer, data []byte) error {
 // It returns the exit code so the cobra Run wrapper can call os.Exit, keeping the
 // os.Exit boundary out of the tested logic.
 func runScan(ctx context.Context, opts scanOptions, path string, stdout, stderr io.Writer) (int, error) {
-	secrets, sbom, platform, err := runScanForFile(ctx, path, opts.verify)
+	secrets, sbom, platformFindings, platform, err := runScanForFile(ctx, path, opts.verify)
 	if err != nil {
 		return exitOperational, err
 	}
@@ -308,7 +353,7 @@ func runScan(ctx context.Context, opts scanOptions, path string, stdout, stderr 
 		fmt.Fprintf(stderr, "WARNING: --reveal-secrets wrote UNMASKED secret values to %s — handle as sensitive.\n", dest)
 	}
 
-	out, summary, code, err := evaluateAndRender(opts, secrets, sbom)
+	out, summary, code, err := evaluateAndRender(opts, secrets, sbom, platformFindings)
 	if err != nil {
 		return exitOperational, err
 	}
