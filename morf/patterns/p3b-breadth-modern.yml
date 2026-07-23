@@ -1,0 +1,396 @@
+# P3b curated breadth batch — 39 modern cloud/CI/SaaS/AI detection patterns NOT
+# already covered in the other pattern files. 35 ship enabled=true; 4 are
+# enabled=false (Mandrill md-, Voyage pa-, Anthropic newer-format duplicate,
+# Vault hvc-nonexistent-prefix) because they are anchorless/duplicate/invalid and
+# would flood false positives — the precision engine only SCORES entropy, it does
+# not gate single-token values, so an anchorless short prefix is not rescued.
+# Every enabled regex:
+#   • compiles under ripgrep (Rust regex — no lookahead/lookbehind/backrefs)
+#   • is anchored by a distinctive fixed prefix or a variable-name assignment,
+#     plus a charset+length bound
+# File-level MASVS default; individual patterns override via their own masvs:.
+masvs: MASVS-STORAGE-1
+platform: any
+
+patterns:
+  # ---------------------------------------------------------------------------
+  # CDN / Edge networking
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Fastly API Token
+      # Fastly personal tokens: exactly 32 hex chars, commonly assigned as
+      # FASTLY_API_TOKEN or Fastly-Key header value.
+      regex: "[fF]astly[_-]?[aA][pP][iI][_-]?[tT]oken[\"']?\\s*[:=]\\s*[\"'][0-9a-zA-Z]{32}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Cloudflare API Token
+      # CF API tokens use a 40-char base64url string (no separator), introduced
+      # after the legacy Global API Key.  Anchor on the "CF_" variable name or
+      # cf_api_token assignment to avoid collisions.
+      regex: "[cC](?:loudflare|F)[_-]?(?:api[_-]?)?[tT]oken[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9_\\-]{40}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Cloudflare Global API Key
+      # Cloudflare legacy Global API Key: exactly 37 lowercase hex.
+      regex: "[cC](?:loudflare|F)[_-]?(?:global[_-]?)?[aA][pP][iI][_-]?[kK]ey[\"']?\\s*[:=]\\s*[\"'][0-9a-f]{37}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Hosting / deployment platforms
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Netlify PAT
+      # Netlify personal access tokens: bearer in Authorization header,
+      # or stored as NETLIFY_AUTH_TOKEN.  36-char alnum (UUID-ish but no hyphens).
+      regex: "netlify[_-]?(?:auth[_-]?)?token[\"']?\\s*[:=]\\s*[\"'][0-9a-zA-Z\\-]{36}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Vercel Access Token
+      # Vercel tokens: 24-char alnum, stored as VERCEL_TOKEN / VERCEL_ACCESS_TOKEN.
+      regex: "[vV]ercel[_-]?(?:access[_-]?)?[tT]oken[\"']?\\s*[:=]\\s*[\"'][0-9a-zA-Z]{24}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Fly.io Access Token
+      # Fly.io tokens: "FlyV1 " prefix followed by a long base64url payload.
+      regex: "FlyV1 [A-Za-z0-9_\\-+/]{100,250}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Pulumi Access Token
+      # Pulumi cloud tokens start with "pul-" followed by 40 hex chars.
+      regex: "pul-[a-f0-9]{40}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Comms / video / gaming
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Twitch OAuth App Token
+      # Twitch app access tokens start with "oauth:" (legacy) or are 30-char alnum
+      # returned by the OAuth flow.  The "oauth:" prefix is the distinctive anchor.
+      regex: "oauth:[a-z0-9]{30}"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+
+  - pattern:
+      name: Twitch Client Secret
+      # Twitch app secrets in env vars: twitch_client_secret / TWITCH_SECRET = 30-char alnum.
+      regex: "[tT]witch[_-]?(?:client[_-]?)?[sS]ecret[\"']?\\s*[:=]\\s*[\"'][a-z0-9]{30}[\"']"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+
+  - pattern:
+      name: Vonage/Nexmo API Secret
+      # Nexmo/Vonage API keys are 8-char alnum; secrets are 16-char alnum.
+      # Anchor on the "api_secret" assignment. The vendor alternation MUST be
+      # grouped: a bare "[nN]exmo|[vV]onage..." binds the | at top level so
+      # branch 1 becomes the plain word "nexmo" and floods FPs.
+      regex: "(?:[nN]exmo|[vV]onage)[\"']?.*api_secret[\"']?\\s*[:=]\\s*[\"'][a-zA-Z0-9]{16}[\"']"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+
+  - pattern:
+      name: MessageBird API Key
+      # MessageBird REST keys: exactly 25-char alnum, assigned as
+      # MESSAGEBIRD_API_KEY or "messagebird" + key.
+      regex: "[mM]essage[bB]ird[_-]?(?:api[_-]?)?[kK]ey[\"']?\\s*[:=]\\s*[\"'][a-zA-Z0-9]{25}[\"']"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+
+  - pattern:
+      name: Postmark Server API Token
+      # Postmark Server tokens: exactly 36-char UUID-format or 8-4-4-4-12 hex.
+      regex: "POSTMARK_API_TOKEN[\"']?\\s*[:=]\\s*[\"'][0-9a-fA-F\\-]{36}[\"']"
+      confidence: high
+      masvs: MASVS-NETWORK-1
+      enabled: true
+
+  - pattern:
+      name: Mandrill API Key
+      # Mandrill/Mailchimp transactional API keys: md- prefix + 22 alnum.
+      # DISABLED: "md-" is a ubiquitous anchorless prefix (markdown, Material
+      # Design class names) — high FP risk with no variable-name anchor, and the
+      # precision engine only SCORES entropy (does not gate single-token values).
+      # Re-enable once anchored on an md_api_key/MANDRILL assignment.
+      regex: "md-[A-Za-z0-9]{22}"
+      confidence: medium
+      masvs: MASVS-NETWORK-1
+      enabled: false
+
+  - pattern:
+      name: Doppler Service Token
+      # Doppler service tokens start with "dp.st." followed by environment +
+      # secret (60-100 chars total after prefix).
+      regex: "dp\\.st\\.[A-Za-z0-9_\\-]{40,100}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Doppler Personal Token
+      # Doppler personal/project tokens: dp.pt. prefix.
+      regex: "dp\\.pt\\.[A-Za-z0-9_\\-]{40,100}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # ---------------------------------------------------------------------------
+  # AI / ML providers
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Cohere API Key
+      # Cohere keys: exactly 40-char alnum (all lowercase + digits), typically
+      # assigned as COHERE_API_KEY.  Anchor on prefix to avoid entropy collisions.
+      regex: "COHERE_API_KEY[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9]{40}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Mistral AI API Key
+      # Mistral API keys: 32-char alnum tokens assigned as MISTRAL_API_KEY.
+      regex: "MISTRAL_API_KEY[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9]{32}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Groq API Key
+      # Groq API keys start with "gsk_" followed by 52 base58/alnum chars.
+      regex: "gsk_[A-Za-z0-9]{52}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Together AI API Key
+      # Together AI keys: 64-char hex token, often stored as TOGETHER_API_KEY.
+      regex: "TOGETHER_API_KEY[\"']?\\s*[:=]\\s*[\"'][a-f0-9]{64}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: ElevenLabs API Key
+      # ElevenLabs keys: 32-char hex, assigned as ELEVENLABS_API_KEY or xi-api-key header.
+      regex: "(?:ELEVENLABS_API_KEY|xi-api-key)[\"']?\\s*[:=]\\s*[\"'][a-f0-9]{32}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Stability AI API Key
+      # Stability.ai keys start with "sk-" followed by 48 base64url chars (note:
+      # overlap with generic sk- but Stability uses a distinctive long length).
+      regex: "STABILITY_API_KEY[\"']?\\s*[:=]\\s*[\"']sk-[A-Za-z0-9]{48}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: DeepSeek API Key
+      # DeepSeek API keys: "sk-" prefix + 48 alnum chars.
+      # Anchor on DEEPSEEK_API_KEY variable to differentiate from OpenAI sk-.
+      regex: "DEEPSEEK_API_KEY[\"']?\\s*[:=]\\s*[\"']sk-[A-Za-z0-9]{48}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Voyage AI API Key
+      # Voyage AI keys start with "pa-" followed by 40 alnum chars.
+      # DISABLED: "pa-" is a generic anchorless prefix (high FP risk) and the
+      # precision engine won't rescue a single-token value. Re-enable once
+      # anchored on a VOYAGE_API_KEY assignment.
+      regex: "pa-[A-Za-z0-9]{40}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: false
+
+  # ---------------------------------------------------------------------------
+  # Database / data platforms
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Supabase Service Role Key
+      # Supabase service-role JWTs start with "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+      # (base64url of {"alg":"HS256","typ":"JWT"}) + ".eyJ" payload.
+      # Anchor on SUPABASE_SERVICE_ROLE_KEY or supabase_service_key.
+      regex: "(?:SUPABASE_SERVICE_ROLE_KEY|supabase_service[_-]?key)[\"']?\\s*[:=]\\s*[\"']eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  - pattern:
+      name: Supabase Anon Key
+      # Supabase anon JWT, anchored on the env var name to avoid duplicating the
+      # generic JWT pattern while still catching embedded app keys.
+      regex: "(?:SUPABASE_ANON_KEY|supabase_anon[_-]?key)[\"']?\\s*[:=]\\s*[\"']eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  - pattern:
+      name: Neon Database URI
+      # Neon serverless Postgres uses a modified postgres URI with .neon.tech host.
+      regex: "postgres(?:ql)?://[^:@\\s]{3,40}:[^@\\s]{6,64}@[a-zA-Z0-9\\-]+\\.neon\\.tech"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  - pattern:
+      name: Turso Database Auth Token
+      # Turso libsql tokens start with "eyJ" (JWT) and are assigned as
+      # TURSO_AUTH_TOKEN or turso_token.
+      regex: "(?:TURSO_AUTH_TOKEN|turso[_-]?(?:auth[_-]?)?token)[\"']?\\s*[:=]\\s*[\"']eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  - pattern:
+      name: Upstash REST Token
+      # Upstash Redis REST API tokens: assigned as UPSTASH_REDIS_REST_TOKEN,
+      # starts with a base64url blob of ~200-300 chars.
+      regex: "UPSTASH_REDIS_REST_TOKEN[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9_\\-=+/]{100,300}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  - pattern:
+      name: PlanetScale Service Token
+      # PlanetScale DB service tokens: pscale_tkn_ prefix + 40 alnum.
+      regex: "pscale_tkn_[a-zA-Z0-9]{40}"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  - pattern:
+      name: Confluent Cloud API Secret
+      # Confluent Cloud API secrets: 64-char base64url, assigned with
+      # CONFLUENT_CLOUD_API_SECRET or sasl.password in Kafka configs.
+      regex: "CONFLUENT_CLOUD_API_SECRET[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9+/]{64}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Feature flags / analytics
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: LaunchDarkly SDK Key
+      # LaunchDarkly server-side SDK keys: sdk- prefix + 48 alnum.
+      regex: "sdk-[a-fA-F0-9\\-]{40,60}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      # medium: "sdk-" is a wide-ish prefix; flagged server-side keys usually
+      # have 40-60 hex/UUID chars but the prefix itself is short.
+      enabled: true
+
+  - pattern:
+      name: LaunchDarkly Mobile Key
+      # LaunchDarkly mobile/client keys: mob- prefix + 40 alnum.
+      regex: "mob-[a-fA-F0-9\\-]{40,60}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Segment Write Key
+      # Segment source write keys: 32-char alnum (no separator), assigned as
+      # SEGMENT_WRITE_KEY or analytics.writeKey.
+      regex: "(?:SEGMENT_WRITE_KEY|analytics[_.]writeKey)[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9]{32}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Braze API Key
+      # Braze REST API keys: UUID-format (8-4-4-4-12 hex), assigned as
+      # BRAZE_API_KEY or appboy_api_key.
+      regex: "(?:BRAZE_API_KEY|appboy[_-]?api[_-]?key)[\"']?\\s*[:=]\\s*[\"'][0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Elastic / OpenSearch
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Elastic Cloud API Key
+      # Elastic Cloud / Kibana API keys are base64url encoded id:api_key pairs;
+      # often stored as ELASTICSEARCH_API_KEY or Authorization: ApiKey <token>.
+      regex: "(?:ELASTICSEARCH_API_KEY|Authorization:\\s*ApiKey)\\s*[\"']?[A-Za-z0-9+/=]{20,200}[\"']?"
+      confidence: medium
+      masvs: MASVS-STORAGE-2
+      enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Mobile-adjacent additional AI tokens (new models 2024-2025)
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Perplexity AI API Key
+      # Perplexity API keys: pplx- prefix + 48 alphanumeric chars.
+      regex: "pplx-[A-Za-z0-9]{48}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  - pattern:
+      name: Anthropic API Key (newer format)
+      # Anthropic has introduced sk-ant-[type]-[id]-[body]AA patterns.
+      # DISABLED: this broad variant matches benign strings like
+      # "sk-ant-config-value-…" AND fully overlaps the precise
+      # sk-ant-api03-…{93}AA rule already in breadth-cloud-ci.yml — since
+      # SanitizeSecrets dedups on (SecretType,value) and the names differ, real
+      # keys would be reported twice. The precise rule already covers real keys.
+      regex: "sk-ant-[a-z0-9]+-[A-Za-z0-9_\\-]{20,100}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: false
+
+  # ---------------------------------------------------------------------------
+  # Secrets manager / config (HashiCorp Vault additional)
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: HashiCorp Vault Service Token
+      # DISABLED: "hvc." is NOT a real Vault token prefix — Vault issues
+      # hvs./hvb./hvr./hvz. (hvs./hvb. already covered in breadth-cloud-ci.yml).
+      # This rule would never match a genuine token; kept disabled as a marker.
+      regex: "hvc\\.[A-Za-z0-9_\\-]{90,150}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: false
+
+  # ---------------------------------------------------------------------------
+  # Lob / direct mail
+  # ---------------------------------------------------------------------------
+  - pattern:
+      name: Lob API Key
+      # Lob live keys: test_ and live_ prefix + 40 alnum.
+      regex: "(?:test|live)_[a-zA-Z0-9]{40}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      # medium: the prefix is common (Lob, GoCardless, etc.); length bound
+      # narrows it but borderline.
+      enabled: true
