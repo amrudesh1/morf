@@ -81,5 +81,5 @@ patterns:
       confidence: high
       # Disabled: matches the word key/secret/token + any short quoted string, so
       # in decompiled smali / minified JS it fires on identifier names and
-      # punctuation (see App scan: ':' , ',' , 'selected_card_key'). Pure noise.
+      # punctuation (observed noise: ':' , ',' , 'selected_card_key'). Pure noise.
       enabled: false
