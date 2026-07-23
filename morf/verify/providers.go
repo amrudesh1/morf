@@ -41,6 +41,20 @@ var (
 	cloudflareAPIBase   = "https://api.cloudflare.com"
 	mailgunAPIBase      = "https://api.mailgun.net"
 	digitalOceanAPIBase = "https://api.digitalocean.com"
+
+	// P3a additions
+	openaiAPIBase    = "https://api.openai.com"
+	anthropicAPIBase = "https://api.anthropic.com"
+	datadogAPIBase   = "https://api.datadoghq.com"
+	pagerdutyAPIBase = "https://api.pagerduty.com"
+	discordAPIBase   = "https://discord.com"
+	telegramAPIBase  = "https://api.telegram.org"
+	mapboxAPIBase    = "https://api.mapbox.com"
+	squareAPIBase    = "https://connect.squareup.com"
+	herokuAPIBase    = "https://api.heroku.com"
+	figmaAPIBase     = "https://api.figma.com"
+	notionAPIBase    = "https://api.notion.com"
+	airtableAPIBase  = "https://api.airtable.com"
 )
 
 // githubVerifier validates a GitHub token via GET /user (the authenticated-user
@@ -404,6 +418,352 @@ func (v *npmVerifier) shared() *client          { return v.c }
 func (v *cloudflareVerifier) shared() *client   { return v.c }
 func (v *mailgunVerifier) shared() *client      { return v.c }
 func (v *digitalOceanVerifier) shared() *client { return v.c }
+
+// --- P3a additions: 12 new provider verifiers --------------------------------
+
+// openaiVerifier validates an OpenAI API key via GET /v1/models (list models).
+// 200 => active, 401 => inactive, anything else => unknown.
+type openaiVerifier struct{ c *client }
+
+func (v *openaiVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, openaiAPIBase+"/v1/models", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *openaiVerifier) shared() *client { return v.c }
+
+// anthropicVerifier validates an Anthropic API key via GET /v1/models.
+// Anthropic requires the x-api-key header and an anthropic-version header.
+// 200 => active, 401 => inactive, anything else => unknown.
+type anthropicVerifier struct{ c *client }
+
+func (v *anthropicVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, anthropicAPIBase+"/v1/models", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("x-api-key", secret)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *anthropicVerifier) shared() *client { return v.c }
+
+// datadogVerifier validates a Datadog API key via GET /api/v1/validate.
+// Datadog returns 200 {"valid":true} for a good key and 403 for a bad one.
+// 200 => active, 403 => inactive, anything else => unknown.
+type datadogVerifier struct{ c *client }
+
+func (v *datadogVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, datadogAPIBase+"/api/v1/validate", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("DD-API-KEY", secret)
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusForbidden:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *datadogVerifier) shared() *client { return v.c }
+
+// pagerdutyVerifier validates a PagerDuty API key via GET /users?limit=1.
+// 200 => active, 401 => inactive, anything else => unknown.
+type pagerdutyVerifier struct{ c *client }
+
+func (v *pagerdutyVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pagerdutyAPIBase+"/users?limit=1", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("Authorization", "Token token="+secret)
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *pagerdutyVerifier) shared() *client { return v.c }
+
+// discordBotVerifier validates a Discord bot token via GET /api/v10/users/@me.
+// 200 => active, 401 => inactive, anything else => unknown.
+type discordBotVerifier struct{ c *client }
+
+func (v *discordBotVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discordAPIBase+"/api/v10/users/@me", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("Authorization", "Bot "+secret)
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *discordBotVerifier) shared() *client { return v.c }
+
+// telegramBotVerifier validates a Telegram bot token via GET
+// /bot<token>/getMe. The token is embedded in the URL path.
+// 200 => active, 401 => inactive, anything else => unknown.
+type telegramBotVerifier struct{ c *client }
+
+func (v *telegramBotVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	u := telegramAPIBase + "/bot" + url.PathEscape(secret) + "/getMe"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *telegramBotVerifier) shared() *client { return v.c }
+
+// mapboxVerifier validates a Mapbox access token via GET
+// /tokens/v2?access_token=<token>. 200 => active, 401 => inactive, anything
+// else => unknown.
+type mapboxVerifier struct{ c *client }
+
+func (v *mapboxVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	u := mapboxAPIBase + "/tokens/v2?access_token=" + url.QueryEscape(secret)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *mapboxVerifier) shared() *client { return v.c }
+
+// squareVerifier validates a Square access token via GET /v2/locations.
+// 200 => active, 401 => inactive, anything else => unknown.
+type squareVerifier struct{ c *client }
+
+func (v *squareVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, squareAPIBase+"/v2/locations", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *squareVerifier) shared() *client { return v.c }
+
+// herokuVerifier validates a Heroku API key via GET /account.
+// The request uses Bearer auth and the Heroku v3 Accept header.
+// 200 => active, 401 => inactive, anything else => unknown.
+type herokuVerifier struct{ c *client }
+
+func (v *herokuVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, herokuAPIBase+"/account", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Accept", "application/vnd.heroku+json; version=3")
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *herokuVerifier) shared() *client { return v.c }
+
+// figmaVerifier validates a Figma personal access token via GET /v1/me.
+// 200 => active, 403 => inactive, anything else => unknown.
+type figmaVerifier struct{ c *client }
+
+func (v *figmaVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, figmaAPIBase+"/v1/me", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("X-Figma-Token", secret)
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusForbidden:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *figmaVerifier) shared() *client { return v.c }
+
+// notionVerifier validates a Notion integration token via GET /v1/users/me.
+// 200 => active, 401 => inactive, anything else => unknown.
+type notionVerifier struct{ c *client }
+
+func (v *notionVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, notionAPIBase+"/v1/users/me", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Notion-Version", "2022-06-28")
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *notionVerifier) shared() *client { return v.c }
+
+// airtableVerifier validates an Airtable personal access token via GET
+// /v0/meta/whoami. 200 => active, 401 => inactive, anything else => unknown.
+type airtableVerifier struct{ c *client }
+
+func (v *airtableVerifier) Verify(ctx context.Context, secret string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, airtableAPIBase+"/v0/meta/whoami", nil)
+	if err != nil {
+		return statusUnknown, err
+	}
+	req.Header.Set("Authorization", "Bearer "+secret)
+	resp, err := v.c.do(ctx, req)
+	if err != nil {
+		return statusUnknown, err
+	}
+	defer drain(resp)
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return statusActive, nil
+	case http.StatusUnauthorized:
+		return statusInactive, nil
+	default:
+		return statusUnknown, nil
+	}
+}
+
+func (v *airtableVerifier) shared() *client { return v.c }
 
 // drain closes a response body after reading a bounded amount so the underlying
 // connection can be reused, without slurping unbounded provider output.

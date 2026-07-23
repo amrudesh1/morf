@@ -73,6 +73,19 @@ func defaultRegistry(c *client) []registryEntry {
 		{match: "mailgun", verifier: &mailgunVerifier{c: c}},
 		{match: "digitalocean", verifier: &digitalOceanVerifier{c: c}},
 		{match: "aws", verifier: &awsVerifier{c: c}},
+		// P3a additions
+		{match: "openai", verifier: &openaiVerifier{c: c}},
+		{match: "anthropic", verifier: &anthropicVerifier{c: c}},
+		{match: "datadog", verifier: &datadogVerifier{c: c}},
+		{match: "pagerduty", verifier: &pagerdutyVerifier{c: c}},
+		{match: "discord", verifier: &discordBotVerifier{c: c}},
+		{match: "telegram", verifier: &telegramBotVerifier{c: c}},
+		{match: "mapbox", verifier: &mapboxVerifier{c: c}},
+		{match: "square", verifier: &squareVerifier{c: c}},
+		{match: "heroku", verifier: &herokuVerifier{c: c}},
+		{match: "figma", verifier: &figmaVerifier{c: c}},
+		{match: "notion", verifier: &notionVerifier{c: c}},
+		{match: "airtable", verifier: &airtableVerifier{c: c}},
 	}
 }
 
