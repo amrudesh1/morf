@@ -491,6 +491,12 @@ func extractTree(prefix, dst string) error {
 		if err != nil {
 			return fmt.Errorf("read embedded %s: %w", p, err)
 		}
+		// Substitute placeholder tokens with the real credential values in the
+		// throwaway temp corpus MORF scans. The committed corpus text carries only
+		// inert tokens (no secret-shaped strings), so the repo stays scanner-clean
+		// while recall is measured against byte-identical real values. No-op on
+		// files without tokens (binaries, patterns, labels.json).
+		data = hydrate(data)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}

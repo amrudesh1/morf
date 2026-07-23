@@ -23,7 +23,7 @@ deterministic hits to assert against:
 | String | Matches pattern | Notes |
 |--------|-----------------|-------|
 | `AKIAIOSFODNN7EXAMPLE` | `AWS API Key` (`AKIA[0-9A-Z]{16}`) | AWS's own published, non-functional example access key ID. |
-| `sk_live_MASKED_FIXTURE` | `Stripe API Key` (`sk_live_[0-9a-zA-Z]{24}`) | The 24-char body is fabricated; it maps to no real Stripe account. |
+| `sk_live_…(24-char fabricated body)` | `Stripe API Key` (`sk_live_[0-9a-zA-Z]{24}`) | The 24-char body is fabricated; it maps to no real Stripe account. |
 
 Both strings live in the `__TEXT.__rodata` section of the compiled binary
 (Go's linker places program string constants there; it does not emit the
@@ -77,7 +77,7 @@ Fixture: Mach-O 64-bit executable arm64
 
 $ strings -a Fixture | grep -E 'AKIA|sk_live_'
 AKIAIOSFODNN7EXAMPLE...
-sk_live_MASKED_FIXTURE...
+sk_live_…(24-char fabricated body)...
 ```
 
 With `go-macho`: `macho.Open("Fixture")` succeeds, `f.Sections` enumerates the

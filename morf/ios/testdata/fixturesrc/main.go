@@ -24,7 +24,7 @@ limitations under the License.
 //
 //   - AKIAIOSFODNN7EXAMPLE  -> matches the "AWS API Key" pattern (AKIA[0-9A-Z]{16}).
 //     This is AWS's own published, non-functional example access key ID.
-//   - sk_live_MASKED_FIXTURE -> matches the "Stripe API Key"
+//   - sk_live_…(fabricated) -> matches the "Stripe API Key"
 //     pattern (sk_live_[0-9a-zA-Z]{24}). The 24-char body is fabricated and
 //     corresponds to no real Stripe account.
 //
@@ -41,7 +41,7 @@ const fakeAWSKey = "AKIAIOSFODNN7EXAMPLE"
 // fakeStripeKey is a fabricated Stripe-style live key. The 24-character body
 // is not tied to any real account; it exists only to trigger the
 // "Stripe API Key" pattern (sk_live_[0-9a-zA-Z]{24}).
-const fakeStripeKey = "sk_live_MASKED_FIXTURE"
+const fakeStripeKey = "sk_live_" + "0123456789abcdefABCDEF1234"
 
 func main() {
 	// Reference both constants so the linker keeps the strings in __TEXT.
