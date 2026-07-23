@@ -18,10 +18,12 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"morf/models"
+	"morf/osv"
 	"morf/version"
 	"strings"
 	"time"
@@ -105,7 +107,7 @@ func ExportResult(job *models.ScanJob, format ExportFormat) ([]byte, string, err
 	case ExportFormatSARIF:
 		return exportSARIF(job, &result)
 	case ExportFormatCycloneDX, ExportFormatCycloneDXSBOM:
-		return exportCycloneDX(job, &result)
+		return exportCycloneDX(job, &result, nil)
 	default:
 		return nil, "", fmt.Errorf("unsupported export format: %s", format)
 	}
@@ -217,7 +219,11 @@ func exportSARIF(job *models.ScanJob, result *scanResultPayload) ([]byte, string
 // This function reads only inventory metadata (package id, library/framework
 // names, versions, hashes, paths). It deliberately does NOT read
 // result.Data.Secrets, so no secret value can leak into the SBOM.
-func exportCycloneDX(job *models.ScanJob, result *scanResultPayload) ([]byte, string, error) {
+//
+// vulns is an optional pre-resolved vulnerability slice (from the osv package).
+// When non-nil and non-empty, the vulnerabilities array is appended to the BOM.
+// Pass nil to omit vulnerability enrichment (the default, opt-out path).
+func exportCycloneDX(job *models.ScanJob, result *scanResultPayload, vulns []osv.OSVVulnerability) ([]byte, string, error) {
 	pkg := result.Data.PackageName
 	appVersion := result.Data.Version
 
@@ -287,11 +293,88 @@ func exportCycloneDX(job *models.ScanJob, result *scanResultPayload) ([]byte, st
 		},
 	}
 
+	// Emit CycloneDX 1.6 vulnerabilities array only when enrichment produced results.
+	// An empty or nil slice omits the key entirely, preserving identical output to
+	// the non-enriched path (no schema noise for opt-out callers).
+	if len(vulns) > 0 {
+		bom["vulnerabilities"] = cycloneDXVulnerabilities(vulns)
+	}
+
 	out, err := json.MarshalIndent(bom, "", "  ")
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to marshal CycloneDX: %v", err)
 	}
 	return out, "application/vnd.cyclonedx+json", nil
+}
+
+// cycloneDXVulnerabilities converts a slice of OSV vulnerabilities into the
+// CycloneDX 1.6 vulnerabilities array format. Each entry carries:
+//   - id:      the canonical identifier (CVE/GHSA/OSV)
+//   - source:  {name, url}
+//   - ratings: [{severity, score, method, vector}] when CVSS data is available
+//   - affects: [{ref: bom-ref of the affected component}]
+//   - description: the truncated OSV summary
+//
+// Secret values are never present in an OSVVulnerability — only public
+// vulnerability metadata — so no masking is required here.
+func cycloneDXVulnerabilities(vulns []osv.OSVVulnerability) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(vulns))
+	for _, v := range vulns {
+		entry := map[string]interface{}{
+			"id": v.ID,
+			"source": map[string]string{
+				"name": v.SourceName,
+				"url":  v.SourceURL,
+			},
+			"affects": []map[string]interface{}{
+				{"ref": v.AffectedBomRef},
+			},
+		}
+		if v.Summary != "" {
+			entry["description"] = v.Summary
+		}
+		// Ratings — only emit when we have meaningful severity data.
+		if v.Severity != "" && v.Severity != "unknown" {
+			rating := map[string]interface{}{
+				"severity": v.Severity,
+				"method":   "CVSSv31",
+			}
+			if v.CVSS != "" {
+				rating["score"] = v.CVSS
+			}
+			if v.CVSSVector != "" {
+				rating["vector"] = v.CVSSVector
+			}
+			entry["ratings"] = []map[string]interface{}{rating}
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// ExportResultWithOSV exports a CycloneDX SBOM with optional OSV enrichment.
+// When osvClient is non-nil and osv.IsEnabled() is true (or forceOSV is true),
+// it calls osvClient.EnrichComponents and folds the vulnerabilities into the BOM.
+// For all other formats this behaves identically to ExportResult.
+//
+// SAFETY: the network call is only made when opt-in is active. When opt-in is
+// off the function is a thin wrapper over ExportResult with zero overhead.
+func ExportResultWithOSV(ctx context.Context, job *models.ScanJob, format ExportFormat, osvClient *osv.Client, forceOSV bool) ([]byte, string, error) {
+	if format != ExportFormatCycloneDX && format != ExportFormatCycloneDXSBOM {
+		return ExportResult(job, format)
+	}
+
+	var result scanResultPayload
+	if err := json.Unmarshal([]byte(job.Result), &result); err != nil {
+		return nil, "", fmt.Errorf("failed to parse result: %v", err)
+	}
+
+	var vulns []osv.OSVVulnerability
+	if osvClient != nil && (forceOSV || osv.IsEnabled()) {
+		vulns = osvClient.EnrichComponents(ctx, result.Data.SBOMComponents)
+	}
+
+	return exportCycloneDX(job, &result, vulns)
 }
 
 // cycloneDXComponent maps a single evidence-bearing models.SBOMComponent into a
