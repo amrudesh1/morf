@@ -734,6 +734,14 @@ func (w *Worker) scanAPK(ctx context.Context, job *models.ScanJob) (gin.H, error
 		if comps := apk.CollectSBOMComponents(jobCtx); len(comps) > 0 {
 			data["sbomComponents"] = comps
 		}
+		// Platform findings: run the exposure analyzer over the already-parsed
+		// manifest component data and surface exported-component + deep-link
+		// findings (unit P2a), then append Firebase misconfig findings (unit P2b).
+		// Always write the key (even when empty) so the result shape is stable and
+		// downstream pipelines can key on it.
+		platformFindings := apk.AnalyzeExposure(&metadata)
+		platformFindings = append(platformFindings, apk.CollectFirebaseMisconfigFindings(ctx, jobCtx, nil)...)
+		data["platformFindings"] = platformFindings
 	}
 
 	return result, nil
@@ -881,8 +889,16 @@ func (w *Worker) scanIPA(ctx context.Context, job *models.ScanJob) (gin.H, error
 	// SBOM: thread the per-app component inventory into the result payload under
 	// the "sbomComponents" contract key the CycloneDX exporter reads. Without
 	// this the export falls through to the empty legacy fallback.
-	if data, ok := result["data"].(gin.H); ok && len(iosSBOM) > 0 {
-		data["sbomComponents"] = iosSBOM
+	if data, ok := result["data"].(gin.H); ok {
+		if len(iosSBOM) > 0 {
+			data["sbomComponents"] = iosSBOM
+		}
+		// Platform findings: iOS Firebase misconfig detector (unit P2b).
+		iosPlatformFindings := ios.CollectIOSFirebaseMisconfigFindingsFromIPA(ctx, jobCtx, nil)
+		if iosPlatformFindings == nil {
+			iosPlatformFindings = []models.PlatformFinding{}
+		}
+		data["platformFindings"] = iosPlatformFindings
 	}
 
 	return result, nil

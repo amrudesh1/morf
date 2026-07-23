@@ -207,7 +207,7 @@ func maskGateResult(res gate.GateResult) ([]byte, error) {
 		if len(in) == 0 {
 			return []any{}, nil
 		}
-		raw, err := renderFindings("json", "", "", in, false) // gate output always masks
+		raw, err := renderFindings("json", "", "", in, nil, false) // gate output always masks
 		if err != nil {
 			return nil, err
 		}
@@ -244,7 +244,7 @@ func maskGateResult(res gate.GateResult) ([]byte, error) {
 // (optionally rewrite baseline) -> exit code. It returns the exit code so the
 // cobra Run wrapper owns the os.Exit boundary.
 func runGate(ctx context.Context, opts gateOptions, path string, stdout, stderr io.Writer) (int, error) {
-	secrets, _, _, err := runScanForFile(ctx, path, opts.verify)
+	secrets, _, _, _, err := runScanForFile(ctx, path, opts.verify)
 	if err != nil {
 		return exitOperational, err
 	}

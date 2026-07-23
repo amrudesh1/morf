@@ -498,9 +498,10 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		if format == "sarif" {
 			var payload struct {
 				Data struct {
-					FileName    string               `json:"fileName"`
-					PackageName string               `json:"packageName"`
-					Secrets     []models.SecretModel `json:"secrets"`
+					FileName         string                   `json:"fileName"`
+					PackageName      string                   `json:"packageName"`
+					Secrets          []models.SecretModel     `json:"secrets"`
+					PlatformFindings []models.PlatformFinding `json:"platformFindings"`
 				} `json:"data"`
 			}
 			if job.Result == "" || json.Unmarshal([]byte(job.Result), &payload) != nil {
@@ -525,7 +526,10 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 				platform = "ios"
 			}
 
-			sarifData, sarifErr := report.EncodeSARIF(target, platform, payload.Data.Secrets)
+			// Include platform findings (exported components, deeplinks, Firebase
+			// misconfig) persisted in the result envelope so server-side SARIF
+			// export matches the CLI `morf scan --sarif` output.
+			sarifData, sarifErr := report.EncodeSARIFWithFindings(target, platform, payload.Data.Secrets, payload.Data.PlatformFindings)
 			if sarifErr != nil {
 				log.WithFields(log.Fields{
 					"request_id": requestID,

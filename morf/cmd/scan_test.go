@@ -98,7 +98,7 @@ func TestEvaluateAndRenderExitCodes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := scanOptions{format: "sarif", failOn: tc.failOn, target: "app.apk", platform: "android"}
-			_, summary, code, err := evaluateAndRender(opts, tc.secrets, nil)
+			_, summary, code, err := evaluateAndRender(opts, tc.secrets, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -111,7 +111,7 @@ func TestEvaluateAndRenderExitCodes(t *testing.T) {
 
 func TestEvaluateAndRenderInvalidFailOn(t *testing.T) {
 	opts := scanOptions{format: "sarif", failOn: "nope"}
-	_, _, code, err := evaluateAndRender(opts, nil, nil)
+	_, _, code, err := evaluateAndRender(opts, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid fail-on")
 	}
@@ -123,7 +123,7 @@ func TestEvaluateAndRenderInvalidFailOn(t *testing.T) {
 func TestEvaluateAndRenderSARIFFormat(t *testing.T) {
 	secrets := []models.SecretModel{finding("aws-key", "AKIAEXAMPLE1234567890", "active", "keep")}
 	opts := scanOptions{format: "sarif", failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets, nil)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestEvaluateAndRenderJSONFormatMasksSecret(t *testing.T) {
 	const raw = "AKIAEXAMPLE1234567890"
 	secrets := []models.SecretModel{finding("aws-key", raw, "active", "keep")}
 	opts := scanOptions{format: "json", failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets, nil)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestEvaluateAndRenderSarifAliasOverridesFormat(t *testing.T) {
 	secrets := []models.SecretModel{finding("aws-key", "AKIAEXAMPLE1234567890", "active", "keep")}
 	// format says json but --sarif alias must win.
 	opts := scanOptions{format: "json", sarif: true, failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets, nil)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestEvaluateAndRenderSBOMFormat(t *testing.T) {
 		models.NewNativeLibComponent("libssl.so", []string{"arm64-v8a"}, "deadbeef"),
 	}
 	opts := scanOptions{format: "cyclonedx-sbom", target: "app.ipa", platform: "ios", failOn: "verified"}
-	out, summary, code, err := evaluateAndRender(opts, nil, sbom)
+	out, summary, code, err := evaluateAndRender(opts, nil, sbom, nil)
 	if err != nil {
 		t.Fatalf("evaluateAndRender: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestEvaluateAndRenderJSONRevealShowsSecret(t *testing.T) {
 	const raw = "AKIAEXAMPLE1234567890"
 	secrets := []models.SecretModel{finding("aws-key", raw, "active", "keep")}
 	opts := scanOptions{format: "json", reveal: true, failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets, nil)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -240,11 +240,98 @@ func TestEvaluateAndRenderSARIFRevealStillMasks(t *testing.T) {
 	const raw = "AKIAEXAMPLE1234567890"
 	secrets := []models.SecretModel{finding("aws-key", raw, "active", "keep")}
 	opts := scanOptions{format: "sarif", reveal: true, failOn: "none", target: "app.apk", platform: "android"}
-	out, _, _, err := evaluateAndRender(opts, secrets, nil)
+	out, _, _, err := evaluateAndRender(opts, secrets, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(string(out), raw) {
 		t.Errorf("SARIF leaked plaintext even though reveal must not apply to SARIF: %s", out)
+	}
+}
+
+// TestEvaluateAndRenderPlatformFindingsInJSON verifies that platformFindings are
+// included under "data.platformFindings" in the JSON output envelope, that they
+// do not affect the exit code, and that the summary includes the count.
+func TestEvaluateAndRenderPlatformFindingsInJSON(t *testing.T) {
+	pfList := []models.PlatformFinding{
+		{
+			RuleID:   "exported-activity",
+			Title:    "Exported activity",
+			Severity: models.SeverityHigh,
+			MASVSID:  "MASVS-PLATFORM-1",
+			Category: "platform",
+			Location: "AndroidManifest.xml",
+			Evidence: "android:exported=true",
+			Tier:     "keep",
+		},
+	}
+	opts := scanOptions{format: "json", failOn: "none", target: "app.apk", platform: "android"}
+	out, summary, code, err := evaluateAndRender(opts, nil, nil, pfList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if code != exitOK {
+		t.Errorf("platform findings must not change exit code (no secrets); got %d", code)
+	}
+	if !json.Valid(out) {
+		t.Fatalf("JSON output is not valid JSON")
+	}
+
+	var env map[string]any
+	if err := json.Unmarshal(out, &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	data, ok := env["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing data envelope")
+	}
+	pfs, ok := data["platformFindings"].([]any)
+	if !ok {
+		t.Fatalf("data.platformFindings not an array; got: %T %v", data["platformFindings"], data["platformFindings"])
+	}
+	if len(pfs) != 1 {
+		t.Errorf("platformFindings count = %d, want 1", len(pfs))
+	}
+	if !strings.Contains(summary, "1 platform finding") {
+		t.Errorf("summary missing platform finding count: %q", summary)
+	}
+}
+
+// TestEvaluateAndRenderPlatformFindingsInSARIF verifies that platformFindings
+// appear as SARIF results when the format is sarif, and that the exit code is
+// still driven solely by secrets (platform findings do not gate).
+func TestEvaluateAndRenderPlatformFindingsInSARIF(t *testing.T) {
+	pfList := []models.PlatformFinding{
+		{
+			RuleID:   "exported-service",
+			Title:    "Exported service",
+			Severity: models.SeverityMedium,
+			Category: "platform",
+			Location: "AndroidManifest.xml",
+			Evidence: "service exported=true",
+		},
+	}
+	opts := scanOptions{format: "sarif", failOn: "any", target: "app.apk", platform: "android"}
+	out, _, code, err := evaluateAndRender(opts, nil, nil, pfList)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No secrets, fail-on=any: must pass (platform findings are not gated).
+	if code != exitOK {
+		t.Errorf("exit code = %d, want 0 (platform findings do not gate)", code)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("SARIF not valid JSON: %v", err)
+	}
+	runs, _ := doc["runs"].([]any)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+	run := runs[0].(map[string]any)
+	results, _ := run["results"].([]any)
+	if len(results) != 1 {
+		t.Errorf("SARIF results count = %d, want 1 (platform finding)", len(results))
 	}
 }

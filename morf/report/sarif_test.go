@@ -186,6 +186,207 @@ func TestEncodeSARIF_LevelMapping(t *testing.T) {
 	}
 }
 
+// TestEncodeSARIFWithFindings_PlatformFindingReachesResults verifies that a
+// PlatformFinding provided to EncodeSARIFWithFindings appears as a SARIF result
+// with the correct ruleId, level, and MASVS property.
+func TestEncodeSARIFWithFindings_PlatformFindingReachesResults(t *testing.T) {
+	pf := models.PlatformFinding{
+		RuleID:   "exported-component-no-permission",
+		Title:    "Exported component without permission guard",
+		Severity: models.SeverityHigh,
+		MASVSID:  "MASVS-PLATFORM-1",
+		Category: "platform",
+		Location: "AndroidManifest.xml",
+		Evidence: "android:exported=true with no permission attribute",
+		Tier:     "keep",
+	}
+
+	out, err := EncodeSARIFWithFindings("com.example.app", "android", nil, []models.PlatformFinding{pf})
+	if err != nil {
+		t.Fatalf("EncodeSARIFWithFindings returned error: %v", err)
+	}
+
+	var parsed sarifLog
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("unmarshal sarifLog: %v", err)
+	}
+
+	if len(parsed.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(parsed.Runs))
+	}
+	run := parsed.Runs[0]
+
+	// The platform finding must appear in results.
+	if len(run.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(run.Results))
+	}
+	r := run.Results[0]
+	if r.RuleID != pf.RuleID {
+		t.Errorf("result.ruleId = %q, want %q", r.RuleID, pf.RuleID)
+	}
+	if r.Level != "error" {
+		t.Errorf("result.level = %q, want %q (SeverityHigh -> error)", r.Level, "error")
+	}
+	if r.Properties["masvsId"] != pf.MASVSID {
+		t.Errorf("result.properties.masvsId = %v, want %q", r.Properties["masvsId"], pf.MASVSID)
+	}
+	if r.Properties["category"] != "platform" {
+		t.Errorf("result.properties.category = %v, want %q", r.Properties["category"], "platform")
+	}
+
+	// The rule must be registered with the correct MASVS tag.
+	if len(run.Tool.Driver.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(run.Tool.Driver.Rules))
+	}
+	rule := run.Tool.Driver.Rules[0]
+	if rule.ID != pf.RuleID {
+		t.Errorf("rule.id = %q, want %q", rule.ID, pf.RuleID)
+	}
+	if rule.Properties == nil || !containsString(rule.Properties.Tags, "MASVS-PLATFORM-1") {
+		t.Errorf("rule.properties.tags missing MASVS-PLATFORM-1; got %+v", rule.Properties)
+	}
+}
+
+// TestEncodeSARIFWithFindings_LevelMapping verifies all four severity values map
+// to the correct SARIF level.
+func TestEncodeSARIFWithFindings_LevelMapping(t *testing.T) {
+	cases := []struct {
+		severity models.PlatformFindingSeverity
+		want     string
+	}{
+		{models.SeverityHigh, "error"},
+		{models.SeverityMedium, "warning"},
+		{models.SeverityLow, "warning"},
+		{models.SeverityInfo, "note"},
+	}
+	for _, tc := range cases {
+		pf := models.PlatformFinding{
+			RuleID:   "rule-" + string(tc.severity),
+			Title:    "Rule " + string(tc.severity),
+			Severity: tc.severity,
+			Category: "platform",
+			Location: "f.xml",
+			Evidence: "some evidence",
+		}
+		out, err := EncodeSARIFWithFindings("t", "android", nil, []models.PlatformFinding{pf})
+		if err != nil {
+			t.Fatalf("EncodeSARIFWithFindings(%s): %v", tc.severity, err)
+		}
+		var parsed sarifLog
+		if err := json.Unmarshal(out, &parsed); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(parsed.Runs[0].Results) != 1 {
+			t.Fatalf("expected 1 result for severity %s", tc.severity)
+		}
+		got := parsed.Runs[0].Results[0].Level
+		if got != tc.want {
+			t.Errorf("severity %s -> level %q, want %q", tc.severity, got, tc.want)
+		}
+	}
+}
+
+// TestEncodeSARIFWithFindings_BothSecretAndPlatform verifies that when both
+// secrets and platform findings are provided, all of them appear in the SARIF
+// results array (secrets first, then platform findings).
+func TestEncodeSARIFWithFindings_BothSecretAndPlatform(t *testing.T) {
+	secrets := sampleSecrets() // 3 secrets
+	pfList := []models.PlatformFinding{
+		{
+			RuleID:   "exported-activity",
+			Title:    "Exported activity",
+			Severity: models.SeverityMedium,
+			MASVSID:  "MASVS-PLATFORM-1",
+			Category: "platform",
+			Location: "AndroidManifest.xml",
+			Evidence: "activity exported=true",
+		},
+		{
+			RuleID:   "missing-autoVerify",
+			Title:    "Deep-link missing autoVerify",
+			Severity: models.SeverityLow,
+			Category: "platform",
+			Location: "AndroidManifest.xml",
+			Evidence: "autoVerify not set",
+		},
+	}
+
+	out, err := EncodeSARIFWithFindings("com.example.app", "android", secrets, pfList)
+	if err != nil {
+		t.Fatalf("EncodeSARIFWithFindings: %v", err)
+	}
+
+	var parsed sarifLog
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	total := len(secrets) + len(pfList)
+	if got := len(parsed.Runs[0].Results); got != total {
+		t.Errorf("total results = %d, want %d (%d secrets + %d platform)", got, total, len(secrets), len(pfList))
+	}
+}
+
+// TestEncodeSARIF_OldSignatureUnchanged verifies that the old (two-arg secrets-only)
+// EncodeSARIF wrapper still works correctly and produces a valid SARIF document
+// without any platform findings in the output. This guards backward compatibility
+// for every existing caller.
+func TestEncodeSARIF_OldSignatureUnchanged(t *testing.T) {
+	secrets := sampleSecrets()
+	out, err := EncodeSARIF("com.example.app", "android", secrets)
+	if err != nil {
+		t.Fatalf("EncodeSARIF (old signature) returned error: %v", err)
+	}
+	var parsed sarifLog
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(parsed.Runs))
+	}
+	if got := len(parsed.Runs[0].Results); got != len(secrets) {
+		t.Errorf("old EncodeSARIF results = %d, want %d", got, len(secrets))
+	}
+}
+
+// TestEncodeSARIFWithFindings_EvidenceIsMasked verifies that the platform
+// finding's Evidence — a NON-secret resource identifier by contract (component
+// name, scheme://host, RTDB host, bucket) — is emitted VERBATIM in the SARIF
+// message so it stays actionable for a triager, while a secret VALUE carried in
+// a models.SecretModel on the same report is still masked. Masking Evidence
+// would truncate "…firebaseio.com" to "http…om" and destroy the finding.
+func TestEncodeSARIFWithFindings_EvidenceVerbatimSecretsMasked(t *testing.T) {
+	evidence := "https://myproject.firebaseio.com — verify security rules are not world-readable"
+	pf := models.PlatformFinding{
+		RuleID:   "firebase-rtdb-present",
+		Title:    "Firebase Realtime Database present",
+		Severity: models.SeverityInfo,
+		Category: "config",
+		Location: "google-services.json",
+		Evidence: evidence,
+	}
+	// A real secret finding shares the report; its value must NOT survive.
+	const rawSecret = "AKIAIOSFODNN7EXAMPLE"
+	secret := models.SecretModel{
+		Type: "Secret", SecretType: "AWS API Key", SecretString: rawSecret,
+		FileLocation: "strings.xml", LineNo: 3, Tier: "keep",
+	}
+	out, err := EncodeSARIFWithFindings("t", "android", []models.SecretModel{secret}, []models.PlatformFinding{pf})
+	if err != nil {
+		t.Fatalf("EncodeSARIFWithFindings: %v", err)
+	}
+	if !json.Valid(out) {
+		t.Fatalf("SARIF output is not valid JSON")
+	}
+	// Non-secret Evidence appears verbatim (the actionable host is preserved).
+	if !strings.Contains(string(out), "myproject.firebaseio.com") {
+		t.Errorf("platform Evidence must be emitted verbatim; got: %s", out)
+	}
+	// The secret value must never appear in the SARIF report.
+	if strings.Contains(string(out), rawSecret) {
+		t.Errorf("SARIF leaked the plaintext secret value: %s", out)
+	}
+}
+
 // TestMaskResultJSON verifies the result-envelope masker replaces secretString
 // values with a masked preview, preserves other fields/structure, and fails
 // closed (returns an error, no bytes) on unparseable input.
