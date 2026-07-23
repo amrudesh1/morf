@@ -796,11 +796,559 @@ func TestHashSecret_DoesNotEqualRawSecret(t *testing.T) {
 func swapEndpoints(base string) func() {
 	pg, ps, pst, pgo, pt := githubAPIBase, slackAPIBase, stripeAPIBase, googleAPIBase, twilioAPIBase
 	pgl, psg, pnpm, pcf, pmg, pdo, paws := gitlabAPIBase, sendgridAPIBase, npmAPIBase, cloudflareAPIBase, mailgunAPIBase, digitalOceanAPIBase, awsSTSBase
+	// P3a additions
+	poai, pant, pdd, ppd := openaiAPIBase, anthropicAPIBase, datadogAPIBase, pagerdutyAPIBase
+	pdisc, ptg, pmb, psq := discordAPIBase, telegramAPIBase, mapboxAPIBase, squareAPIBase
+	phk, pfg, pno, pair := herokuAPIBase, figmaAPIBase, notionAPIBase, airtableAPIBase
+
 	githubAPIBase, slackAPIBase, stripeAPIBase, googleAPIBase, twilioAPIBase = base, base, base, base, base
 	gitlabAPIBase, sendgridAPIBase, npmAPIBase, cloudflareAPIBase, mailgunAPIBase, digitalOceanAPIBase, awsSTSBase = base, base, base, base, base, base, base
+	openaiAPIBase, anthropicAPIBase, datadogAPIBase, pagerdutyAPIBase = base, base, base, base
+	discordAPIBase, telegramAPIBase, mapboxAPIBase, squareAPIBase = base, base, base, base
+	herokuAPIBase, figmaAPIBase, notionAPIBase, airtableAPIBase = base, base, base, base
+
 	return func() {
 		githubAPIBase, slackAPIBase, stripeAPIBase, googleAPIBase, twilioAPIBase = pg, ps, pst, pgo, pt
 		gitlabAPIBase, sendgridAPIBase, npmAPIBase, cloudflareAPIBase, mailgunAPIBase, digitalOceanAPIBase, awsSTSBase = pgl, psg, pnpm, pcf, pmg, pdo, paws
+		openaiAPIBase, anthropicAPIBase, datadogAPIBase, pagerdutyAPIBase = poai, pant, pdd, ppd
+		discordAPIBase, telegramAPIBase, mapboxAPIBase, squareAPIBase = pdisc, ptg, pmb, psq
+		herokuAPIBase, figmaAPIBase, notionAPIBase, airtableAPIBase = phk, pfg, pno, pair
+	}
+}
+
+// --- P3a: OpenAI -------------------------------------------------------------
+
+func TestOpenAIVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/v1/models" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer sk-test" {
+					t.Fatalf("unexpected auth header %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			openaiAPIBase = srv.URL
+			v := &openaiVerifier{c: c}
+			got, err := v.Verify(context.Background(), "sk-test")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Anthropic ----------------------------------------------------------
+
+func TestAnthropicVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/v1/models" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("x-api-key"); got != "sk-ant-key" {
+					t.Fatalf("unexpected x-api-key header %q", got)
+				}
+				if got := r.Header.Get("anthropic-version"); got == "" {
+					t.Fatalf("missing anthropic-version header")
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			anthropicAPIBase = srv.URL
+			v := &anthropicVerifier{c: c}
+			got, err := v.Verify(context.Background(), "sk-ant-key")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Datadog ------------------------------------------------------------
+
+func TestDatadogVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusForbidden, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/api/v1/validate" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("DD-API-KEY"); got != "dd-key-abc" {
+					t.Fatalf("unexpected DD-API-KEY header %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			datadogAPIBase = srv.URL
+			v := &datadogVerifier{c: c}
+			got, err := v.Verify(context.Background(), "dd-key-abc")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: PagerDuty ----------------------------------------------------------
+
+func TestPagerDutyVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/users" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Token token=pd-token" {
+					t.Fatalf("unexpected auth header %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			pagerdutyAPIBase = srv.URL
+			v := &pagerdutyVerifier{c: c}
+			got, err := v.Verify(context.Background(), "pd-token")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Discord Bot --------------------------------------------------------
+
+func TestDiscordBotVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/api/v10/users/@me" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bot bot-tok" {
+					t.Fatalf("unexpected auth header %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			discordAPIBase = srv.URL
+			v := &discordBotVerifier{c: c}
+			got, err := v.Verify(context.Background(), "bot-tok")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Telegram Bot -------------------------------------------------------
+
+func TestTelegramBotVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const tok = "123456789:AABBccdd_eeFF"
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				want := "/bot123456789:AABBccdd_eeFF/getMe"
+				if r.URL.Path != want {
+					t.Fatalf("unexpected path %q (want %q)", r.URL.Path, want)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			telegramAPIBase = srv.URL
+			v := &telegramBotVerifier{c: c}
+			got, err := v.Verify(context.Background(), tok)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Mapbox -------------------------------------------------------------
+
+func TestMapboxVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/tokens/v2" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.URL.Query().Get("access_token"); got != "pk.mapbox_token" {
+					t.Fatalf("unexpected access_token query param %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			mapboxAPIBase = srv.URL
+			v := &mapboxVerifier{c: c}
+			got, err := v.Verify(context.Background(), "pk.mapbox_token")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Square -------------------------------------------------------------
+
+func TestSquareVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/v2/locations" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer sq-token" {
+					t.Fatalf("unexpected auth header %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			squareAPIBase = srv.URL
+			v := &squareVerifier{c: c}
+			got, err := v.Verify(context.Background(), "sq-token")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Heroku -------------------------------------------------------------
+
+func TestHerokuVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/account" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer hrku-token" {
+					t.Fatalf("unexpected auth header %q", got)
+				}
+				if got := r.Header.Get("Accept"); !strings.Contains(got, "vnd.heroku+json") {
+					t.Fatalf("missing Heroku Accept header, got %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			herokuAPIBase = srv.URL
+			v := &herokuVerifier{c: c}
+			got, err := v.Verify(context.Background(), "hrku-token")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Figma --------------------------------------------------------------
+
+func TestFigmaVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusForbidden, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/v1/me" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("X-Figma-Token"); got != "figma-pat" {
+					t.Fatalf("unexpected X-Figma-Token header %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			figmaAPIBase = srv.URL
+			v := &figmaVerifier{c: c}
+			got, err := v.Verify(context.Background(), "figma-pat")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Notion -------------------------------------------------------------
+
+func TestNotionVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/v1/users/me" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer secret_ntn" {
+					t.Fatalf("unexpected auth header %q", got)
+				}
+				if got := r.Header.Get("Notion-Version"); got == "" {
+					t.Fatalf("missing Notion-Version header")
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			notionAPIBase = srv.URL
+			v := &notionVerifier{c: c}
+			got, err := v.Verify(context.Background(), "secret_ntn")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// --- P3a: Airtable -----------------------------------------------------------
+
+func TestAirtableVerifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		expect string
+	}{
+		{"active", http.StatusOK, statusActive},
+		{"inactive", http.StatusUnauthorized, statusInactive},
+		{"unknown", http.StatusInternalServerError, statusUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertNoMutation(t, r.Method)
+				if r.URL.Path != "/v0/meta/whoami" {
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer patABC.xyz" {
+					t.Fatalf("unexpected auth header %q", got)
+				}
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+			c := newTestClient()
+			airtableAPIBase = srv.URL
+			v := &airtableVerifier{c: c}
+			got, err := v.Verify(context.Background(), "patABC.xyz")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expect {
+				t.Fatalf("expected %q, got %q", tc.expect, got)
+			}
+		})
+	}
+}
+
+// TestP3aProviders_RegisteredInLookup verifies all P3a providers are in the
+// registry and fire on their documented secret type substrings.
+func TestP3aProviders_RegisteredInLookup(t *testing.T) {
+	c := newTestClient()
+	reg := defaultRegistry(c)
+	for _, st := range []string{
+		"OpenAI API Key",
+		"Anthropic API Key",
+		"Datadog API Key Assigned",
+		"PagerDuty API Token",
+		"Discord Bot Token",
+		"Telegram Bot Token",
+		"Mapbox Access Token",
+		"Square Access Token",
+		"Heroku API Key",
+		"Figma Personal Access Token",
+		"Notion Integration Token",
+		"Airtable PAT",
+	} {
+		if lookup(reg, st) == nil {
+			t.Fatalf("expected a verifier for %q", st)
+		}
+	}
+}
+
+// TestP3aProviders_DisabledGateNoNetworkCall verifies that with
+// MORF_ENABLE_VERIFICATION unset, none of the P3a providers make a network
+// call (the global default-off gate holds for all new providers).
+func TestP3aProviders_DisabledGateNoNetworkCall(t *testing.T) {
+	t.Setenv(envVerificationEnabled, "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("network call made while verification disabled: %s %s", r.Method, r.URL)
+	}))
+	defer srv.Close()
+	restore := swapEndpoints(srv.URL)
+	defer restore()
+
+	in := []models.SecretModel{
+		{SecretType: "OpenAI API Key", SecretString: "sk-test"},
+		{SecretType: "Anthropic API Key", SecretString: "sk-ant-key"},
+		{SecretType: "Datadog API Key Assigned", SecretString: "dd-key"},
+		{SecretType: "PagerDuty API Token", SecretString: "pd-tok"},
+		{SecretType: "Discord Bot Token", SecretString: "bot-tok"},
+		{SecretType: "Telegram Bot Token", SecretString: "123:AA"},
+		{SecretType: "Mapbox Access Token", SecretString: "pk.map"},
+		{SecretType: "Square Access Token", SecretString: "sq0atp-tok"},
+		{SecretType: "Heroku API Key", SecretString: "hrku-tok"},
+		{SecretType: "Figma Personal Access Token", SecretString: "figpat"},
+		{SecretType: "Notion Integration Token", SecretString: "secret_ntn"},
+		{SecretType: "Airtable PAT", SecretString: "patABC.xyz"},
+	}
+	out := VerifySecrets(context.Background(), in)
+	for _, s := range out {
+		if s.VerificationStatus != statusUnchecked {
+			t.Fatalf("expected unchecked for %q, got %q", s.SecretType, s.VerificationStatus)
+		}
 	}
 }
 
