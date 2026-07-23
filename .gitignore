@@ -67,3 +67,6 @@ cred_rc82_scan_unmasked.json
 cred_rc82_triage.json
 *_scan_unmasked.json
 morf/morf_bin
+
+# Benchmark corpus fixtures are test data, not build artifacts — must be tracked.
+!morf/benchmark/corpus/**/*.so
