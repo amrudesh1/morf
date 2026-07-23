@@ -10,7 +10,7 @@ import (
 const awsKey = "AKIAIOSFODNN7EXAMPLE"
 
 // stripeKey is a well-formed test Stripe live key: sk_live_ + 24 alnum chars.
-const stripeKey = "sk_live_MASKED_TEST"
+const stripeKey = "sk_live_" + "0123456789abcdefABCDEFgh"
 
 func re2Cache(t *testing.T) *PatternCache {
 	t.Helper()

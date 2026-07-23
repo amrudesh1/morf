@@ -143,12 +143,15 @@ The scanner harvests candidate strings from the sections real iOS apps carry:
 For the ObjC/C/CFString sections, read the section bytes via `s.Data()` and
 split on NUL (`bytes.Split(data, []byte{0})`), discarding empty/oversized runs.
 
-> Note on the committed fixture: `ios/testdata/Fixture` is built by the **Go**
-> toolchain, so its string constants land in `__TEXT.__rodata`, and it has none
-> of the `__swift5_*` / `__objc_*` / `__cstring` / `__cfstring` sections above.
-> It therefore validates container parsing, section enumeration, and cryptid
-> detection, but Swift/ObjC extraction must be validated against a real
-> Xcode-built sample. See [`ios/testdata/README.md`](../ios/testdata/README.md).
+> Note on the fixture: the Mach-O test binary is built by the **Go** toolchain
+> (via `ios/testdata/gen_fixture.sh`), so its string constants land in
+> `__TEXT.__rodata`, and it has none of the `__swift5_*` / `__objc_*` /
+> `__cstring` / `__cfstring` sections above. It therefore validates container
+> parsing, section enumeration, and cryptid detection, but Swift/ObjC extraction
+> must be validated against a real Xcode-built sample. Only the packaged
+> `ios/testdata/fixture.ipa` is committed (the demo and concurrency test consume
+> it); the loose intermediate Mach-O is regenerated on demand by the script and
+> is not committed. See [`ios/testdata/README.md`](../ios/testdata/README.md).
 
 ## 3. Pipeline mapping to the Android path
 
