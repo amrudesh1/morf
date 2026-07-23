@@ -31,6 +31,7 @@ import (
 type ManifestActivityInfo struct {
 	Name          string           `json:"name"`
 	Exported      bool             `json:"exported"`
+	Permission    string           `json:"permission,omitempty"`
 	IntentFilters []ManifestFilter `json:"intentFilters,omitempty"`
 }
 
@@ -38,6 +39,7 @@ type ManifestActivityInfo struct {
 type ManifestServiceInfo struct {
 	Name          string           `json:"name"`
 	Exported      bool             `json:"exported"`
+	Permission    string           `json:"permission,omitempty"`
 	IntentFilters []ManifestFilter `json:"intentFilters,omitempty"`
 }
 
@@ -45,6 +47,7 @@ type ManifestServiceInfo struct {
 type ManifestReceiverInfo struct {
 	Name          string           `json:"name"`
 	Exported      bool             `json:"exported"`
+	Permission    string           `json:"permission,omitempty"`
 	IntentFilters []ManifestFilter `json:"intentFilters,omitempty"`
 }
 
@@ -52,6 +55,9 @@ type ManifestReceiverInfo struct {
 type ManifestProviderInfo struct {
 	Name                string   `json:"name"`
 	Exported            bool     `json:"exported"`
+	Permission          string   `json:"permission,omitempty"`
+	ReadPermission      string   `json:"readPermission,omitempty"`
+	WritePermission     string   `json:"writePermission,omitempty"`
 	Authorities         []string `json:"authorities,omitempty"`
 	GrantUriPermissions bool     `json:"grantUriPermissions,omitempty"`
 }
