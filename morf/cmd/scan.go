@@ -30,6 +30,7 @@ import (
 	"morf/gate"
 	"morf/ios"
 	"morf/models"
+	"morf/osv"
 	"morf/report"
 	"morf/utils"
 	"morf/verify"
@@ -79,6 +80,7 @@ type scanOptions struct {
 	reveal   bool   // --reveal-secrets: emit UNMASKED values (JSON format only)
 	target   string // artifact name for the SARIF/report header
 	platform string
+	withCVE  bool // --with-cve: opt-in OSV/CVE enrichment for CycloneDX SBOM (network)
 }
 
 // runScanForFile performs the actual scan of an .apk/.ipa file, reusing the
@@ -221,7 +223,13 @@ func renderFindings(format, target, platform string, secrets []models.SecretMode
 // uses (so CLI and API produce identical SBOMs). The components carry their own
 // evidence/confidence; this just wraps them in the payload envelope the exporter
 // consumes and stamps the artifact name as the app root.
-func renderSBOM(target, platform string, sbom []models.SBOMComponent) ([]byte, error) {
+//
+// When withCVE is true, the function opts in to OSV enrichment: it creates an
+// OSV client and calls ExportResultWithOSV, which queries the OSV.dev API for
+// known vulnerabilities and folds them into the CycloneDX vulnerabilities array.
+// This is entirely opt-in: when withCVE is false no network call is made and the
+// SBOM is identical to the non-enriched output.
+func renderSBOM(ctx context.Context, target, platform string, sbom []models.SBOMComponent, withCVE bool) ([]byte, error) {
 	if sbom == nil {
 		sbom = []models.SBOMComponent{}
 	}
@@ -237,6 +245,14 @@ func renderSBOM(target, platform string, sbom []models.SBOMComponent) ([]byte, e
 		return nil, err
 	}
 	job := &models.ScanJob{OriginalFilename: target, Result: string(raw)}
+
+	if withCVE {
+		// Opt-in path: create an OSV client and enrich.
+		osvClient := osv.NewClient()
+		out, _, err := utils.ExportResultWithOSV(ctx, job, utils.ExportFormatCycloneDX, osvClient, true)
+		return out, err
+	}
+
 	out, _, err := utils.ExportResult(job, utils.ExportFormatCycloneDX)
 	return out, err
 }
@@ -248,7 +264,10 @@ func renderSBOM(target, platform string, sbom []models.SBOMComponent) ([]byte, e
 //
 // platformFindings are threaded into the output (SARIF results + JSON array) but
 // do NOT affect gate/exit-code semantics. Passing nil is safe (treated as empty).
-func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []models.SBOMComponent, platformFindings []models.PlatformFinding) (out []byte, summary string, exitCode int, err error) {
+//
+// ctx is used for the OSV enrichment network call when opts.withCVE is true.
+// Pass context.Background() from callers that do not have a deadline.
+func evaluateAndRender(ctx context.Context, opts scanOptions, secrets []models.SecretModel, sbom []models.SBOMComponent, platformFindings []models.PlatformFinding) (out []byte, summary string, exitCode int, err error) {
 	format := opts.format
 	if opts.sarif {
 		format = "sarif"
@@ -262,11 +281,15 @@ func evaluateAndRender(opts scanOptions, secrets []models.SecretModel, sbom []mo
 	// inventory). Reuses the same exporter the /export route uses.
 	switch strings.ToLower(format) {
 	case "cyclonedx-sbom", "cyclonedx":
-		rendered, rerr := renderSBOM(opts.target, opts.platform, sbom)
+		rendered, rerr := renderSBOM(ctx, opts.target, opts.platform, sbom, opts.withCVE)
 		if rerr != nil {
 			return nil, "", exitOperational, rerr
 		}
-		summary = fmt.Sprintf("MORF SBOM: %d component(s) [%s] (evidence-based inventory)", len(sbom), opts.platform)
+		cveNote := ""
+		if opts.withCVE {
+			cveNote = " [+OSV/CVE enrichment]"
+		}
+		summary = fmt.Sprintf("MORF SBOM: %d component(s) [%s] (evidence-based inventory)%s", len(sbom), opts.platform, cveNote)
 		return rendered, summary, exitOK, nil
 	}
 
@@ -353,7 +376,7 @@ func runScan(ctx context.Context, opts scanOptions, path string, stdout, stderr 
 		fmt.Fprintf(stderr, "WARNING: --reveal-secrets wrote UNMASKED secret values to %s — handle as sensitive.\n", dest)
 	}
 
-	out, summary, code, err := evaluateAndRender(opts, secrets, sbom, platformFindings)
+	out, summary, code, err := evaluateAndRender(ctx, opts, secrets, sbom, platformFindings)
 	if err != nil {
 		return exitOperational, err
 	}
@@ -399,6 +422,7 @@ MORF_ENABLE_VERIFICATION=true) to make read-only liveness checks.`,
 	scanCmd.Flags().BoolVar(&opts.verify, "verify", false, "Enable live (read-only) verification of findings")
 	scanCmd.Flags().StringVar(&opts.failOn, "fail-on", "verified", "Gate threshold: none|any|verified|keep")
 	scanCmd.Flags().BoolVar(&opts.reveal, "reveal-secrets", false, "Emit UNMASKED secret values in JSON output (own/authorized artifacts only; ignored for SARIF)")
+	scanCmd.Flags().BoolVar(&opts.withCVE, "with-cve", false, "Enrich the CycloneDX SBOM with OSV/CVE vulnerabilities (opt-in; makes a read-only network call to OSV)")
 
 	return scanCmd
 }

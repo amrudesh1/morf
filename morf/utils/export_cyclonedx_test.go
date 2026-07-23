@@ -62,7 +62,7 @@ func buildCycloneDXFixture() (*models.ScanJob, *scanResultPayload) {
 func TestExportCycloneDX16Structure(t *testing.T) {
 	job, result := buildCycloneDXFixture()
 
-	data, ct, err := exportCycloneDX(job, result)
+	data, ct, err := exportCycloneDX(job, result, nil)
 	if err != nil {
 		t.Fatalf("exportCycloneDX returned error: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestExportCycloneDXDoesNotLeakSecrets(t *testing.T) {
 		},
 	}
 
-	data, _, err := exportCycloneDX(job, result)
+	data, _, err := exportCycloneDX(job, result, nil)
 	if err != nil {
 		t.Fatalf("exportCycloneDX returned error: %v", err)
 	}
