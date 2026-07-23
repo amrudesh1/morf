@@ -1,0 +1,96 @@
+# .golangci.yml — conservative linter set for MORF CI (golangci-lint v2 schema).
+#
+# Schema: golangci-lint v2 (run via golangci/golangci-lint-action@v7 pinned to
+# v2.12.2). v2 differs from v1: top-level `version: "2"`, `linters.default`
+# instead of `disable-all`, `linters.settings` instead of `linters-settings`,
+# `linters.exclusions.rules` instead of `issues.exclude-rules`, and gofmt is a
+# FORMATTER (under `formatters:`), not a linter.
+#
+# Gate status: the CI `lint` job runs this config as ADVISORY (continue-on-error)
+# until a verified-clean run of the enabled set is confirmed on the full tree —
+# flipping errcheck/staticcheck/unused to blocking without that risks reding the
+# pipeline on pre-existing legacy findings unrelated to a given change. The
+# security-grade gates (gosec, govulncheck, Trivy CRITICAL, go test -race) DO
+# block. To promote lint to blocking: run it clean, fix or //nolint the backlog,
+# then drop continue-on-error from the lint job in ci.yml — do NOT loosen it here.
+#
+# Linter rationale:
+#   govet       — compiler-grade correctness (printf, shadow, etc.)
+#   staticcheck — semantic bugs and deprecated API usage (SA*, S1*)
+#   errcheck    — unchecked error return values (high-value signal)
+#   ineffassign — assigned but never used values
+#   unused      — symbols never referenced
+#   misspell    — common English misspellings in identifiers and comments
+#   gofmt       — formatting (formatter, mirrors the gofmt step in backend job)
+
+version: "2"
+
+run:
+  timeout: 5m
+  # Only scan the Go module directory; the frontend/ tree has its own toolchain.
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+  settings:
+    govet:
+      # Enable shadow analysis — catches accidental variable shadowing.
+      enable:
+        - shadow
+    errcheck:
+      # Ignore errors returned by fmt.Print* and common write helpers; these are
+      # intentional fire-and-forget in CLI output paths.
+      exclude-functions:
+        - fmt.Print
+        - fmt.Println
+        - fmt.Printf
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Writer).Write
+    misspell:
+      locale: US
+  exclusions:
+    # Keep golangci-lint's built-in sensible defaults for generated/vendored code.
+    generated: lax
+    rules:
+      # Test files: relax errcheck (t.Log/assert calls are idiomatic) and unused
+      # (test helpers are referenced only via the testing framework).
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unused
+      # Generated protobuf / mock stubs: skip everything.
+      - path: (\.pb\.go|_mock\.go|mock_.*\.go)
+        linters:
+          - errcheck
+          - govet
+          - ineffassign
+          - misspell
+          - staticcheck
+          - unused
+      # Migration embed helpers: the file list is static; unused false-positives
+      # on the embedded FS variable are expected.
+      - path: db/migrations
+        linters:
+          - unused
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    paths:
+      - \.pb\.go$
+      - _mock\.go$
+      - mock_.*\.go$
+
+issues:
+  # Max issues per linter before the report is truncated.
+  max-issues-per-linter: 50
+  max-same-issues: 10
