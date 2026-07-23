@@ -82,8 +82,8 @@ A real `.ipa` archive (zip file with `Payload/BenchApp.app/` layout) containing:
 
 | File | Planted secrets | Decoys |
 |------|----------------|--------|
-| `Info.plist` | AWS key (`AKIA_MASKED_EXAMPLE1`), Stripe key | — |
-| `libBench.bin` | AWS key (`AKIA_MASKED_EXAMPLE2`, binary, NUL-padded) | — |
+| `Info.plist` | AWS key (`AKIA…(masked)`), Stripe key | — |
+| `libBench.bin` | AWS key (`AKIA…(masked)`, binary, NUL-padded) | — |
 | `config.json` | — | Public-cert JWT (expect=false) |
 
 The `ipa-container` case exercises the full container path: the harness unzips
@@ -142,7 +142,7 @@ F1        = 2 * P * R / (P + R)
 ## Caveats (read before citing these numbers)
 
 1. **Synthetic corpus, not store-app data.** All secrets are fake, fabricated
-   keys (e.g. `AKIA_MASKED_EXAMPLE1`, `sk_live_MASKED_BENCH`) that
+   keys (e.g. `AKIA…(masked)`, `sk_live_…(masked)`) that
    match the regex syntax of real credentials but are not tied to any real
    account. Precision and recall on real app binaries (with real obfuscated code,
    minified JS bundles, native libraries, and random data that happens to match

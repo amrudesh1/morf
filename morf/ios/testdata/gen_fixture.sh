@@ -27,7 +27,7 @@
 # scanner has deterministic hits:
 #
 #   AKIAIOSFODNN7EXAMPLE                  (AWS API Key pattern, AWS's example key)
-#   sk_live_MASKED_FIXTURE    (Stripe API Key pattern, fabricated)
+#   sk_live_…(24-char fabricated body)    (Stripe API Key pattern, fabricated)
 #
 # Nothing here is a real credential.
 #
