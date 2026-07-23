@@ -1,6 +1,6 @@
 # MORF Architecture
 
-**MORF - Mobile Reconnaissance Framework** is a **Go 1.24 backend** (module `morf`) with a
+**MORF - Mobile Reconnaissance Framework** is a **Go 1.25 backend** (module `morf`) with a
 **React 19 + Vite + Tailwind** frontend (`frontend/`). The backend is a scalable service,
 but the security-critical logic lives in small **leaf packages** (`detect`, `precision`,
 `verify`, `report`, `gate`, `crypto`) that the service, the CLI, and the MCP server all
@@ -24,7 +24,7 @@ share. That is the core design idea: **one detection pipeline, three entrypoints
 | Crypto | `crypto/secretcrypto.go` — keyed-HMAC `Fingerprint` + AES-256-GCM at-rest | Stable identity + storage safety, never plaintext. |
 | CLI | `cmd/` — `scan.go`, `gate.go`, `mcp.go`, `cli.go`, `apikey.go`, `root.go` | CI-friendly command surface (exit `0/4/1`). |
 | MCP | `mcp/server.go` — stdio server, tools `scan_file` / `list_patterns` / `verify_secret` / `explain_finding` | LLM-agent entrypoint. |
-| Service | `queue/` (Redis reliable queue, DLQ, reaper), `worker/` (pool), `storage/` (local + S3 + SigV4), `router/` (routes, rate-limit, middleware), `db/` (normalized MySQL/GORM, migrations 001–006), `auth/`, `metrics/`, `k8s/`, `grafana/`, `prometheus/`, `config/`, `version/` | The scalable async service. |
+| Service | `queue/` (Redis reliable queue, DLQ, reaper), `worker/` (pool), `storage/` (local + S3 + SigV4), `router/` (routes, rate-limit, middleware), `db/` (normalized MySQL/GORM, migrations 001–010), `auth/`, `metrics/`, `k8s/`, `grafana/`, `prometheus/`, `config/`, `version/` | The scalable async service. |
 
 ## Scan data flow
 
