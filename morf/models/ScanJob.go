@@ -17,6 +17,7 @@ limitations under the License.
 package models
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -34,25 +35,26 @@ const (
 
 // ScanJob represents a scan job in the queue
 type ScanJob struct {
-	ID               string     `json:"id"`
-	Status           JobStatus  `json:"status"`
-	APKPath          string     `json:"apk_path"`
-	FileType         string     `json:"file_type,omitempty"` // Platform discriminator derived from the uploaded file extension: "apk" (Android) or "ipa" (iOS). Empty is treated as "apk" for backward compatibility.
-	OriginalFilename string     `json:"original_filename"`
-	CreatedAt        time.Time  `json:"created_at"`
-	StartedAt        *time.Time `json:"started_at,omitempty"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
-	FailedAt         *time.Time `json:"failed_at,omitempty"`
-	Error            string     `json:"error,omitempty"`
-	Phase            string     `json:"phase,omitempty"`  // Coarse in-progress stage for the UI stepper (unpacking|parsing|scanning|compiling). Advisory; written via SetJobPhase, never through ToMap.
-	Result           string     `json:"result,omitempty"` // JSON string
-	WorkerID         string     `json:"worker_id,omitempty"`
-	RetryCount       int        `json:"retry_count"`
-	WebhookURL       string     `json:"webhook_url,omitempty"`    // Webhook URL for notifications
-	WebhookSecret    string     `json:"webhook_secret,omitempty"` // Secret for webhook signature
-	ScanTimeout      int        `json:"scan_timeout,omitempty"`   // Timeout in seconds (0 = use default)
-	StorageKey       string     `json:"storage_key,omitempty"`    // Object key in the storage backend for the uploaded APK
-	RequestID        string     `json:"request_id,omitempty"`     // Originating HTTP request/correlation ID (X-Request-ID) captured at enqueue, so an upload can be traced to its async scan logs across the queue boundary
+	ID               string            `json:"id"`
+	Status           JobStatus         `json:"status"`
+	APKPath          string            `json:"apk_path"`
+	FileType         string            `json:"file_type,omitempty"` // Platform discriminator derived from the uploaded file extension: "apk" (Android) or "ipa" (iOS). Empty is treated as "apk" for backward compatibility.
+	OriginalFilename string            `json:"original_filename"`
+	CreatedAt        time.Time         `json:"created_at"`
+	StartedAt        *time.Time        `json:"started_at,omitempty"`
+	CompletedAt      *time.Time        `json:"completed_at,omitempty"`
+	FailedAt         *time.Time        `json:"failed_at,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	Phase            string            `json:"phase,omitempty"`  // Coarse in-progress stage for the UI stepper (unpacking|parsing|scanning|compiling). Advisory; written via SetJobPhase, never through ToMap.
+	Result           string            `json:"result,omitempty"` // JSON string
+	WorkerID         string            `json:"worker_id,omitempty"`
+	RetryCount       int               `json:"retry_count"`
+	WebhookURL       string            `json:"webhook_url,omitempty"`    // Webhook URL for notifications
+	WebhookSecret    string            `json:"webhook_secret,omitempty"` // Secret for webhook signature
+	ScanTimeout      int               `json:"scan_timeout,omitempty"`   // Timeout in seconds (0 = use default)
+	StorageKey       string            `json:"storage_key,omitempty"`    // Object key in the storage backend for the uploaded APK
+	RequestID        string            `json:"request_id,omitempty"`     // Originating HTTP request/correlation ID (X-Request-ID) captured at enqueue, so an upload can be traced to its async scan logs across the queue boundary
+	TraceContext     map[string]string `json:"traceContext,omitempty"`   // W3C TraceContext carrier injected at enqueue; extracted by the worker to continue the distributed trace across the async Redis boundary
 }
 
 // formatTimePtr formats a *time.Time for Redis: RFC3339 when set, empty string when nil.
@@ -113,6 +115,14 @@ func (j *ScanJob) ToMap() map[string]interface{} {
 	// absent value is read back as "" and treated as Android by consumers.
 	if j.FileType != "" {
 		m["file_type"] = j.FileType
+	}
+	// W3C TraceContext carrier: JSON-serialised map of tracestate/traceparent
+	// headers injected at upload and extracted by the worker so OTel spans
+	// propagate across the async Redis boundary.
+	if len(j.TraceContext) > 0 {
+		if b, err := json.Marshal(j.TraceContext); err == nil {
+			m["trace_context"] = string(b)
+		}
 	}
 	return m
 }
@@ -200,6 +210,16 @@ func (j *ScanJob) FromMap(m map[string]interface{}) error {
 		var timeout int
 		if _, err := fmt.Sscanf(scanTimeoutStr, "%d", &timeout); err == nil {
 			j.ScanTimeout = timeout
+		}
+	}
+	// W3C TraceContext carrier: deserialise the JSON blob stored at enqueue.
+	// Missing or malformed values are silently ignored so legacy jobs (enqueued
+	// before this field existed) deserialise cleanly (omitempty in JSON tags
+	// ensures the field is absent in old hashes).
+	if tcStr, ok := m["trace_context"].(string); ok && tcStr != "" {
+		var tc map[string]string
+		if err := json.Unmarshal([]byte(tcStr), &tc); err == nil {
+			j.TraceContext = tc
 		}
 	}
 	return nil

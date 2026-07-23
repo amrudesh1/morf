@@ -42,6 +42,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // queueDepthThreshold is read once at init from MORF_QUEUE_DEPTH_THRESHOLD,
@@ -936,6 +939,19 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 	router.POST("/upload", func(c *gin.Context) {
 		requestID := c.GetString("request_id")
 
+		// OTel: start a root span for the upload/enqueue operation.  The span
+		// context is later injected into the job's TraceContext carrier so the
+		// worker can start a child span and the full upload→queue→worker path
+		// appears as one distributed trace.
+		tracer := otel.GetTracerProvider().Tracer("morf/router")
+		uploadCtx, uploadSpan := tracer.Start(c.Request.Context(), "morf.upload")
+		defer uploadSpan.End()
+		uploadSpan.SetAttributes(
+			attribute.String("request_id", requestID),
+			attribute.String("http.method", c.Request.Method),
+			attribute.String("http.route", "/upload"),
+		)
+
 		log.WithFields(log.Fields{
 			"request_id":   requestID,
 			"method":       c.Request.Method,
@@ -1117,7 +1133,9 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		}
 		defer src.Close()
 
-		ctx := c.Request.Context()
+		// Use the span-enriched context so the storage Put is correlated to the
+		// upload span, and downstream operations inherit the trace.
+		ctx := uploadCtx
 		if err := store.Put(ctx, storageKey, src, file.Size); err != nil {
 			// Put failed: nothing was committed, so there is nothing to clean up.
 			log.WithFields(log.Fields{
@@ -1139,6 +1157,13 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 		// Create job. Both StorageKey and APKPath are set to the storage key per
 		// the upload storage contract the worker relies on.
 		jobID := uuid.New().String()
+
+		// OTel: inject the current W3C trace context into the job's carrier map
+		// so the worker can extract it and start a child span, making the full
+		// upload→queue→scan path appear as one distributed trace.
+		traceCarrier := make(map[string]string)
+		otel.GetTextMapPropagator().Inject(uploadCtx, propagation.MapCarrier(traceCarrier))
+
 		job := &models.ScanJob{
 			ID:               jobID,
 			Status:           models.JobStatusQueued,
@@ -1153,8 +1178,10 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			WebhookSecret:    webhookSecret,
 			// Persist the correlation ID so the async worker can re-attach it to
 			// its scan logs, tracing this upload across the queue boundary.
-			RequestID: requestID,
+			RequestID:    requestID,
+			TraceContext: traceCarrier,
 		}
+		uploadSpan.SetAttributes(attribute.String("job_id", jobID))
 
 		// R-3 + fail-closed admission: publish the job atomically with an ATOMIC
 		// queue-depth admission check — the LLEN check and the HSet+SAdd+Expire+
