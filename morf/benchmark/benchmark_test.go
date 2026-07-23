@@ -121,6 +121,7 @@ func TestExtractCorpusIsHermetic(t *testing.T) {
 		corpusDir + "/android/lib/arm64-v8a/libsecret.so",
 		corpusDir + "/android/assets/flutter_assets/kernel_blob.bin",
 		corpusDir + "/ios/Payload/App.app/Info.plist",
+		corpusDir + "/ipa/fixture.ipa",
 		patternsDir + "/high-confidence.yml",
 		patternsDir + "/ios-high-confidence.yml",
 	} {
@@ -146,9 +147,137 @@ func TestExtractCorpusIsHermetic(t *testing.T) {
 	}
 }
 
-// TestLoadLabels asserts the embedded ground truth parses and covers both
-// platforms with at least one true positive and one decoy each, so the metrics
-// are meaningful.
+// TestIPAContainerExtract verifies that unzipIPA correctly extracts the embedded
+// fixture.ipa into a temp directory, preserving the NUL-laden binary artifact
+// (libBench.bin) and the planted Info.plist bytes, so the container recall path
+// does not silently degrade to nothing.
+func TestIPAContainerExtract(t *testing.T) {
+	corpusDir, _, cleanup, err := extractCorpus()
+	if err != nil {
+		t.Fatalf("extractCorpus: %v", err)
+	}
+	defer cleanup()
+
+	ipaPath := corpusDir + "/ipa/fixture.ipa"
+	if _, err := os.Stat(ipaPath); err != nil {
+		t.Fatalf("fixture.ipa not found in extracted corpus: %v", err)
+	}
+
+	extractDir, err := os.MkdirTemp("", "morf-bench-ipa-test-*")
+	if err != nil {
+		t.Fatalf("create extract dir: %v", err)
+	}
+	defer os.RemoveAll(extractDir)
+
+	if err := unzipIPA(ipaPath, extractDir); err != nil {
+		t.Fatalf("unzipIPA: %v", err)
+	}
+
+	// Verify expected files are present.
+	for _, rel := range []string{
+		"Payload/BenchApp.app/Info.plist",
+		"Payload/BenchApp.app/config.json",
+		"Payload/BenchApp.app/libBench.bin",
+	} {
+		p := extractDir + "/" + rel
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected extracted file missing: %s (%v)", rel, err)
+		}
+	}
+
+	// libBench.bin must contain NUL bytes (binary artifact preserved verbatim).
+	binData, err := os.ReadFile(extractDir + "/Payload/BenchApp.app/libBench.bin")
+	if err != nil {
+		t.Fatalf("read libBench.bin: %v", err)
+	}
+	hasNUL := false
+	for _, b := range binData {
+		if b == 0x00 {
+			hasNUL = true
+			break
+		}
+	}
+	if !hasNUL {
+		t.Error("libBench.bin lost its NUL bytes; binary recall for IPA container case would silently skip the binary pass")
+	}
+
+	// Info.plist must contain the planted AWS key.
+	plistData, err := os.ReadFile(extractDir + "/Payload/BenchApp.app/Info.plist")
+	if err != nil {
+		t.Fatalf("read Info.plist: %v", err)
+	}
+	if !contains(string(plistData), "AKIA_MASKED_EXAMPLE1") {
+		t.Error("Info.plist does not contain the planted AWS key AKIA_MASKED_EXAMPLE1")
+	}
+}
+
+// TestIPAContainerRecall runs the IPA container case end-to-end (unzip + scan)
+// and asserts that the planted AWS and Stripe keys in Info.plist are recalled
+// with precision >= 0.5 and recall >= 0.5 after ApplyPrecision.
+func TestIPAContainerRecall(t *testing.T) {
+	requireRG(t)
+
+	corpusDir, patternsDir, cleanup, err := extractCorpus()
+	if err != nil {
+		t.Fatalf("extractCorpus: %v", err)
+	}
+	defer cleanup()
+
+	prev, had := os.LookupEnv("MORF_PATTERNS_DIR")
+	if setErr := os.Setenv("MORF_PATTERNS_DIR", patternsDir); setErr != nil {
+		t.Fatalf("set MORF_PATTERNS_DIR: %v", setErr)
+	}
+	defer func() {
+		if had {
+			_ = os.Setenv("MORF_PATTERNS_DIR", prev)
+		} else {
+			_ = os.Unsetenv("MORF_PATTERNS_DIR")
+		}
+	}()
+
+	labels, err := loadLabels()
+	if err != nil {
+		t.Fatalf("loadLabels: %v", err)
+	}
+
+	rep, err := runIPAContainerCase(t.Context(), corpusDir, labels)
+	if err != nil {
+		t.Fatalf("runIPAContainerCase: %v", err)
+	}
+
+	t.Logf("[ipa-container] before P=%.2f R=%.2f F1=%.2f (TP=%d FP=%d FN=%d); after P=%.2f R=%.2f F1=%.2f (TP=%d FP=%d FN=%d); FP drop=%d raw=%d kept=%d tiers=%v",
+		rep.Before.Precision, rep.Before.Recall, rep.Before.F1, rep.Before.TP, rep.Before.FP, rep.Before.FN,
+		rep.After.Precision, rep.After.Recall, rep.After.F1, rep.After.TP, rep.After.FP, rep.After.FN,
+		rep.FalsePositiveDrop, rep.RawFindings, rep.KeptFindings, rep.TierCounts)
+
+	if rep.KeptFindings == 0 {
+		t.Error("IPA container case: no findings kept after precision; extraction or scanning likely broken")
+	}
+	if rep.After.Recall < 0.5 {
+		t.Errorf("IPA container case: after-precision recall %.2f < 0.50 (planted secrets in IPA container were not recalled)", rep.After.Recall)
+	}
+	if rep.After.Precision < 0.5 {
+		t.Errorf("IPA container case: after-precision precision %.2f < 0.50", rep.After.Precision)
+	}
+}
+
+// contains reports whether s contains substr (helper avoids importing strings in tests).
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsRune(s, substr))
+}
+
+func containsRune(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLoadLabels asserts the embedded ground truth parses and covers all
+// platforms (android, ios, ipa-container) with at least one true positive and
+// one decoy each, so the metrics are meaningful.
 func TestLoadLabels(t *testing.T) {
 	labels, err := loadLabels()
 	if err != nil {

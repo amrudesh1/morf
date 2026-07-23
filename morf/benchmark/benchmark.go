@@ -25,6 +25,15 @@ limitations under the License.
 // keys, a public-cert JWT, a benign keychain group, a body-less private-key
 // marker). Every planted value is described in corpus/labels.json.
 //
+// Additionally, corpus/ipa/fixture.ipa is a real archive container (a zip in the
+// canonical Payload/*.app layout) that is extracted at benchmark time by
+// RunBenchmark through the pure-Go archive/zip path — the same container-level
+// extraction the production ios pipeline performs — before handing the extracted
+// tree to detect.ScanCorpus. This ensures the benchmark exercises the full
+// container path (unzip → file tree → rg scan) without any JVM or apktool
+// dependency. Android stays as loose files because the Android container path
+// requires apktool (a JVM tool) which would break hermeticity.
+//
 // At runtime the harness:
 //  1. materializes the embedded corpus + a curated pattern set into a temp dir
 //     that lives OUTSIDE any git repo (so ripgrep's .gitignore handling never
@@ -33,7 +42,9 @@ limitations under the License.
 //  2. runs the real detection core per platform — the text pass (ScanCorpus)
 //     unioned with the binary --text pass (ScanCorpusText) so NUL-wrapped native
 //     artifacts count toward recall — exactly as the production apk/ios pipelines
-//     do, then dedups with detect.SanitizeSecrets;
+//     do, then dedups with detect.SanitizeSecrets; for the ipa-container platform
+//     the .ipa is first unzipped via archive/zip into a temp directory and the
+//     extracted Payload/ tree is then passed to the same detection core;
 //  3. scores precision/recall/F1 against the ground truth BOTH before and after
 //     detect.ApplyPrecision, so the false-positive drop from the precision engine
 //     is measured directly.
@@ -43,15 +54,18 @@ limitations under the License.
 package benchmark
 
 import (
+	"archive/zip"
 	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"morf/detect"
 	"morf/models"
@@ -120,7 +134,20 @@ var binaryExcludes = []string{
 }
 
 // benchPlatforms are the platforms exercised by the benchmark, in report order.
-var benchPlatforms = []string{"android", "ios"}
+// "ipa-container" is a special entry: instead of scanning a loose-file directory
+// it unzips corpus/ipa/fixture.ipa first (the real archive container path) and
+// then scans the extracted tree. Android stays as loose files because the Android
+// container path requires apktool (a JVM tool), which would break hermeticity.
+var benchPlatforms = []string{"android", "ios", "ipa-container"}
+
+// ipaContainerPlatform is the pseudo-platform name used in labels.json for the
+// IPA archive container case. It scans as "ios" (same pattern set) but exercises
+// the zip-extraction step that the production ios.StartUnpack performs.
+const ipaContainerPlatform = "ipa-container"
+
+// ipaFixturePath is the embedded path of the synthetic .ipa archive fixture
+// relative to the corpus root.
+const ipaFixturePath = "corpus/ipa/fixture.ipa"
 
 // RunBenchmark materializes the embedded corpus, runs the detection core against
 // it per platform, and returns a per-platform precision/recall report scored
@@ -159,27 +186,132 @@ func RunBenchmark(ctx context.Context) ([]Report, error) {
 
 	reports := make([]Report, 0, len(benchPlatforms))
 	for _, plat := range benchPlatforms {
-		rep, err := runPlatform(ctx, plat, filepath.Join(corpusDir, plat), labels)
-		if err != nil {
-			return nil, fmt.Errorf("benchmark platform %s: %w", plat, err)
+		var rep Report
+		var repErr error
+		if plat == ipaContainerPlatform {
+			// IPA container case: unzip the fixture first, then scan the extracted
+			// tree via the real detection core. This exercises the full container
+			// path (archive/zip extraction -> Payload/*.app layout -> rg scan)
+			// hermetically, without apktool or JVM.
+			rep, repErr = runIPAContainerCase(ctx, corpusDir, labels)
+		} else {
+			rep, repErr = runPlatform(ctx, plat, filepath.Join(corpusDir, plat), labels)
+		}
+		if repErr != nil {
+			return nil, fmt.Errorf("benchmark platform %s: %w", plat, repErr)
 		}
 		reports = append(reports, rep)
 	}
 	return reports, nil
 }
 
+// runIPAContainerCase exercises the full IPA archive container path:
+//  1. Reads corpus/ipa/fixture.ipa from the extracted corpus dir.
+//  2. Unzips it into a fresh temp directory (mirroring ios.StartUnpack / unzipTo).
+//  3. Scans the extracted Payload/ tree with the real detection core (text pass +
+//     binary --text pass), exactly as the production ios pipeline does.
+//
+// Labels for this case carry platform = "ipa-container" in labels.json so they
+// are distinct from the loose-file ios labels.
+func runIPAContainerCase(ctx context.Context, corpusDir string, labels []GroundTruth) (Report, error) {
+	ipaPath := filepath.Join(corpusDir, "ipa", "fixture.ipa")
+
+	// Unzip the .ipa into a fresh temp dir outside the corpus so rg does not
+	// re-scan the archive itself (it would appear as binary and match nothing).
+	extractDir, err := os.MkdirTemp("", "morf-bench-ipa-*")
+	if err != nil {
+		return Report{}, fmt.Errorf("create ipa extract dir: %w", err)
+	}
+	defer os.RemoveAll(extractDir)
+
+	if err := unzipIPA(ipaPath, extractDir); err != nil {
+		return Report{}, fmt.Errorf("unzip ipa fixture: %w", err)
+	}
+
+	return runPlatform(ctx, ipaContainerPlatform, extractDir, labels)
+}
+
+// unzipIPA is a minimal pure-Go IPA extractor used exclusively by the benchmark.
+// It mirrors the production ios.unzipTo function: it rejects absolute paths and
+// traversal entries, creates parent directories, and streams each entry to disk.
+// The benchmark uses this instead of ios.StartUnpack to avoid the utils.JobContext
+// dependency (which requires a full workspace tree), keeping the benchmark package
+// self-contained.
+func unzipIPA(src, dst string) error {
+	r, err := zip.OpenReader(src)
+	if err != nil {
+		return fmt.Errorf("open ipa zip %q: %w", src, err)
+	}
+	defer r.Close()
+
+	cleanDst := filepath.Clean(dst)
+	for _, f := range r.File {
+		if filepath.IsAbs(f.Name) || strings.HasPrefix(f.Name, "/") || strings.HasPrefix(f.Name, "\\") {
+			return fmt.Errorf("zip entry %q has absolute path (zip-slip)", f.Name)
+		}
+		target := filepath.Join(cleanDst, filepath.FromSlash(f.Name))
+		if target != cleanDst && !strings.HasPrefix(target, cleanDst+string(os.PathSeparator)) {
+			return fmt.Errorf("zip entry %q escapes extraction root (zip-slip)", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			if mkErr := os.MkdirAll(target, 0o755); mkErr != nil {
+				return fmt.Errorf("mkdir %q: %w", target, mkErr)
+			}
+			continue
+		}
+		if mkErr := os.MkdirAll(filepath.Dir(target), 0o755); mkErr != nil {
+			return fmt.Errorf("mkdir parent of %q: %w", target, mkErr)
+		}
+		if wErr := writeEntry(f, target); wErr != nil {
+			return wErr
+		}
+	}
+	return nil
+}
+
+// writeEntry streams a single zip entry to an on-disk file, preserving all bytes
+// (including NUL bytes in binary artifacts such as libBench.bin).
+func writeEntry(f *zip.File, target string) error {
+	rc, err := f.Open()
+	if err != nil {
+		return fmt.Errorf("open zip entry %q: %w", f.Name, err)
+	}
+	defer rc.Close()
+
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("create %q: %w", target, err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, rc); err != nil {
+		return fmt.Errorf("write %q: %w", target, err)
+	}
+	return nil
+}
+
 // runPlatform scans one platform subtree and scores it before/after precision.
+// For "ipa-container", the scan platform is "ios" (same pattern set applies) but
+// labels are keyed on "ipa-container" so they are distinct from the loose-file
+// ios case.
 func runPlatform(ctx context.Context, platform, root string, labels []GroundTruth) (Report, error) {
 	roots := []string{root}
+
+	// Resolve the scan platform for the detection core: "ipa-container" scans as
+	// "ios" (same patterns) but is reported and labeled separately.
+	scanPlatform := platform
+	if platform == ipaContainerPlatform {
+		scanPlatform = "ios"
+	}
 
 	// Text pass over the whole tree, unioned with the binary --text pass so
 	// NUL-wrapped native artifacts (.so, Flutter/RN blobs, embedded frameworks)
 	// are searched too. This mirrors the production apk path (StartScanE).
-	textHits, err := detect.ScanCorpus(ctx, "benchmark-"+platform, roots, platform)
+	textHits, err := detect.ScanCorpus(ctx, "benchmark-"+platform, roots, scanPlatform)
 	if err != nil {
 		return Report{}, fmt.Errorf("text scan: %w", err)
 	}
-	binHits, err := detect.ScanCorpusText(ctx, "benchmark-"+platform, roots, platform, binaryExcludes)
+	binHits, err := detect.ScanCorpusText(ctx, "benchmark-"+platform, roots, scanPlatform, binaryExcludes)
 	if err != nil {
 		return Report{}, fmt.Errorf("binary text scan: %w", err)
 	}
