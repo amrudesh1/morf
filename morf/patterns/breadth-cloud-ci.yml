@@ -519,6 +519,40 @@ patterns:
       enabled: true
 
   # -------------------------------------------------------------------------
+  # Additional SaaS / API providers (STORAGE-1) -- P3a additions
+  # -------------------------------------------------------------------------
+  - pattern:
+      name: PagerDuty API Token
+      regex: "pd[_-]?api[_-]?key[\"']?\\s*[:=]\\s*[\"'][0-9a-zA-Z_\\-+/]{20}[\"']"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Mapbox Access Token
+      regex: "pk\\.[A-Za-z0-9_\\-]{60,200}"
+      # medium (not high): a Mapbox "pk." token is PUBLIC by design — it ships in
+      # client apps (exactly what MORF scans), so it is not a leaked secret; and
+      # "pk." + base64 also matches PEM public-key blobs. Kept for inventory but
+      # tiered down so it does not emit high-severity FPs on every maps-using app.
+      # The real secret is the "sk." token below.
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      enabled: true
+  - pattern:
+      name: Mapbox Secret Token
+      regex: "sk\\.[A-Za-z0-9_\\-]{60,200}"
+      confidence: medium
+      masvs: MASVS-STORAGE-1
+      # medium: sk. prefix also used by Stripe live/test keys; let precision tier decide.
+      enabled: true
+  - pattern:
+      name: Figma Personal Access Token
+      regex: "figd_[A-Za-z0-9_\\-]{36,100}"
+      confidence: high
+      masvs: MASVS-STORAGE-1
+      enabled: true
+
+  # -------------------------------------------------------------------------
   # Firebase / mobile-relevant (STORAGE-1)
   # -------------------------------------------------------------------------
   - pattern:
