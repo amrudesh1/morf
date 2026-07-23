@@ -344,11 +344,17 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 	// last-used updates async/batched, so it adds no synchronous DB write/request.
 	requireAPIKey := os.Getenv("MORF_REQUIRE_API_KEY") != "false"
 	router.Use(auth.APIKeyAuthSelective(requireAPIKey))
+	// AUTH-1 (row 061): enforce the per-API-key rate limiter that APIKeyAuth
+	// feeds via the "api_key_id"/"rate_limit" context values. Registered AFTER
+	// auth so the limiter sees the authenticated key. Mounted unconditionally:
+	// when requireAPIKey is false, APIKeyAuthSelective still authenticates the
+	// protected data paths (/results, /secrets, /compare) so those routes still
+	// carry api_key_id in context, and per-key throttling applies. For routes
+	// where no key is present (unauthenticated open routes), RateLimitMiddleware
+	// skips gracefully (api_key_id absent → c.Next()). Per-IP limiting above
+	// still applies to all routes.
+	router.Use(auth.RateLimitMiddleware())
 	if requireAPIKey {
-		// AUTH-1 (row 061): enforce the per-API-key rate limiter that APIKeyAuth
-		// feeds via the "api_key_id"/"rate_limit" context values. Registered
-		// AFTER auth so the limiter sees the authenticated key.
-		router.Use(auth.RateLimitMiddleware())
 		log.Info("API key auth ENABLED on /api data routes (default; set MORF_REQUIRE_API_KEY=false to disable)")
 	} else {
 		log.Warn("API key auth DISABLED globally (MORF_REQUIRE_API_KEY=false); /jira, /slackscan, pattern-mutation routes AND the result-reading routes (/results, /secrets, /compare) still require a key")
@@ -639,7 +645,42 @@ func InitRouters(router *gin.RouterGroup) *gin.RouterGroup {
 			return
 		}
 
-		c.JSON(http.StatusOK, comparison)
+		// SEC: mask secret values in the comparison result by default. The stored
+		// job Results carry raw secretString values, but the read API must not hand
+		// them back verbatim. Masking is on unless MORF_MASK_RESULTS=false. On a
+		// mask failure we fail closed: return a result_error rather than leaking raw
+		// values (mirrors the /results handler behaviour).
+		if os.Getenv("MORF_MASK_RESULTS") == "false" {
+			c.JSON(http.StatusOK, comparison)
+		} else {
+			raw, marshalErr := json.Marshal(comparison)
+			if marshalErr != nil {
+				log.WithFields(log.Fields{
+					"request_id": requestID,
+					"job_id_1":   jobID1,
+					"job_id_2":   jobID2,
+					"error":      marshalErr.Error(),
+				}).Error("Failed to marshal comparison for masking")
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"result_error": "result unavailable (masking failed)",
+				})
+				return
+			}
+			masked, maskErr := report.MaskComparisonJSON(raw)
+			if maskErr != nil {
+				log.WithFields(log.Fields{
+					"request_id": requestID,
+					"job_id_1":   jobID1,
+					"job_id_2":   jobID2,
+					"error":      maskErr.Error(),
+				}).Error("Failed to mask comparison payload; withholding result to avoid leaking raw secrets")
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"result_error": "result unavailable (masking failed)",
+				})
+				return
+			}
+			c.Data(http.StatusOK, "application/json; charset=utf-8", masked)
+		}
 	})
 
 	// Job cancellation endpoint
