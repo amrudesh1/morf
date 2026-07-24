@@ -1,255 +1,325 @@
 <div align="center">
 
-# MORF - Mobile Reconnaissance Framework
+<img src="https://raw.githubusercontent.com/amrudesh1/morf/main/frontend/src/assets/morf.png" width="150" alt="MORF logo" />
 
-<img src="https://github.com/amrudesh1/morf/blob/main/frontend/src/assets/morf.png" width="200" alt="MORF Logo"/>
+# MORF · Mobile Reconnaissance Framework
 
-**Dual APK + IPA artifact secret recon — secrets detected *and* verified — with SARIF 2.1.0 / OWASP MASVS output and a CI build gate.**
+**Find secrets in shipped mobile apps. Verify they're live. Gate the build.**
 
-[![License](https://img.shields.io/github/license/amrudesh1/morf?style=for-the-badge&logo=opensourceinitiative&logoColor=white&color=0080ff)](LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/amrudesh1/morf?style=for-the-badge&logo=git&logoColor=white&color=0080ff)](https://github.com/amrudesh1/morf/commits/main)
-[![Language](https://img.shields.io/github/languages/top/amrudesh1/morf?style=for-the-badge&color=0080ff)](https://github.com/amrudesh1/morf)
-[![BlackHat Arsenal](https://img.shields.io/badge/BlackHat-Arsenal%202026-blue?style=for-the-badge&color=0080ff)](https://www.blackhat.com/)
+Dual **APK + IPA** artifact recon with a deterministic precision engine, opt-in live
+verification, per-app **SBOM + CVE**, and **SARIF 2.1.0 / OWASP MASVS** output — as a
+service, a CI-native CLI, and an MCP server for AI agents.
 
-<p><b>Find Secrets. Verify Them. Gate the Build.</b></p>
+<br/>
+
+[![CI](https://img.shields.io/github/actions/workflow/status/amrudesh1/morf/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white&color=0080ff)](https://github.com/amrudesh1/morf/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-0080ff?style=for-the-badge&logo=apache&logoColor=white)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.25-0080ff?style=for-the-badge&logo=go&logoColor=white)](morf/go.mod)
+[![React](https://img.shields.io/badge/React-19-0080ff?style=for-the-badge&logo=react&logoColor=white)](frontend/)
+
+[![SARIF](https://img.shields.io/badge/SARIF-2.1.0-2ea043?style=for-the-badge&logo=github&logoColor=white)](docs/MASVS.md)
+[![OWASP MASVS](https://img.shields.io/badge/OWASP-MASVS-2ea043?style=for-the-badge&logo=owasp&logoColor=white)](docs/MASVS.md)
+[![CycloneDX SBOM](https://img.shields.io/badge/SBOM-CycloneDX%201.6-2ea043?style=for-the-badge&logo=linuxfoundation&logoColor=white)](docs/BENCHMARK.md)
+[![BlackHat Arsenal](https://img.shields.io/badge/BlackHat-Arsenal%202026-333333?style=for-the-badge&logo=hackthebox&logoColor=white)](https://www.blackhat.com/)
 
 </div>
 
+---
+
+## Why MORF
+
+Source scanners and repo secret-tools read your code. **MORF reads the binary you actually
+ship** — the `.apk` and `.ipa` on the store — and answers three questions a plain regex
+scanner can't:
+
+| | Plain scanner | **MORF** |
+|---|:---:|:---:|
+| Scans the **shipped artifact** (APK **and** IPA) | ✗ | ✅ |
+| **Verifies** a secret is live (read-only) | ✗ | ✅ |
+| **Deterministic precision** engine (no LLM, no network) | ✗ | ✅ |
+| **SARIF 2.1.0 + OWASP MASVS** for CI dashboards | partial | ✅ |
+| Build **gate** on *new* secrets vs a baseline | ✗ | ✅ |
+| Per-app **SBOM + CVE** correlation (CycloneDX 1.6) | ✗ | ✅ |
+
+> A finding isn't just *"this looks like a Stripe key"* — it's *"this key is **active**,"*
+> mapped to a MASVS control, masked in the report, and it only fails your pipeline if it's
+> **new**.
+
+---
+
 ## Table of Contents
 
-- [Overview](#overview)
 - [Feature Matrix](#feature-matrix)
 - [Quick Start](#quick-start)
-- [CLI Usage (`morf scan` / `morf gate`)](#cli-usage-morf-scan--morf-gate)
-- [MCP Agent Server (`morf mcp`)](#mcp-agent-server-morf-mcp)
-- [SARIF & OWASP MASVS Output](#sarif--owasp-masvs-output)
-- [Security Posture](#security-posture)
+- [CLI & CI](#cli--ci-morf-scan--morf-gate)
+- [Detection & Precision](#detection--precision)
+- [Verification](#verification-opt-in-read-only)
+- [SBOM + CVE](#sbom--cve-per-app)
+- [SARIF & OWASP MASVS](#sarif--owasp-masvs)
+- [MCP Agent Server](#mcp-agent-server-morf-mcp)
 - [Architecture](#architecture)
-- [Common Use Cases](#common-use-cases)
-- [What's New in v2](#whats-new-in-v2)
-- [Conference Recognition](#conference-recognition)
-- [Authors](#authors)
-- [License](#license)
-- [Acknowledgments](#acknowledgments)
+- [Security Posture](#security-posture)
+- [Benchmark](#benchmark)
+- [Documentation](#documentation)
+- [Authors](#authors) · [License](#license) · [Acknowledgments](#acknowledgments)
 
-## Overview
-
-**MORF - Mobile Reconnaissance Framework** is an offensive-security toolkit that discovers
-hardcoded secrets and reconnaissance signal inside mobile application **artifacts** —
-Android `.apk` and iOS `.ipa` — from a single shared detection core. Unlike source-level
-SAST or repo secret scanners, MORF works on the shipped binary: it decompiles APKs with
-apktool and parses Mach-O executables in pure Go, then runs the same secret patterns and
-precision engine over both.
-
-What sets MORF apart from a plain regex scanner:
-
-- **Detected *and* verified.** Candidate secrets can be confirmed live against their
-  provider (read-only), so a finding is not just "this looks like a Stripe key" but "this
-  key is *active*."
-- **Deterministic precision engine.** Entropy + structural signals tier every candidate
-  into `drop` / `info` / `keep`, cutting false positives with no network calls and no LLM.
-- **CI-native output.** SARIF 2.1.0 for GitHub Code Scanning and every SAST dashboard,
-  OWASP MASVS control mapping, and a build-diff **gate** that fails a pipeline only on
-  *new* secrets.
-
-MORF runs three ways from one binary: as a scalable **service** (Redis-backed job queue +
-worker pool, MySQL, Prometheus/Grafana, React web UI), as a **CLI** for CI, and as an
-**MCP server** for LLM agents.
+---
 
 ## Feature Matrix
 
-| Capability | What MORF does |
+| | Capability |
 |---|---|
-| **Dual-platform artifact recon** | Scans Android `.apk` (apktool decompile → smali + resources) and iOS `.ipa` (unzip + pure-Go Mach-O parse of the binary, incl. Swift/Obj-C/C strings, frameworks, entitlements, URL schemes, native `.so`/Flutter/asset/config content). |
-| **Shared detection core with platform scoping** | One YAML-pattern engine (`detect/`) compiled to a combined ripgrep regex. Patterns are scoped `android` / `ios` / `any`, so iOS-only rules never fire on Android and vice-versa. |
-| **Deterministic precision engine** | `precision.go` computes Shannon entropy + structure per candidate and assigns a tier (`drop` / `info` / `keep`) and a `[0,1]` score. Conservative: only clear false positives are dropped. |
-| **Opt-in live verification** | Read-only provider checks (default OFF). 11 providers — GitHub, GitLab, Slack, Stripe, Google/GCP, Twilio, SendGrid, npm, Cloudflare, Mailgun, DigitalOcean — plus **AWS SigV4 STS `GetCallerIdentity`** pairing. Status: `active` / `inactive` / `unknown` / `unchecked`. |
-| **SARIF 2.1.0 output** | `report/sarif.go` emits schema-valid SARIF. Tier → level (`keep`=error, `info`=note). Secret values are masked in the report. |
-| **OWASP MASVS mapping** | Findings carry a MASVS control id (`MASVS-STORAGE-1`, `-STORAGE-2`, `-CRYPTO-1`, `-NETWORK-1`) surfaced in SARIF rule `tags` + a `masvsId` property. See [docs/MASVS.md](docs/MASVS.md). |
-| **`morf scan` / `morf gate` CLI** | CI-friendly contract with policy exit codes (`0` pass, `4` policy hit, `1` operational error) and `--fail-on=none\|any\|verified\|keep`. Full flag/CI reference in [docs/CI.md](docs/CI.md). |
-| **`morf mcp` agent server** | Stdio MCP server exposing `scan_file`, `list_patterns`, `verify_secret`, `explain_finding` — all outputs masked, no DB/Redis/HTTP needed. |
-| **Scalable service** | Redis reliable queue (DLQ + reaper), worker pool, normalized MySQL (GORM), API-key auth + rate limiting, Prometheus/Grafana, S3 or local storage, K8s/KEDA manifests. |
-| **Web UI (React 19)** | React 19 + Vite + Tailwind frontend: drag-and-drop upload, live scan stepper, findings by tier/platform, `/compare` diff, PDF export. |
-| **Runtime pattern management** | `/api/patterns` CRUD + UI — add a detection without a code change. |
-| **At-rest secret protection** | Discovered values are stored masked by default; optional AES-256-GCM at rest; stable identity via keyed HMAC **fingerprint** (never plaintext). |
+| 📦 **Dual-platform recon** | Android `.apk` (apktool → smali + resources + native `.so`/Flutter/assets/config) and iOS `.ipa` (pure-Go Mach-O parse: Swift/Obj-C/C strings, frameworks, entitlements, URL schemes). |
+| 🎯 **Precision engine** | `detect/precision.go` scores Shannon entropy + structure per candidate → `drop` / `info` / `keep`. Deterministic, no network, no LLM — cuts hundreds of raw hits to a clean handful. |
+| 🔎 **280+ detectors** | One YAML pattern core compiled to a combined ripgrep regex, platform-scoped (`android`/`ios`/`any`), covering modern cloud/CI/SaaS/AI token families. |
+| 🔴 **Live verification** | **24** read-only provider verifiers (GitHub, GitLab, Slack, Stripe, GCP, AWS SigV4 STS, OpenAI, Anthropic, Datadog, Square, Notion, …). Status: `active`/`inactive`/`unknown`/`unchecked`. Default **OFF**. |
+| 🧾 **SBOM + CVE** | Evidence-based **CycloneDX 1.6** per scanned app (frameworks/dylibs/native libs/Firebase, PURL-mapped, lockfile version resolution) with opt-in **OSV/CVE** correlation into `vulnerabilities[]`. |
+| 🛡️ **MASVS findings** | Secret findings **and** platform findings — exported-component / deeplink exposure and Firebase/GCP misconfig — tagged `MASVS-STORAGE / -CRYPTO / -NETWORK / -PLATFORM`. |
+| 🚦 **CI gate** | `morf scan` / `morf gate` with policy exit codes and a build-diff gate that fails only on **new** secrets vs an accepted baseline. Reusable recipes for GitHub Actions, GitLab, Jenkins, CircleCI, pre-commit. |
+| 🤖 **MCP agent server** | `morf mcp` exposes `scan_file`, `get_results`, `list_patterns`, `verify_secret`, `explain_finding` over stdio — every output masked, no DB/Redis/HTTP. |
+| ⚙️ **Scalable service** | Redis reliable queue (DLQ + reaper) + worker pool, normalized MySQL (GORM), API-key auth + rate limiting, Prometheus/Grafana, OpenTelemetry tracing, S3/local storage, K8s/KEDA. |
+| 🖥️ **Web UI** | React 19 + Vite + Tailwind: drag-and-drop upload, live scan stepper, findings by tier/platform, `/compare` diff, PDF export. |
+| 🔐 **At-rest protection** | Values masked by default; optional AES-256-GCM at rest; stable identity via keyed-HMAC **fingerprint** (never plaintext). |
+
+---
 
 ## Quick Start
 
-MORF runs as a Docker Compose stack: **MySQL + Redis + Go backend + React frontend**.
-
-> **Apple Silicon (arm64):** the backend Dockerfile defaults to `amd64`; the emulated
-> amd64 binary SIGSEGVs under Rosetta. On Apple Silicon you **must** build native arm64
-> using an override that sets `platform: linux/arm64` and `TARGETARCH=arm64`.
+MORF runs as a Docker Compose stack — **MySQL + Redis + Go backend + React frontend**:
 
 ```bash
 git clone https://github.com/amrudesh1/morf && cd morf
 
-# x86-64 hosts:
+# x86-64:
 docker compose up -d --build
 
-# Apple Silicon (arm64) — with a local override that pins the arch:
-docker compose -f docker-compose.yml -f <arm64-override>.yml up -d --build morf-backend frontend
+# Apple Silicon (arm64) — the backend must build native arm64:
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
-Then open the UI and upload an `.apk` or `.ipa`:
+| | URL |
+|---|---|
+| Web UI | http://localhost/ |
+| API | http://localhost:9092/api |
+| Health | http://localhost:9092/api/health |
 
-- **Frontend:** http://localhost/
-- **Backend API:** http://localhost:9092/api
-- **Health:** http://localhost:9092/api/health
+Config lives in `.env` (copy [`.env.example`](.env.example)); every value has a local-dev
+fallback, so `docker compose up` works out of the box — **override the credentials for any
+real deployment.**
 
-Configuration lives in `.env` (copy from [`.env.example`](.env.example)); every value has a
-local-development fallback baked into `docker-compose.yml`, so `docker compose up` works
-without one. Any real deployment MUST override the credentials.
-
-## CLI Usage (`morf scan` / `morf gate`)
-
-The same scan + precision + verify pipeline the worker runs is available as a CLI, built
-for CI. [docs/CI.md](docs/CI.md) is the canonical command contract and ships reusable
-recipes for GitHub Actions, GitLab, Jenkins, CircleCI, and pre-commit.
+<details>
+<summary><b>Run locally without Docker</b></summary>
 
 ```bash
-# Scan an artifact, emit SARIF, fail (exit 4) only on a live-verified secret:
+cd morf && go build -o morf .
+../scripts/fetch-tools.sh   # one-time: fetch apktool.jar for local APK scans
+./morf scan ../path/to/app.ipa --sarif --out morf.sarif
+```
+iOS scanning is pure-Go (needs only `ripgrep`); APK scanning needs `java` + `apktool.jar`
+(fetched by `scripts/fetch-tools.sh`, or use the Docker image which downloads it).
+</details>
+
+---
+
+## CLI & CI (`morf scan` / `morf gate`)
+
+The same scan → precision → verify pipeline the worker runs, built for CI.
+[docs/CI.md](docs/CI.md) is the canonical command contract + reusable recipes.
+
+```bash
+# Emit SARIF, fail (exit 4) only on a live-verified secret:
 morf scan app.apk --sarif --out morf.sarif --fail-on=verified --verify
 
 # Report-only JSON, never fail the build:
 morf scan app.ipa --format=json --fail-on=none
 
-# Build-diff gate: fail only on NEW secrets vs a committed baseline of accepted fingerprints
-morf gate app.apk --baseline morf-baseline.json --fail-on=verified
+# Per-app SBOM with CVE correlation (opt-in network):
+morf scan app.apk --format=cyclonedx-sbom --with-cve --out sbom.json
 
-# First run / accept the current state as the baseline:
-morf gate app.apk --baseline morf-baseline.json --update-baseline
+# Build-diff gate: fail only on NEW secrets vs an accepted baseline of fingerprints:
+morf gate app.apk --baseline morf-baseline.json --fail-on=verified
+morf gate app.apk --baseline morf-baseline.json --update-baseline   # accept current state
+
+# Hermetic precision/recall benchmark:
+morf benchmark
 ```
 
-**Exit codes:** `0` = nothing at/above the `--fail-on` threshold · `4` = policy violation
-(CI gates on this) · `1` = operational error (bad file, tool missing). `--fail-on` levels:
-`verified` (only confirmed-live secrets), `keep` (any precision-kept finding), `any` (any
-finding), `none` (report-only). All SARIF/JSON values are masked.
+**Exit codes:** `0` pass · `4` policy hit (CI gates on this) · `1` operational error.
+**`--fail-on`:** `verified` · `keep` · `any` · `none`. All SARIF/JSON values are masked.
+
+<details>
+<summary><b>GitHub Actions (gate-then-upload)</b></summary>
+
+```yaml
+- uses: amrudesh1/morf/.github/actions/morf-scan@main
+  with:
+    artifact: app.apk
+    fail-on: verified
+    verify: "true"
+# scans → uploads SARIF to code scanning → gates the build on the captured exit code
+```
+</details>
+
+---
+
+## Detection & Precision
+
+One shared **detection core** (`detect/`) compiles 280+ platform-scoped YAML patterns into
+a single ripgrep pass over both platforms — including native `.so`, Flutter/RN bundles,
+`assets/`, `resources.arsc`, and embedded config (`google-services.json`,
+`GoogleService-Info.plist`).
+
+Every candidate then flows through the **precision engine**: Shannon entropy + structural
+validators assign a tier (`drop` / `info` / `keep`) and a `[0,1]` score — **deterministic,
+no network, no model.** Breadth stays behind this guard so new detectors never reintroduce
+noise.
+
+## Verification (opt-in, read-only)
+
+Confirm a candidate is *live* against its provider — **default OFF**, gated behind
+`--verify` / `MORF_ENABLE_VERIFICATION=true`, and always read-only (rate-limited, no
+redirects, result-cached, raw secret never logged).
+
+**24 verifiers**, e.g. GitHub · GitLab · Slack · Stripe · GCP · **AWS SigV4 STS** ·
+OpenAI · Anthropic · Datadog · PagerDuty · Square · Heroku · Figma · Notion · Airtable ·
+Mapbox · Twilio · SendGrid · Cloudflare · … → `active` / `inactive` / `unknown`.
+
+## SBOM + CVE (per app)
+
+MORF builds an **evidence-based CycloneDX 1.6 SBOM** of each scanned artifact — iOS
+frameworks/dylibs (with resolved versions), Android native libs (SHA-256), and Firebase —
+each component carrying `evidence.identity` + confidence and a spec-correct **PURL**
+(`pkg:cocoapods` / `pkg:swift` / `pkg:maven` / `pkg:pub` / `pkg:npm`). Lockfiles found in
+the tree (`Podfile.lock`, `Package.resolved`, `pubspec.lock`, `package-lock.json`) refine
+versions. With `--with-cve` (opt-in), component PURLs are correlated against **OSV** and
+emitted into the CycloneDX `vulnerabilities[]` array.
+
+## SARIF & OWASP MASVS
+
+Schema-valid **SARIF 2.1.0** (`report/sarif.go`): tier → level (`keep`=error, `info`=note),
+every secret masked. Findings — secret **and** platform (exported components, deeplinks,
+Firebase/GCP misconfig) — carry an OWASP **MASVS** control id
+(`MASVS-STORAGE-1/-2`, `-CRYPTO-1`, `-NETWORK-1`, `-PLATFORM-1`) in the rule `tags` and a
+`masvsId` property. See [docs/MASVS.md](docs/MASVS.md).
 
 ## MCP Agent Server (`morf mcp`)
 
-`morf mcp` runs a standalone **stdio MCP server** so an LLM agent can scan and reason about
-mobile artifacts. It needs no DB, Redis, or HTTP server — it drives the leaf packages
-in-process.
+A standalone **stdio MCP server** so an LLM agent can scan and reason about mobile
+artifacts — no DB/Redis/HTTP, all outputs masked:
 
 ```bash
-morf mcp   # speaks MCP over stdin/stdout
+morf mcp
 ```
+Tools: `scan_file` · `get_results` · `list_patterns` · `verify_secret` · `explain_finding`.
 
-Tools exposed (every output masked):
-
-- `scan_file` — scan an `.apk`/`.ipa` and return tiered findings.
-- `list_patterns` — enumerate the loaded detection patterns.
-- `verify_secret` — run the opt-in read-only verification on a candidate.
-- `explain_finding` — explain a finding, including its MASVS control.
-
-## SARIF & OWASP MASVS Output
-
-MORF emits **SARIF 2.1.0** (`report/sarif.go`, `EncodeSARIF`) targeting the canonical
-schema. The precision tier maps to the SARIF result level — `keep` → `error`, `info` →
-`note` — and the report masks every secret value.
-
-Detection patterns carry an OWASP **MASVS** control id that flows into each SARIF rule's
-`tags` and a `masvsId` property, and into `explain_finding`. Current coverage is grounded
-in the live patterns: **MASVS-STORAGE-1** (hardcoded secrets/keys), **MASVS-STORAGE-2**,
-**MASVS-CRYPTO-1** (crypto material), **MASVS-NETWORK-1** (cleartext/endpoint exposure).
-See [docs/MASVS.md](docs/MASVS.md) for the mapping and an honest "not yet mapped" list.
-
-## Security Posture
-
-MORF is built to be safe to run against real production artifacts:
-
-- **Verification is default-OFF.** Live provider checks only run with `--verify` or
-  `MORF_ENABLE_VERIFICATION=true`, and every check is **read-only** (e.g. AWS STS
-  `GetCallerIdentity`, never a mutating call).
-- **Masking everywhere.** SARIF, the `/results` API, MCP tool outputs, and logs mask
-  secret values. `MaskResultJSON` fails **closed** — an unparseable payload errors rather
-  than leaking.
-- **No plaintext at rest by default.** Discovered values persist masked; set
-  `MORF_SECRET_ENCRYPTION_KEY` to store AES-256-GCM ciphertext instead.
-- **Fingerprint-only identity.** Dedup and the build-diff gate key on a stable keyed-HMAC
-  `crypto.Fingerprint`, never the raw value — a baseline file is committable and a DB
-  exfiltration cannot confirm guessed secrets (set `MORF_FINGERPRINT_SALT` in production).
-- **Fail-closed auth.** API-key auth is on by default; scan/pattern/results routes require
-  a key even when the toggle is relaxed.
-
-The full strategic assessment lives in [docs/SECURITY_ROADMAP.md](docs/SECURITY_ROADMAP.md).
+---
 
 ## Architecture
 
-MORF is a **Go 1.24 backend** with a **React 19 + Vite + Tailwind** frontend. The backend
-is a scalable service — Redis reliable queue + worker pool, normalized MySQL (GORM),
-API-key auth, Prometheus/Grafana, S3/local storage, and K8s/KEDA manifests — and the same
-leaf packages (`detect`, `precision`, `verify`, `report`, `gate`) run in-process for the
-CLI and MCP modes.
+```mermaid
+flowchart LR
+    subgraph Ingest
+        U[Upload / morf fetch]
+    end
+    subgraph Core["Shared detection core (in-process for CLI + MCP)"]
+        D[detect] --> P[precision] --> V[verify · opt-in]
+        S[SBOM + OSV/CVE]
+    end
+    U -->|Redis queue| W[Worker pool]
+    W --> X[apktool decompile · Mach-O parse]
+    X --> D
+    V --> R[(MySQL · masked/at-rest)]
+    S --> R
+    R --> O[SARIF · JSON · CycloneDX · PDF]
+    R --> UI[React 19 UI]
+    CLI[morf scan / gate / mcp] --> Core
+```
 
-Scan data flow: `upload → Redis queue → worker → decompile/parse → detect → precision →
-verify (opt-in) → persist (protected) → results / SARIF`.
+A **Go 1.25** backend + **React 19 / Vite / Tailwind** frontend. The backend is a scalable
+service (Redis queue + worker pool, normalized MySQL, API-key auth, Prometheus/Grafana,
+OpenTelemetry, S3/local storage, K8s/KEDA); the same leaf packages
+(`detect`, `precision`, `verify`, `report`, `gate`, `osv`) run in-process for CLI and MCP.
+Full map in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the component map and diagrams, and
-[docs/DEMO.md](docs/DEMO.md) for the booth demo.
+## Security Posture
 
-## Common Use Cases
+Built to be safe against real production artifacts:
 
-| Use Case | Description |
+- **Verification default-OFF** and read-only (e.g. AWS STS `GetCallerIdentity`, never a
+  mutating call); OSV correlation is opt-in too.
+- **Masking everywhere** — SARIF, `/results`, `/compare`, MCP outputs, logs. `MaskResultJSON`
+  fails **closed**.
+- **No plaintext at rest by default** — masked, or AES-256-GCM with `MORF_SECRET_ENCRYPTION_KEY`.
+- **Fingerprint-only identity** — dedup and the build-diff gate key on a keyed-HMAC
+  fingerprint, never the raw value, so baselines are committable.
+- **Fail-closed auth** — API-key auth on by default; result/pattern/scan routes require a key
+  even when relaxed. Hardened CI: `go test -race`, gosec, govulncheck, Trivy (CRITICAL-gated).
+
+See [docs/SECURITY_ROADMAP.md](docs/SECURITY_ROADMAP.md).
+
+## Benchmark
+
+Reproducible, hermetic (ripgrep-only, no network), against a bundled labeled corpus of
+planted secrets + decoys across android / ios / ipa-container:
+
+| Stage | Precision | Recall | F1 |
+|---|:---:|:---:|:---:|
+| Raw candidates | 0.57 – 0.90 | 1.00 | — |
+| **After precision engine** | **1.00** | **1.00** | **1.00** |
+
+16 planted secrets recalled, **0 false positives**, 5 decoys dropped by the precision
+engine. Run it yourself: `morf benchmark`. Methodology + caveats in
+[docs/BENCHMARK.md](docs/BENCHMARK.md).
+
+## Documentation
+
+| Doc | |
 |---|---|
-| **Pre-release artifact audits** | Scan the exact `.apk`/`.ipa` you ship, not the source tree. |
-| **CI/CD secret gate** | `morf gate` fails a build only on new secrets vs an accepted baseline. |
-| **GitHub Code Scanning** | Upload MORF SARIF to the Security tab; findings carry MASVS ids. |
-| **Agent-driven triage** | Point an LLM agent at `morf mcp` to scan and explain findings. |
-| **Competitive / research recon** | Understand secret hygiene and structure of any shipped app. |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Component map & data flow |
+| [CI.md](docs/CI.md) | CLI contract + CI recipes |
+| [MASVS.md](docs/MASVS.md) | MASVS control mapping |
+| [BENCHMARK.md](docs/BENCHMARK.md) | Precision/recall methodology |
+| [INGESTION.md](docs/INGESTION.md) | Artifact fetch adapters |
+| [IOS_SCANNING.md](docs/IOS_SCANNING.md) | Pure-Go Mach-O internals |
+| [SECURITY_ROADMAP.md](docs/SECURITY_ROADMAP.md) | Threat model & roadmap |
 
-## What's New in v2
-
-- Dual **APK + IPA** artifact recon from a shared, platform-scoped detection core.
-- Deterministic **precision engine** (entropy/structure tiering) — noise cut from
-  hundreds of raw hits to a handful of clean findings.
-- Opt-in **live verification** (11 providers + AWS STS).
-- **SARIF 2.1.0** + OWASP **MASVS** output.
-- `morf scan` / `morf gate` **CLI** with policy exit codes + reusable CI recipes.
-- `morf mcp` **agent server**.
-- **React 19** web UI, PDF export, `/compare` scan diffing.
-- Scalable service: Redis queue + worker pool, normalized MySQL, Prometheus/Grafana,
-  K8s/KEDA.
-
-## Conference Recognition
-
-**BlackHat Arsenal 2026** — MORF returns to Arsenal with its v2 posture: dual APK+IPA
-binary recon, *verified* (not merely detected) secrets, and SARIF/MASVS CI output.
-
-<details>
-<summary>Previous appearances</summary>
-
-- **BlackHat Asia 2023** — Arsenal debut ([link](https://www.blackhat.com/asia-23/arsenal/schedule/#morf---mobile-reconnaissance-framework-31292))
-- **BlackHat US 2023** — Arsenal ([link](https://www.blackhat.com/us-23/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-32370))
-- **BlackHat Europe 2024** — Arsenal ([link](https://www.blackhat.com/eu-24/arsenal/schedule/index.html#morf---mobile-reconnaissance-framework-42172))
-- **BlackHat Asia 2025** — Arsenal ([link](https://www.blackhat.com/asia-25/arsenal/schedule/#morf---mobile-reconnaissance-framework-43910))
-
-</details>
+---
 
 ## Authors
 
 <div align="center">
 
-| <img src="https://github.com/amrudesh1.png" width="100" height="100" style="border-radius:50%"><br>[**@amrudesh1**](https://github.com/amrudesh1) | <img src="https://github.com/abhi-r3v0.png" width="100" height="100" style="border-radius:50%"><br>[**@abhi-r3v0**](https://github.com/abhi-r3v0) | <img src="https://github.com/himanshudas.png" width="100" height="100" style="border-radius:50%"><br>[**@himanshudas**](https://github.com/himanshudas) |
+| <img src="https://github.com/amrudesh1.png" width="90" height="90" style="border-radius:50%"><br>[**@amrudesh1**](https://github.com/amrudesh1) | <img src="https://github.com/abhi-r3v0.png" width="90" height="90" style="border-radius:50%"><br>[**@abhi-r3v0**](https://github.com/abhi-r3v0) | <img src="https://github.com/himanshudas.png" width="90" height="90" style="border-radius:50%"><br>[**@himanshudas**](https://github.com/himanshudas) |
 |:---:|:---:|:---:|
 
 </div>
 
+## Conference Recognition
+
+**BlackHat Arsenal 2026** — MORF returns with its v2 posture: dual APK+IPA binary recon,
+*verified* secrets, per-app SBOM+CVE, and SARIF/MASVS CI output.
+
+<details>
+<summary>Previous appearances</summary>
+
+- **BlackHat Asia 2023** — Arsenal debut
+- **BlackHat US 2023** — Arsenal
+- **BlackHat Europe 2024** — Arsenal
+- **BlackHat Asia 2025** — Arsenal
+
+</details>
+
 ## License
 
-MORF is released under the MIT License. See the [LICENSE](LICENSE) file for details.
+Released under the **Apache License 2.0** — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- [**Secrets Patterns Database**](https://github.com/mazen160/secrets-patterns-db) — a curated source of secret detection patterns.
+- [**secrets-patterns-db**](https://github.com/mazen160/secrets-patterns-db) — curated detection patterns.
 - [**go-macho**](https://github.com/blacktop/go-macho) — pure-Go Mach-O parsing behind the iOS module.
-- **Open Source Security Community** — for inspiration, feedback, and support.
-
----
+- [**OSV.dev**](https://osv.dev) — open-source vulnerability data for SBOM CVE correlation.
 
 <div align="center">
-  <a href="#morf---mobile-reconnaissance-framework">
-    <img src="https://img.shields.io/badge/back%20to%20top-%E2%86%A9-blue?style=for-the-badge" alt="Back to top" />
-  </a>
+<br/>
+<a href="#morf--mobile-reconnaissance-framework"><img src="https://img.shields.io/badge/back%20to%20top-%E2%86%91-0080ff?style=for-the-badge" alt="Back to top" /></a>
 </div>
