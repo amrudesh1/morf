@@ -287,7 +287,7 @@ jobs:
       # available fix (reduces noise from distro packages awaiting patches).
       # trivy-action releases are tagged with a leading `v` (v0.28.0).
       - name: Trivy image scan (SARIF report)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: morf:ci-scan
           format: sarif
@@ -307,7 +307,7 @@ jobs:
       # selects, so the gate MUST scope severity to CRITICAL to avoid blocking on
       # HIGH. Table format (no SARIF) since the report step already uploaded.
       - name: Trivy image scan (CRITICAL gate)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: morf:ci-scan
           format: table
