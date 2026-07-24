@@ -35,7 +35,7 @@ const (
 	// driverName is the analysis tool name reported in tool.driver.name.
 	driverName = "MORF"
 	// driverInfoURI is the tool's information URI.
-	driverInfoURI = "https://github.com/Cyber-Guru/MORF"
+	driverInfoURI = "https://github.com/amrudesh1/morf"
 )
 
 // SARIF document types. Only the subset of the SARIF 2.1.0 object model that
