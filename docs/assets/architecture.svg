@@ -43,7 +43,7 @@
 
     <rect x="48" y="198" width="252" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
     <text x="64" y="219" fill="#E8EEF9" font-size="13.5" font-weight="600">Router</text>
-    <text x="64" y="237" fill="#8397B5" font-size="11.5">API-key auth · rate-limit · body caps</text>
+    <text x="64" y="237" fill="#8397B5" font-size="11.5">API-key auth · rate-limit · caps</text>
 
     <rect x="48" y="266" width="252" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
     <text x="64" y="287" fill="#E8EEF9" font-size="13.5" font-weight="600">Redis reliable queue</text>
@@ -57,15 +57,15 @@
   <g>
     <rect x="340" y="130" width="232" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
     <text x="356" y="151" fill="#E8EEF9" font-size="13.5" font-weight="600">Worker pool</text>
-    <text x="356" y="169" fill="#8397B5" font-size="11.5">per-job workspace · zip-bomb guard</text>
+    <text x="356" y="169" fill="#8397B5" font-size="11.5">isolated workspace · zip guard</text>
 
     <rect x="340" y="220" width="232" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
     <text x="356" y="241" fill="#E8EEF9" font-size="13" font-weight="600">APK → apktool</text>
-    <text x="356" y="259" fill="#8397B5" font-size="11.5">smali + resources + native/.so</text>
+    <text x="356" y="259" fill="#8397B5" font-size="11.5">smali · resources · native/.so</text>
 
     <rect x="340" y="288" width="232" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
     <text x="356" y="309" fill="#E8EEF9" font-size="13" font-weight="600">IPA → Mach-O</text>
-    <text x="356" y="327" fill="#8397B5" font-size="11.5">pure-Go go-macho · plists · config</text>
+    <text x="356" y="327" fill="#8397B5" font-size="11.5">pure-Go go-macho · plists</text>
   </g>
 
   <!-- ── Col 3 · DETECTION CORE (highlighted) ── -->
@@ -76,18 +76,18 @@
 
     <rect x="626" y="158" width="282" height="46" rx="8" fill="#16233F" stroke="#3B6FE0"/>
     <text x="642" y="177" fill="#EAF0FB" font-size="13" font-weight="600">detect · ScanCorpus</text>
-    <text x="642" y="194" fill="#93A9D0" font-size="11">ripgrep regex · platform-scoped · 280+</text>
+    <text x="642" y="194" fill="#93A9D0" font-size="11">ripgrep · platform-scoped · 280+</text>
 
     <rect x="626" y="214" width="282" height="40" rx="8" fill="#16233F" stroke="#3B6FE0"/>
-    <text x="642" y="239" fill="#EAF0FB" font-size="13" font-weight="600">sanitize <tspan fill="#93A9D0" font-weight="400">· dedup · resource filter</tspan></text>
+    <text x="642" y="239" fill="#EAF0FB" font-size="13" font-weight="600">sanitize <tspan fill="#93A9D0" font-weight="400">· dedup · filter</tspan></text>
 
     <rect x="626" y="264" width="282" height="46" rx="8" fill="#16233F" stroke="#3B6FE0"/>
     <text x="642" y="283" fill="#EAF0FB" font-size="13" font-weight="600">precision engine</text>
-    <text x="642" y="300" fill="#93A9D0" font-size="11">entropy + structure → drop / info / keep</text>
+    <text x="642" y="300" fill="#93A9D0" font-size="11">entropy/structure → drop·info·keep</text>
 
     <rect x="626" y="320" width="282" height="46" rx="8" fill="#1B1830" stroke="#B9862E"/>
     <text x="642" y="339" fill="#F4E3C4" font-size="13" font-weight="600">verify <tspan fill="#F0B24B">· opt-in</tspan></text>
-    <text x="642" y="356" fill="#C9B48A" font-size="11">read-only · 24 providers · active/inactive</text>
+    <text x="642" y="356" fill="#C9B48A" font-size="11">read-only · 24 providers · live/dead</text>
 
     <rect x="626" y="376" width="282" height="44" rx="8" fill="#102A22" stroke="#2E9E6B"/>
     <text x="642" y="403" fill="#BEEAD3" font-size="12.5" font-weight="600">SBOM · CycloneDX 1.6 <tspan fill="#7FCBA6" font-weight="400">+ OSV/CVE</tspan></text>
@@ -101,11 +101,11 @@
 
     <rect x="962" y="198" width="270" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
     <text x="978" y="219" fill="#E8EEF9" font-size="13.5" font-weight="600">MySQL</text>
-    <text x="978" y="237" fill="#8397B5" font-size="11.5">masked · AES-GCM at rest · fingerprint</text>
+    <text x="978" y="237" fill="#8397B5" font-size="11.5">masked · AES-GCM · fingerprint</text>
 
     <rect x="962" y="266" width="270" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
     <text x="978" y="287" fill="#E8EEF9" font-size="13.5" font-weight="600">Reports</text>
-    <text x="978" y="305" fill="#8397B5" font-size="11.5">SARIF 2.1.0 · JSON · CSV · CycloneDX · PDF</text>
+    <text x="978" y="305" fill="#8397B5" font-size="11.5">SARIF · JSON · CycloneDX · PDF</text>
 
     <rect x="962" y="334" width="270" height="46" rx="9" fill="#0F1A2E" stroke="#233149"/>
     <text x="978" y="362" fill="#94A3B8" font-size="12.5">React 19 UI · /compare diff</text>
@@ -119,7 +119,7 @@
     <rect x="48" y="524" width="360" height="48" rx="10" fill="#111C30" stroke="#2A3A57"/>
     <circle cx="72" cy="548" r="4" fill="#60A5FA"/>
     <text x="88" y="544" fill="#E8EEF9" font-size="13" font-weight="600">Service</text>
-    <text x="88" y="561" fill="#8397B5" font-size="11.5">server · worker · API · Prometheus/OTel · K8s</text>
+    <text x="88" y="561" fill="#8397B5" font-size="11.5">server · worker · API · metrics · K8s</text>
 
     <rect x="424" y="524" width="440" height="48" rx="10" fill="#111C30" stroke="#2A3A57"/>
     <circle cx="448" cy="548" r="4" fill="#3FB950"/>
