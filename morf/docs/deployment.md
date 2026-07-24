@@ -114,7 +114,7 @@ The easiest way to run MORF locally on macOS is using Docker Compose.
 
 ### Troubleshooting
 
-See [README-LOCAL.md](../../README-LOCAL.md) for detailed troubleshooting guide.
+See the README for local setup and troubleshooting.
 
 ### Manual Setup (Alternative)
 

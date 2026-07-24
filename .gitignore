@@ -70,3 +70,6 @@ morf/morf_bin
 
 # Benchmark corpus fixtures are test data, not build artifacts — must be tracked.
 !morf/benchmark/corpus/**/*.so
+
+# apktool.jar is fetched on demand (scripts/fetch-tools.sh), not committed.
+morf/tools/apktool.jar
