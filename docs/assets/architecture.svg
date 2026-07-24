@@ -1,0 +1,134 @@
+<svg width="1280" height="600" viewBox="0 0 1280 600" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace">
+  <defs>
+    <linearGradient id="abg" x1="0" y1="0" x2="1280" y2="600" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B1220"/><stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="ablue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#60A5FA"/><stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <radialGradient id="acore" cx="0.5" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#2563EB" stop-opacity="0.16"/><stop offset="1" stop-color="#2563EB" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="agrid" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M34 0H0V34" fill="none" stroke="#1E293B" stroke-width="1" stroke-opacity="0.45"/>
+    </pattern>
+    <marker id="arw" markerWidth="9" markerHeight="9" refX="6.5" refY="4.5" orient="auto">
+      <path d="M1 1L7 4.5L1 8Z" fill="#4B6491"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="600" rx="16" fill="url(#abg)"/>
+  <rect width="1280" height="600" rx="16" fill="url(#agrid)"/>
+  <rect x="0.75" y="0.75" width="1278.5" height="598.5" rx="16" fill="none" stroke="#243045" stroke-opacity="0.9"/>
+
+  <text x="48" y="52" fill="#F1F5FB" font-size="21" font-weight="800" letter-spacing="0.5">MORF · Architecture</text>
+  <text x="48" y="76" fill="#5B6B83" font-size="13" letter-spacing="1">one binary · one detection core · three surfaces (service · CLI · MCP)</text>
+
+  <!-- stage labels -->
+  <text x="173" y="112" fill="#647B98" font-size="12" text-anchor="middle" letter-spacing="3">INGEST</text>
+  <text x="455" y="112" fill="#647B98" font-size="12" text-anchor="middle" letter-spacing="3">DECODE</text>
+  <text x="767" y="112" fill="#60A5FA" font-size="12" text-anchor="middle" letter-spacing="3">DETECTION CORE</text>
+  <text x="1099" y="112" fill="#647B98" font-size="12" text-anchor="middle" letter-spacing="3">PERSIST · DELIVER</text>
+
+  <!-- stage arrows (behind columns) -->
+  <line x1="300" y1="290" x2="336" y2="290" stroke="#4B6491" stroke-width="2" marker-end="url(#arw)"/>
+  <line x1="572" y1="290" x2="608" y2="290" stroke="#4B6491" stroke-width="2" marker-end="url(#arw)"/>
+  <line x1="924" y1="290" x2="962" y2="290" stroke="#2563EB" stroke-width="2.2" marker-end="url(#arw)"/>
+
+  <!-- ── Col 1 · INGEST ── -->
+  <g>
+    <rect x="48" y="130" width="252" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="64" y="151" fill="#E8EEF9" font-size="13.5" font-weight="600">Client · CI · Agent</text>
+    <text x="64" y="169" fill="#8397B5" font-size="11.5">POST /api/upload · morf fetch</text>
+
+    <rect x="48" y="198" width="252" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="64" y="219" fill="#E8EEF9" font-size="13.5" font-weight="600">Router</text>
+    <text x="64" y="237" fill="#8397B5" font-size="11.5">API-key auth · rate-limit · body caps</text>
+
+    <rect x="48" y="266" width="252" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="64" y="287" fill="#E8EEF9" font-size="13.5" font-weight="600">Redis reliable queue</text>
+    <text x="64" y="305" fill="#8397B5" font-size="11.5">DLQ · reaper · circuit breakers</text>
+
+    <rect x="48" y="334" width="252" height="46" rx="9" fill="#0F1A2E" stroke="#233149"/>
+    <text x="64" y="362" fill="#94A3B8" font-size="12.5">Storage — local / S3</text>
+  </g>
+
+  <!-- ── Col 2 · DECODE ── -->
+  <g>
+    <rect x="340" y="130" width="232" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="356" y="151" fill="#E8EEF9" font-size="13.5" font-weight="600">Worker pool</text>
+    <text x="356" y="169" fill="#8397B5" font-size="11.5">per-job workspace · zip-bomb guard</text>
+
+    <rect x="340" y="220" width="232" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="356" y="241" fill="#E8EEF9" font-size="13" font-weight="600">APK → apktool</text>
+    <text x="356" y="259" fill="#8397B5" font-size="11.5">smali + resources + native/.so</text>
+
+    <rect x="340" y="288" width="232" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="356" y="309" fill="#E8EEF9" font-size="13" font-weight="600">IPA → Mach-O</text>
+    <text x="356" y="327" fill="#8397B5" font-size="11.5">pure-Go go-macho · plists · config</text>
+  </g>
+
+  <!-- ── Col 3 · DETECTION CORE (highlighted) ── -->
+  <g>
+    <rect x="606" y="122" width="322" height="352" rx="13" fill="url(#acore)"/>
+    <rect x="606" y="122" width="322" height="352" rx="13" fill="#0E1A33" fill-opacity="0.6" stroke="#2563EB" stroke-opacity="0.65"/>
+    <text x="767" y="146" fill="#93C0FF" font-size="11.5" text-anchor="middle" letter-spacing="2">SHARED · IN-PROCESS FOR CLI + MCP</text>
+
+    <rect x="626" y="158" width="282" height="46" rx="8" fill="#16233F" stroke="#3B6FE0"/>
+    <text x="642" y="177" fill="#EAF0FB" font-size="13" font-weight="600">detect · ScanCorpus</text>
+    <text x="642" y="194" fill="#93A9D0" font-size="11">ripgrep regex · platform-scoped · 280+</text>
+
+    <rect x="626" y="214" width="282" height="40" rx="8" fill="#16233F" stroke="#3B6FE0"/>
+    <text x="642" y="239" fill="#EAF0FB" font-size="13" font-weight="600">sanitize <tspan fill="#93A9D0" font-weight="400">· dedup · resource filter</tspan></text>
+
+    <rect x="626" y="264" width="282" height="46" rx="8" fill="#16233F" stroke="#3B6FE0"/>
+    <text x="642" y="283" fill="#EAF0FB" font-size="13" font-weight="600">precision engine</text>
+    <text x="642" y="300" fill="#93A9D0" font-size="11">entropy + structure → drop / info / keep</text>
+
+    <rect x="626" y="320" width="282" height="46" rx="8" fill="#1B1830" stroke="#B9862E"/>
+    <text x="642" y="339" fill="#F4E3C4" font-size="13" font-weight="600">verify <tspan fill="#F0B24B">· opt-in</tspan></text>
+    <text x="642" y="356" fill="#C9B48A" font-size="11">read-only · 24 providers · active/inactive</text>
+
+    <rect x="626" y="376" width="282" height="44" rx="8" fill="#102A22" stroke="#2E9E6B"/>
+    <text x="642" y="403" fill="#BEEAD3" font-size="12.5" font-weight="600">SBOM · CycloneDX 1.6 <tspan fill="#7FCBA6" font-weight="400">+ OSV/CVE</tspan></text>
+  </g>
+
+  <!-- ── Col 4 · PERSIST · DELIVER ── -->
+  <g>
+    <rect x="962" y="130" width="270" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="978" y="151" fill="#E8EEF9" font-size="13.5" font-weight="600">gate · Evaluate</text>
+    <text x="978" y="169" fill="#8397B5" font-size="11.5">fail on NEW secret vs baseline</text>
+
+    <rect x="962" y="198" width="270" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="978" y="219" fill="#E8EEF9" font-size="13.5" font-weight="600">MySQL</text>
+    <text x="978" y="237" fill="#8397B5" font-size="11.5">masked · AES-GCM at rest · fingerprint</text>
+
+    <rect x="962" y="266" width="270" height="50" rx="9" fill="#131F35" stroke="#2A3A57"/>
+    <text x="978" y="287" fill="#E8EEF9" font-size="13.5" font-weight="600">Reports</text>
+    <text x="978" y="305" fill="#8397B5" font-size="11.5">SARIF 2.1.0 · JSON · CSV · CycloneDX · PDF</text>
+
+    <rect x="962" y="334" width="270" height="46" rx="9" fill="#0F1A2E" stroke="#233149"/>
+    <text x="978" y="362" fill="#94A3B8" font-size="12.5">React 19 UI · /compare diff</text>
+  </g>
+
+  <!-- ── Surfaces band ── -->
+  <line x1="767" y1="474" x2="767" y2="506" stroke="#2563EB" stroke-width="1.5" stroke-dasharray="3 4"/>
+  <text x="48" y="512" fill="#5B6B83" font-size="12" letter-spacing="2">THREE SURFACES, ONE CORE</text>
+
+  <g>
+    <rect x="48" y="524" width="360" height="48" rx="10" fill="#111C30" stroke="#2A3A57"/>
+    <circle cx="72" cy="548" r="4" fill="#60A5FA"/>
+    <text x="88" y="544" fill="#E8EEF9" font-size="13" font-weight="600">Service</text>
+    <text x="88" y="561" fill="#8397B5" font-size="11.5">server · worker · API · Prometheus/OTel · K8s</text>
+
+    <rect x="424" y="524" width="440" height="48" rx="10" fill="#111C30" stroke="#2A3A57"/>
+    <circle cx="448" cy="548" r="4" fill="#3FB950"/>
+    <text x="464" y="544" fill="#E8EEF9" font-size="13" font-weight="600">CLI</text>
+    <text x="464" y="561" fill="#8397B5" font-size="11.5">morf scan · gate · fetch · benchmark — CI exit codes</text>
+
+    <rect x="880" y="524" width="352" height="48" rx="10" fill="#111C30" stroke="#2A3A57"/>
+    <circle cx="904" cy="548" r="4" fill="#F0B24B"/>
+    <text x="920" y="544" fill="#E8EEF9" font-size="13" font-weight="600">MCP</text>
+    <text x="920" y="561" fill="#8397B5" font-size="11.5">stdio agent server · masked tool outputs</text>
+  </g>
+</svg>

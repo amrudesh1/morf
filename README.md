@@ -263,18 +263,9 @@ Firebase/GCP misconfig) — carry an OWASP **MASVS** control id
 
 ## 🏗️ Architecture
 
-```mermaid
-flowchart LR
-    U["Upload / morf fetch"] -->|Redis queue| W["Worker pool"]
-    W --> X["apktool decompile<br/>Mach-O parse"]
-    X --> D["detect"] --> P["precision"] --> V["verify · opt-in"]
-    X --> S["SBOM + OSV/CVE"]
-    V --> R[("MySQL · masked / at-rest")]
-    S --> R
-    R --> O["SARIF · JSON · CycloneDX · PDF"]
-    R --> UI["React 19 UI"]
-    CLI["morf scan / gate / mcp"] -.in-process.-> D
-```
+<div align="center">
+<img src="docs/assets/architecture.svg" alt="MORF architecture — ingest → decode → shared detection core → persist/deliver, across service/CLI/MCP surfaces" width="100%" />
+</div>
 
 A **Go 1.25** backend + **React 19 / Vite / Tailwind** UI. The same leaf packages
 (`detect`, `precision`, `verify`, `report`, `gate`, `osv`) power the service, the CLI, and the
